@@ -43,6 +43,17 @@ class AuthorBadgeDTO(BaseModel):
     role_badge: RoleBadge
 
 
+class ApartmentDTO(BaseModel):
+    """An apartment as other modules see it (no residents, no names)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: uuid.UUID
+    number: str
+    entrance: int
+    floor: int
+
+
 class ApartmentMembershipDTO(BaseModel):
     model_config = ConfigDict(frozen=True)
 
