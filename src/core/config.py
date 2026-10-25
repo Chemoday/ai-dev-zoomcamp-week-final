@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     JWT_ACCESS_TOKEN_TTL_MINUTES: int = 60
 
+    # Comma-separated plugin modules under src/plugins/ (docs/ARCHITECTURE.md).
+    ENABLED_PLUGINS: str = "common.csv_export"
+
     LOG_LEVEL: str = "INFO"
     LOG_JSON: bool = True
 
