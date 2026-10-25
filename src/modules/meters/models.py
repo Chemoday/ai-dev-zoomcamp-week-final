@@ -13,6 +13,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Numeric,
     String,
     UniqueConstraint,
@@ -34,9 +35,13 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
-def _timestamp() -> Mapped[datetime]:
+def _timestamp(**kwargs) -> Mapped[datetime]:
     return mapped_column(
-        DateTime(timezone=True), nullable=False, default=_utc_now, server_default=func.now()
+        DateTime(timezone=True),
+        nullable=False,
+        default=_utc_now,
+        server_default=func.now(),
+        **kwargs,
     )
 
 
@@ -45,6 +50,14 @@ class MeterDevice(Base):
 
     __tablename__ = "meters_devices"
     __table_args__ = (
+        # Target of the readings' composite FK: a reading's meter is in the reading's building.
+        UniqueConstraint("id", "building_id", name="uq_meters_devices_id_building"),
+        # An apartment meter's apartment is in the meter's building (NULL = master meter, skipped).
+        ForeignKeyConstraint(
+            ["apartment_id", "building_id"],
+            ["property_apartments.id", "property_apartments.building_id"],
+            name="fk_meters_devices_apartment_building",
+        ),
         CheckConstraint("initial_value >= 0", name="ck_meters_devices_initial_value_non_negative"),
         CheckConstraint(
             "max_monthly_delta > 0", name="ck_meters_devices_max_monthly_delta_positive"
@@ -56,7 +69,7 @@ class MeterDevice(Base):
         UUID(as_uuid=True), ForeignKey("property_buildings.id"), nullable=False, index=True
     )
     apartment_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("property_apartments.id"), nullable=True, index=True
+        UUID(as_uuid=True), nullable=True, index=True
     )
     resource_type: Mapped[ResourceType] = mapped_column(
         varchar_enum(ResourceType, "ck_meters_devices_resource_type"), nullable=False
@@ -92,6 +105,7 @@ class ReadingPeriod(Base):
     __tablename__ = "meters_periods"
     __table_args__ = (
         UniqueConstraint("building_id", "period_code", name="uq_meters_periods_building_code"),
+        UniqueConstraint("id", "building_id", name="uq_meters_periods_id_building"),
         CheckConstraint(
             "period_code ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'", name="ck_meters_periods_period_code"
         ),
@@ -114,6 +128,17 @@ class MeterReading(Base):
     __tablename__ = "meters_readings"
     __table_args__ = (
         UniqueConstraint("meter_id", "period_id", name="uq_meters_readings_meter_period"),
+        # Meter and period must both belong to the reading's building.
+        ForeignKeyConstraint(
+            ["meter_id", "building_id"],
+            ["meters_devices.id", "meters_devices.building_id"],
+            name="fk_meters_readings_meter_building",
+        ),
+        ForeignKeyConstraint(
+            ["period_id", "building_id"],
+            ["meters_periods.id", "meters_periods.building_id"],
+            name="fk_meters_readings_period_building",
+        ),
         CheckConstraint("value >= 0", name="ck_meters_readings_value_non_negative"),
         CheckConstraint(
             "previous_value >= 0", name="ck_meters_readings_previous_value_non_negative"
@@ -124,12 +149,11 @@ class MeterReading(Base):
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()
-    meter_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("meters_devices.id"), nullable=False, index=True
+    building_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("property_buildings.id"), nullable=False
     )
-    period_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("meters_periods.id"), nullable=False, index=True
-    )
+    meter_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    period_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
     value: Mapped[Decimal] = _meter_value(nullable=False)
     previous_value: Mapped[Decimal] = _meter_value(nullable=False)
     consumption_delta: Mapped[Decimal] = _meter_value(nullable=False)
@@ -142,7 +166,9 @@ class MeterReading(Base):
     submitted_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("core_users.id"), nullable=True
     )
-    recorded_at: Mapped[datetime] = _timestamp()
+    # "Timestamp of last modification": the ORM refreshes it on every UPDATE. A Core
+    # INSERT ... ON CONFLICT DO UPDATE bypasses onupdate and must set it explicitly.
+    recorded_at: Mapped[datetime] = _timestamp(onupdate=_utc_now)
 
 
 class MeterReadingLog(Base):

@@ -88,6 +88,8 @@ class Apartment(Base):
     __tablename__ = "property_apartments"
     __table_args__ = (
         UniqueConstraint("building_id", "number", name="uq_property_apartments_building_number"),
+        # Lets other tables prove an apartment is in their building with a composite FK.
+        UniqueConstraint("id", "building_id", name="uq_property_apartments_id_building"),
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()

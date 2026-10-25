@@ -22,11 +22,17 @@ READING_SOURCES = "('RESIDENT', 'ADMIN_OVERRIDE', 'AUTO_ESTIMATED', 'IOT_WEBHOOK
 
 
 def upgrade() -> None:
+    # Lets meters prove an apartment is in their building (composite FK below). Added here
+    # because 001 is already deployed.
+    op.create_unique_constraint(
+        "uq_property_apartments_id_building", "property_apartments", ["id", "building_id"]
+    )
+
     op.create_table(
         "meters_devices",
         sa.Column("id", UUID, primary_key=True),
         sa.Column("building_id", UUID, sa.ForeignKey("property_buildings.id"), nullable=False),
-        sa.Column("apartment_id", UUID, sa.ForeignKey("property_apartments.id"), nullable=True),
+        sa.Column("apartment_id", UUID, nullable=True),
         sa.Column("resource_type", sa.String(32), nullable=False),
         sa.Column("serial_number", sa.String(100), nullable=False),
         sa.Column("location_label", sa.String(100), nullable=False, server_default="Main"),
@@ -47,6 +53,12 @@ def upgrade() -> None:
         sa.CheckConstraint(
             "max_monthly_delta > 0", name="ck_meters_devices_max_monthly_delta_positive"
         ),
+        sa.UniqueConstraint("id", "building_id", name="uq_meters_devices_id_building"),
+        sa.ForeignKeyConstraint(
+            ["apartment_id", "building_id"],
+            ["property_apartments.id", "property_apartments.building_id"],
+            name="fk_meters_devices_apartment_building",
+        ),
     )
     op.create_index("ix_meters_devices_building_id", "meters_devices", ["building_id"])
     op.create_index("ix_meters_devices_apartment_id", "meters_devices", ["apartment_id"])
@@ -59,6 +71,7 @@ def upgrade() -> None:
         sa.Column("status", sa.String(32), nullable=False),
         sa.Column("due_date", sa.DateTime(timezone=True), nullable=False),
         sa.UniqueConstraint("building_id", "period_code", name="uq_meters_periods_building_code"),
+        sa.UniqueConstraint("id", "building_id", name="uq_meters_periods_id_building"),
         sa.CheckConstraint(
             "period_code ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'", name="ck_meters_periods_period_code"
         ),
@@ -72,8 +85,9 @@ def upgrade() -> None:
     op.create_table(
         "meters_readings",
         sa.Column("id", UUID, primary_key=True),
-        sa.Column("meter_id", UUID, sa.ForeignKey("meters_devices.id"), nullable=False),
-        sa.Column("period_id", UUID, sa.ForeignKey("meters_periods.id"), nullable=False),
+        sa.Column("building_id", UUID, sa.ForeignKey("property_buildings.id"), nullable=False),
+        sa.Column("meter_id", UUID, nullable=False),
+        sa.Column("period_id", UUID, nullable=False),
         sa.Column("value", METER_VALUE, nullable=False),
         sa.Column("previous_value", METER_VALUE, nullable=False),
         sa.Column("consumption_delta", METER_VALUE, nullable=False),
@@ -86,6 +100,16 @@ def upgrade() -> None:
             "recorded_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
         ),
         sa.UniqueConstraint("meter_id", "period_id", name="uq_meters_readings_meter_period"),
+        sa.ForeignKeyConstraint(
+            ["meter_id", "building_id"],
+            ["meters_devices.id", "meters_devices.building_id"],
+            name="fk_meters_readings_meter_building",
+        ),
+        sa.ForeignKeyConstraint(
+            ["period_id", "building_id"],
+            ["meters_periods.id", "meters_periods.building_id"],
+            name="fk_meters_readings_period_building",
+        ),
         sa.CheckConstraint(f"source IN {READING_SOURCES}", name="ck_meters_readings_source"),
         sa.CheckConstraint("value >= 0", name="ck_meters_readings_value_non_negative"),
         sa.CheckConstraint(
@@ -114,7 +138,8 @@ def upgrade() -> None:
     )
     op.create_index("ix_meters_reading_logs_reading_id", "meters_reading_logs", ["reading_id"])
 
-    # Append-only audit trail: no code path (or manual SQL) can rewrite history.
+    # Append-only audit trail: no application code path or ad-hoc SQL can rewrite history
+    # (short of a superuser disabling the triggers).
     op.execute(
         """
         CREATE FUNCTION meters_reading_logs_reject_change() RETURNS trigger
@@ -133,12 +158,22 @@ def upgrade() -> None:
         FOR EACH ROW EXECUTE FUNCTION meters_reading_logs_reject_change()
         """
     )
+    # Row triggers do not fire on TRUNCATE; a statement trigger closes that hole.
+    op.execute(
+        """
+        CREATE TRIGGER meters_reading_logs_no_truncate
+        BEFORE TRUNCATE ON meters_reading_logs
+        FOR EACH STATEMENT EXECUTE FUNCTION meters_reading_logs_reject_change()
+        """
+    )
 
 
 def downgrade() -> None:
+    op.execute("DROP TRIGGER meters_reading_logs_no_truncate ON meters_reading_logs")
     op.execute("DROP TRIGGER meters_reading_logs_append_only ON meters_reading_logs")
     op.execute("DROP FUNCTION meters_reading_logs_reject_change()")
     op.drop_table("meters_reading_logs")
     op.drop_table("meters_readings")
     op.drop_table("meters_periods")
     op.drop_table("meters_devices")
+    op.drop_constraint("uq_property_apartments_id_building", "property_apartments", type_="unique")

@@ -175,6 +175,7 @@ async def create_reading(
     submitted_by: User | None = None,
 ) -> MeterReading:
     reading = MeterReading(
+        building_id=meter.building_id,
         meter_id=meter.id,
         period_id=period.id,
         value=value,

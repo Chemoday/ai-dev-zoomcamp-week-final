@@ -77,21 +77,37 @@ async def test_device_server_defaults(db_session: AsyncSession, setup) -> None:
 
 
 @pytest.mark.parametrize(
-    ("column", "value"),
+    ("column", "value", "constraint"),
     [
-        ("resource_type", "STEAM"),
-        ("unit", "liters"),
-        ("initial_value", "-1"),
-        ("max_monthly_delta", "0"),
+        ("resource_type", "STEAM", "ck_meters_devices_resource_type"),
+        ("unit", "liters", "ck_meters_devices_unit"),
+        ("initial_value", "-1", "ck_meters_devices_initial_value_non_negative"),
+        ("max_monthly_delta", "0", "ck_meters_devices_max_monthly_delta_positive"),
     ],
 )
-async def test_device_constraints(db_session: AsyncSession, setup, column: str, value: str) -> None:
+async def test_device_constraints(
+    db_session: AsyncSession, setup, column: str, value: str, constraint: str
+) -> None:
     meter = setup[2]
     await expect_rejected(
         db_session,
         f"UPDATE meters_devices SET {column} = :value WHERE id = :id",
         {"value": value, "id": meter.id},
-        match="ck_meters_devices",
+        match=constraint,
+    )
+
+
+async def test_apartment_meter_must_be_in_the_apartments_building(
+    db_session: AsyncSession, setup
+) -> None:
+    _, apartment, meter, _ = setup
+    other = await create_building(db_session, name="KÜ Mujal 1")
+
+    await expect_rejected(
+        db_session,
+        "UPDATE meters_devices SET building_id = :other WHERE id = :id",
+        {"other": other.id, "id": meter.id},
+        match="fk_meters_devices_apartment_building",
     )
 
 
@@ -165,6 +181,10 @@ async def test_stored_delta_must_match_the_values(db_session: AsyncSession, setu
     ("assignment", "constraint"),
     [
         ("value = -1, consumption_delta = -121.5", "ck_meters_readings_value_non_negative"),
+        (
+            "previous_value = -1, consumption_delta = 126",
+            "ck_meters_readings_previous_value_non_negative",
+        ),
         ("source = 'GUESS'", "ck_meters_readings_source"),
     ],
 )
@@ -216,3 +236,58 @@ async def test_audit_log_is_append_only(db_session: AsyncSession, setup) -> None
         select(MeterReadingLog.new_value).where(MeterReadingLog.id == log_id)
     )
     assert remaining == D("125.000")
+
+
+async def test_audit_log_cannot_be_truncated(db_session: AsyncSession, setup) -> None:
+    await expect_rejected(db_session, "TRUNCATE meters_reading_logs", match="append-only")
+
+
+# --- One building per row chain (regressions from the independent review) ----------------------
+
+
+async def test_reading_cannot_join_a_meter_and_a_period_of_different_buildings(
+    db_session: AsyncSession, setup
+) -> None:
+    building, _, meter, _ = setup
+    other = await create_building(db_session, name="KÜ Mujal 1")
+    foreign_period = await create_period(db_session, other, "2026-10")
+    params = {"building": building.id, "meter": meter.id, "period": foreign_period.id}
+
+    await expect_rejected(
+        db_session,
+        "INSERT INTO meters_readings (id, building_id, meter_id, period_id, value, previous_value,"
+        " consumption_delta, source) VALUES (gen_random_uuid(), :building, :meter, :period,"
+        " 125, 120, 5, 'RESIDENT')",
+        params,
+        match="fk_meters_readings_period_building",
+    )
+
+
+async def test_reading_building_must_be_the_meters_building(
+    db_session: AsyncSession, setup
+) -> None:
+    _, _, meter, _ = setup
+    other = await create_building(db_session, name="KÜ Mujal 1")
+    other_period = await create_period(db_session, other, "2026-10")
+    params = {"building": other.id, "meter": meter.id, "period": other_period.id}
+
+    await expect_rejected(
+        db_session,
+        "INSERT INTO meters_readings (id, building_id, meter_id, period_id, value, previous_value,"
+        " consumption_delta, source) VALUES (gen_random_uuid(), :building, :meter, :period,"
+        " 125, 120, 5, 'RESIDENT')",
+        params,
+        match="fk_meters_readings_meter_building",
+    )
+
+
+async def test_recorded_at_is_refreshed_on_update(db_session: AsyncSession, setup) -> None:
+    _, _, meter, period = setup
+    reading = await create_reading(db_session, meter, period, D("125.000"), D("120.500"))
+    first = reading.recorded_at
+
+    reading.value = D("126.000")
+    reading.consumption_delta = D("5.500")
+    await db_session.flush()
+
+    assert reading.recorded_at > first
