@@ -26,7 +26,23 @@ def clean_optional_text(value: str | None) -> str | None:
     return clean_text(value) or None
 
 
+def clean_required_text(value: str) -> str:
+    """Like clean_text, but blank input is rejected."""
+    cleaned = clean_text(value)
+    if not cleaned:
+        raise ValueError("text must not be blank")
+    return cleaned
+
+
 SafeText = Annotated[str, AfterValidator(clean_text)]
+
+
+def safe_text(max_length: int) -> object:
+    """Type for a required free-text field (titles, bodies, comments): length-checked, cleaned,
+    and never blank."""
+    return Annotated[
+        str, Field(min_length=1, max_length=max_length), AfterValidator(clean_required_text)
+    ]
 
 
 def optional_safe_text(max_length: int) -> object:
