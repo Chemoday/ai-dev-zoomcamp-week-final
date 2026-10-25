@@ -23,6 +23,8 @@ services:
       DEMO_MODE_ENABLED: "true"
       SEED_DEMO_DATA: "true"
       LOG_LEVEL: INFO
+      # Traces, metrics and logs go to the collector, then to Grafana (docs/OBSERVABILITY.md).
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     depends_on:
@@ -38,6 +40,20 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
+
+  # Observability (Task 8): collector + Grafana LGTM (Tempo traces, Prometheus metrics, Loki logs).
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.115.1
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./ops/otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    depends_on:
+      - lgtm
+
+  lgtm:
+    image: grafana/otel-lgtm:0.8.1
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
 
 volumes:
   pgdata:
