@@ -51,6 +51,8 @@ def upgrade() -> None:
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.text("true")),
         sa.Column("comments_enabled", sa.Boolean(), nullable=False, server_default=sa.text("true")),
         _created_at("created_at"),
+        sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("deleted_by_user_id", UUID, sa.ForeignKey("core_users.id"), nullable=True),
         sa.UniqueConstraint("id", "building_id", name="uq_comm_posts_id_building"),
         sa.ForeignKeyConstraint(
             ["author_apartment_id", "building_id"],
@@ -80,6 +82,14 @@ def upgrade() -> None:
         ),
         sa.CheckConstraint("btrim(title) <> ''", name="ck_comm_posts_title_not_blank"),
         sa.CheckConstraint("btrim(body) <> ''", name="ck_comm_posts_body_not_blank"),
+        sa.CheckConstraint(
+            "post_type = 'FORUM_TOPIC' OR deleted_at IS NULL",
+            name="ck_comm_posts_only_forum_deleted",
+        ),
+        sa.CheckConstraint(
+            "(deleted_at IS NULL) = (deleted_by_user_id IS NULL)",
+            name="ck_comm_posts_deleted_consistent",
+        ),
     )
     op.create_index("ix_comm_posts_building_id", "comm_posts", ["building_id"])
     op.create_index("ix_comm_posts_post_type", "comm_posts", ["post_type"])

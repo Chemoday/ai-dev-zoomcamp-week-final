@@ -3,10 +3,10 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 
 from src.core.security import get_current_user, require_building_roles
-from src.modules.communication.policies import PUBLISHER_ROLES
+from src.modules.communication.policies import MODERATOR_ROLES, PUBLISHER_ROLES
 from src.modules.communication.schemas import (
     FEED_PAGE_MAX,
     AcknowledgeResponse,
@@ -26,6 +26,7 @@ from src.modules.property.schemas import CurrentUserDTO
 router = APIRouter(prefix="/api/v1/communication", tags=["communication"])
 
 publisher = require_building_roles(*sorted(PUBLISHER_ROLES))
+moderator = require_building_roles(*sorted(MODERATOR_ROLES))
 
 
 @router.get("/emergencies/active", response_model=list[EmergencyView])
@@ -82,6 +83,16 @@ async def get_post(
     service: CommunicationService = Depends(get_communication_service),
 ) -> PostDetail:
     return await service.get_post(user, post_id)
+
+
+@router.delete("/posts/{post_id}", status_code=204)
+async def delete_post(
+    post_id: uuid.UUID,
+    user: CurrentUserDTO = Depends(moderator),
+    service: CommunicationService = Depends(get_communication_service),
+) -> Response:
+    await service.delete_post(user, post_id)
+    return Response(status_code=204)
 
 
 @router.post("/posts/{post_id}/comments", response_model=CommentView, status_code=201)

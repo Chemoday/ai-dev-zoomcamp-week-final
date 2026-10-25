@@ -4,7 +4,12 @@ import uuid
 
 import pytest
 
-from src.modules.communication.policies import can_publish, sees_all_targets, target_problem
+from src.modules.communication.policies import (
+    can_publish,
+    is_deletable,
+    sees_all_targets,
+    target_problem,
+)
 from src.modules.communication.schemas import PostType, TargetScope
 from src.modules.property.schemas import BuildingRole
 
@@ -72,3 +77,9 @@ def test_inconsistent_targets_are_explained(post_type, scope, entrance, apartmen
 
     assert problem is not None
     assert fragment in problem
+
+
+def test_only_forum_topics_are_deletable() -> None:
+    assert is_deletable(PostType.FORUM_TOPIC)
+    assert not is_deletable(PostType.EMERGENCY)
+    assert not is_deletable(PostType.OFFICIAL_NOTICE)

@@ -78,6 +78,15 @@ class Post(Base):
         ),
         CheckConstraint("btrim(title) <> ''", name="ck_comm_posts_title_not_blank"),
         CheckConstraint("btrim(body) <> ''", name="ck_comm_posts_body_not_blank"),
+        # Moderation: only forum topics are deleted, and a deletion always names who did it.
+        CheckConstraint(
+            "post_type = 'FORUM_TOPIC' OR deleted_at IS NULL",
+            name="ck_comm_posts_only_forum_deleted",
+        ),
+        CheckConstraint(
+            "(deleted_at IS NULL) = (deleted_by_user_id IS NULL)",
+            name="ck_comm_posts_deleted_consistent",
+        ),
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()
@@ -117,6 +126,11 @@ class Post(Base):
         Boolean, nullable=False, default=True, server_default=text("true")
     )
     created_at: Mapped[datetime] = _timestamp(index=True)
+    # Soft delete by the chairman: hidden from every read, kept for disputes (who deleted, when).
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("core_users.id"), nullable=True
+    )
 
 
 class Comment(Base):

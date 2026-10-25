@@ -19,7 +19,12 @@ from src.core.event_bus import EventOutbox
 from src.core.exceptions import DomainError
 from src.modules.communication.events import EmergencyAlertPublished, EmergencyAlertResolved
 from src.modules.communication.models import Comment, EmergencyAck, Post
-from src.modules.communication.policies import can_publish, sees_all_targets, target_problem
+from src.modules.communication.policies import (
+    can_publish,
+    is_deletable,
+    sees_all_targets,
+    target_problem,
+)
 from src.modules.communication.schemas import (
     AcknowledgeResponse,
     CommentCreateRequest,
@@ -267,6 +272,34 @@ class CommunicationService:
         badge = await self.property_service.get_masked_author_badge(user.id, author_apartment_id)
         return self._comment_view(user, comment, badge)
 
+    async def delete_post(self, user: CurrentUserDTO, post_id: uuid.UUID) -> None:
+        """Moderation: soft-delete a forum topic (with its comments) for everyone.
+
+        One conditional UPDATE, so a concurrent second delete finds nothing and gets 404.
+        """
+        deleted = await self.session.scalar(
+            update(Post)
+            .where(
+                Post.id == post_id,
+                Post.building_id == user.building_id,
+                Post.deleted_at.is_(None),
+                Post.post_type == PostType.FORUM_TOPIC,
+            )
+            .values(deleted_at=datetime.now(UTC), deleted_by_user_id=user.id)
+            .returning(Post.id)
+        )
+        if deleted is not None:
+            return
+        post = await self._visible_post(user, post_id)  # 404 when unknown or already deleted
+        if not is_deletable(post.post_type):
+            raise DomainError(
+                status_code=409,
+                error_code="POST_NOT_DELETABLE",
+                message="Only forum topics can be deleted; resolve an emergency instead.",
+                extra={"post_type": PostType(post.post_type).value},
+            )
+        raise _post_not_found()  # unreachable unless the post changed meanwhile
+
     # --- Internals ------------------------------------------------------------------------------
 
     @staticmethod
@@ -274,9 +307,10 @@ class CommunicationService:
         """Posts of the caller's building that target the caller (the board sees all of them).
 
         ENTRANCE matches any entrance of the caller's apartments, APARTMENT_LIST any of the
-        caller's apartments, so a user with two apartments sees the alerts of both.
+        caller's apartments, so a user with two apartments sees the alerts of both. A deleted
+        forum topic is hidden from everyone, the chairman included.
         """
-        in_building = Post.building_id == user.building_id
+        in_building = and_(Post.building_id == user.building_id, Post.deleted_at.is_(None))
         if sees_all_targets(user.building_role):
             return in_building
         targeted: list[ColumnElement[bool]] = [Post.target_scope == TargetScope.ALL_BUILDING]

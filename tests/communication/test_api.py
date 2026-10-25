@@ -500,3 +500,75 @@ async def test_unknown_post_and_anonymous_access(api_client: AsyncClient, world:
     assert unknown.json()["error_code"] == "POST_NOT_FOUND"
     assert anonymous.status_code == 401
     assert anonymous.json()["error_code"] == "NOT_AUTHENTICATED"
+
+
+# --- Moderation ----------------------------------------------------------------------------------
+
+
+async def test_the_chairman_deletes_a_forum_topic_for_everyone(
+    api_client: AsyncClient, world: CommWorld, db_session: AsyncSession
+) -> None:
+    topic = (await publish(api_client, world.owner_14)).json()
+    await api_client.post(
+        f"{API}/posts/{topic['id']}/comments",
+        json={"body": "Spam"},
+        headers=as_user(world.tenant_2),
+    )
+    url = f"{API}/posts/{topic['id']}"
+
+    deleted = await api_client.delete(url, headers=as_user(world.chairman))
+
+    assert deleted.status_code == 204
+    assert deleted.content == b""
+    for user in (world.owner_14, world.tenant_2, world.chairman, world.board):
+        assert topic["id"] not in await feed_ids(api_client, user)
+        assert (await api_client.get(url, headers=as_user(user))).status_code == 404
+    comment = await api_client.post(
+        f"{url}/comments", json={"body": "Still here?"}, headers=as_user(world.owner_14)
+    )
+    assert comment.status_code == 404
+    again = await api_client.delete(url, headers=as_user(world.chairman))
+    assert again.status_code == 404
+    assert again.json()["error_code"] == "POST_NOT_FOUND"
+
+    row = await db_session.get(Post, uuid.UUID(topic["id"]))
+    assert row.deleted_by_user_id == world.chairman.id, "kept for disputes: who deleted it"
+    assert row.deleted_at is not None
+
+
+async def test_only_the_chairman_may_delete(api_client: AsyncClient, world: CommWorld) -> None:
+    topic = (await publish(api_client, world.owner_14)).json()
+
+    for user in (world.owner_14, world.board, world.accountant):
+        response = await api_client.delete(f"{API}/posts/{topic['id']}", headers=as_user(user))
+        assert response.status_code == 403
+        assert response.json()["error_code"] == "FORBIDDEN"
+    assert topic["id"] in await feed_ids(api_client, world.tenant_2)
+
+
+async def test_emergencies_and_notices_are_not_deletable(
+    api_client: AsyncClient, world: CommWorld
+) -> None:
+    alert = await emergency(api_client, world.chairman)
+    notice = (await publish(api_client, world.chairman, post_type="OFFICIAL_NOTICE")).json()
+
+    for post in (alert, notice):
+        response = await api_client.delete(
+            f"{API}/posts/{post['id']}", headers=as_user(world.chairman)
+        )
+        assert response.status_code == 409
+        assert response.json()["error_code"] == "POST_NOT_DELETABLE"
+        assert response.json()["post_type"] == post["post_type"]
+
+
+async def test_posts_of_another_building_cannot_be_deleted(
+    api_client: AsyncClient, world: CommWorld, db_session: AsyncSession
+) -> None:
+    foreign = (await publish(api_client, world.other_resident)).json()
+
+    response = await api_client.delete(
+        f"{API}/posts/{foreign['id']}", headers=as_user(world.chairman)
+    )
+
+    assert response.status_code == 404
+    assert (await db_session.get(Post, uuid.UUID(foreign["id"]))).deleted_at is None

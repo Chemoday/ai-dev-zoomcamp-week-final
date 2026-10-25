@@ -9,6 +9,9 @@ from src.modules.property.schemas import BuildingRole
 # Publish emergencies and official notices, resolve emergencies, and see every targeted post.
 PUBLISHER_ROLES = frozenset({BuildingRole.CHAIRMAN, BuildingRole.BOARD})
 
+# Delete forum topics (moderation).
+MODERATOR_ROLES = frozenset({BuildingRole.CHAIRMAN})
+
 _BOARD_ONLY_TYPES = frozenset({PostType.EMERGENCY, PostType.OFFICIAL_NOTICE})
 
 
@@ -48,3 +51,9 @@ def target_problem(
         if target_entrance is not None:
             return "APARTMENT_LIST does not take target_entrance."
     return None
+
+
+def is_deletable(post_type: PostType) -> bool:
+    """Only forum topics are deleted. Emergencies are resolved instead, and official notices
+    stay as the board's record."""
+    return post_type == PostType.FORUM_TOPIC
