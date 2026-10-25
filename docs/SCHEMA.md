@@ -157,6 +157,8 @@ All tables use `UUID` primary keys (`uuid4`), UTC timestamps (`TIMESTAMPTZ`), an
 | `is_active` | `BOOLEAN` | `NOT NULL, DEFAULT TRUE` | For `EMERGENCY`: `TRUE` while the banner is active, `FALSE` once resolved. Always `TRUE` for other types |
 | `comments_enabled` | `BOOLEAN` | `NOT NULL, DEFAULT TRUE` | Board can disable comments on official notices |
 | `created_at` | `TIMESTAMPTZ` | `NOT NULL, INDEX` | Creation timestamp |
+| `deleted_at` | `TIMESTAMPTZ` | `NULLABLE` | Set when the chairman deleted the forum topic (soft delete: hidden from every read) |
+| `deleted_by_user_id` | `UUID` | `FK(core_users.id), NULLABLE` | Who deleted it |
 
 ### Table: `comm_comments`
 | Column | Type | Constraints | Description |
@@ -185,5 +187,6 @@ All tables use `UUID` primary keys (`uuid4`), UTC timestamps (`TIMESTAMPTZ`), an
 - `ck_comm_posts_forum_whole_building`: a `FORUM_TOPIC` is always `ALL_BUILDING`.
 - `ck_comm_posts_only_emergency_inactive`: only an `EMERGENCY` can have `is_active = FALSE`.
 - Titles and bodies are never blank (`btrim(...) <> ''`).
+- `ck_comm_posts_only_forum_deleted`: only a `FORUM_TOPIC` can be deleted; `ck_comm_posts_deleted_consistent`: `deleted_at` and `deleted_by_user_id` are set together.
 - **One building per row chain.** `comm_posts` is `UNIQUE (id, building_id)`. Composite foreign keys guarantee that a comment is in its post's building, `(post_id, building_id)` → `comm_posts`, and that the author's context apartment of a post or comment is in that building, `(author_apartment_id, building_id)` → `property_apartments`. A `NULL` apartment is not checked.
 - Not enforced by the database: that a targeted apartment id exists (JSONB has no foreign keys) and that the author belongs to the building. The service checks both on insert.

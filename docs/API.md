@@ -17,7 +17,7 @@ All errors share one JSON shape, `{"error_code": "...", "message": "...", ...ext
 | 401 | `NOT_AUTHENTICATED` / `INVALID_TOKEN` / `UNKNOWN_USER` | No credentials, a bad or expired token, or an unknown or inactive user (sent with `WWW-Authenticate: Bearer`) |
 | 403 | `FORBIDDEN` | Authenticated, but the building role or a membership flag (e.g. `can_submit_readings`) does not allow it |
 | 404 | `NOT_FOUND`, `MEMBERSHIP_NOT_FOUND`, `METER_NOT_FOUND`, `PERIOD_NOT_FOUND`, `READING_NOT_FOUND`, `POST_NOT_FOUND`, `EXPORTER_NOT_ENABLED` | Unknown route, a resource that does not exist or is not visible to you, or a disabled plugin |
-| 409 | `ANOMALY_CONFIRMATION_STEP_1/2`, `PERIOD_CLOSED`, `PERIOD_LOCKED`, `PERIOD_NOT_IN_REVIEW`, `INVALID_PERIOD_TRANSITION`, `READING_SET_BY_BOARD`, `LATER_READING_EXISTS`, `COMMENTS_DISABLED` | The request is valid, but conflicts with the current state |
+| 409 | `ANOMALY_CONFIRMATION_STEP_1/2`, `PERIOD_CLOSED`, `PERIOD_LOCKED`, `PERIOD_NOT_IN_REVIEW`, `INVALID_PERIOD_TRANSITION`, `READING_SET_BY_BOARD`, `LATER_READING_EXISTS`, `COMMENTS_DISABLED`, `POST_NOT_DELETABLE` | The request is valid, but conflicts with the current state |
 | 405 | `METHOD_NOT_ALLOWED` | The route exists but not for this HTTP method |
 | 422 | `VALIDATION_ERROR`, `READING_BELOW_PREVIOUS`, `REASON_REQUIRED`, `ESTIMATE_OUT_OF_RANGE`, `INVALID_TARGET`, `INVALID_AUTHOR_APARTMENT` | Invalid input; for `VALIDATION_ERROR` the details are in `errors`. Free-text fields reject control characters, e.g. NUL |
 | 500 | `INTERNAL_SERVER_ERROR` | Unhandled error; the body carries `trace_id` |
@@ -345,6 +345,13 @@ Creates a post. Response `201 Created` with the post object.
 ### `GET /api/v1/communication/posts/{post_id}`
 The post object plus `comments`, oldest first: `[{"id", "post_id", "body", "author_badge", "is_mine", "created_at"}]`. A post not visible to the caller is `404 POST_NOT_FOUND`.
 
+### `DELETE /api/v1/communication/posts/{post_id}`
+(Requires role: `CHAIRMAN`)
+Moderation: deletes a forum topic together with its comments, for everyone. Response `204 No Content`.
+- A soft delete: the row keeps `deleted_at` and `deleted_by_user_id` for disputes, but every read treats the topic as gone (`404 POST_NOT_FOUND`, also for the chairman and for a second delete).
+- Only `FORUM_TOPIC` posts: an emergency or an official notice returns `409 POST_NOT_DELETABLE` with its `post_type` (an emergency is resolved instead).
+- A post of another building, or an unknown one, is `404 POST_NOT_FOUND`.
+
 ### `POST /api/v1/communication/posts/{post_id}/comments`
 Request: `{"body": "Good idea!", "author_apartment_id": null}`. Response `201 Created` with the comment object.
 - The post must be visible to the caller (`404 POST_NOT_FOUND`) and have `comments_enabled` (`409 COMMENTS_DISABLED`).
@@ -354,4 +361,4 @@ Published on the event bus **after** the request's transaction commits (never fo
 - `EmergencyAlertPublished`: `post_id`, `building_id`, `category`, `target_scope`, `target_entrance`, `target_apartment_ids`, `published_by_user_id`.
 - `EmergencyAlertResolved`: `post_id`, `building_id`, `resolved_by_user_id`.
 
-Moderation (deleting or hiding forum posts) is not part of the MVP.
+Further moderation (authors deleting their own posts, hiding single comments, reports, a moderation log) is in the Phase 2 backlog, docs/ROADMAP_MVP.md.

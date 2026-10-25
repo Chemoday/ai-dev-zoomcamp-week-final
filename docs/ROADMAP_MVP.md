@@ -71,6 +71,7 @@ Goal: Deliver a production-grade, extensible Modular Monolith implementing `prop
 - Parent/Child expense distribution engine (allocating `Master Meter - Sum(Apartment Meters)` water losses).
 - Telegram Bot & WebPush plugins subscribed to `EmergencyAlertPublished` and `ReadingDeadlineApproaching` events.
 - Country plugin `ee/e_arve_xml` and accounting exports.
+- Forum moderation beyond the MVP (the MVP only lets the chairman delete a forum topic): authors edit or delete their own posts and comments; the board hides single comments; residents report abusive posts; a moderation log; purging soft-deleted content after a retention period (GDPR). Tracked in [#18](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/18).
 
 ## Phase 3: Legal Governance, IoT & Managed Cloud
 - Cryptographic Voting (`governance`): Generates PDF ballots per choice (`POOLT` / `VASTU`), stores SHA-256 digests, and verifies uploaded `.asice` containers automatically.
