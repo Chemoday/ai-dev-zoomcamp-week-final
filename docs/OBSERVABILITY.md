@@ -107,7 +107,13 @@ docker compose up --build
 
 Within about 15 seconds the alert fires, the agent writes the incident (or dispatches it), and the
 responder opens a pull request into `demo/oncall-incident` with a regression test and the fix.
-The result of the recorded run is linked in the Task 8 pull request.
+**Recorded run (2026-10-25):** the request with `trace_id` `2931af48c24fb9d0c4d94dc9c6e0cb79`
+answered 500; the alert fired, the agent named `src/modules/meters/service.py:348`
+(`_audit_reason`, `AttributeError`), and the responder workflow
+([run](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/actions/runs/40232412197)) opened
+[PR #26](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/pull/26) into
+`demo/oncall-incident` with a regression test and the fix, after `pytest` was green. The repository
+setting "Allow GitHub Actions to create and approve pull requests" is required for that last step.
 
 ## Known limits
 
