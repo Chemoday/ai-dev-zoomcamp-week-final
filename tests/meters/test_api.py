@@ -793,6 +793,36 @@ async def test_whitespace_reason_counts_as_missing(
     assert response.json()["error_code"] == "REASON_REQUIRED"
 
 
+async def test_resident_update_without_reason_does_not_crash(
+    api_client: AsyncClient, db_session: AsyncSession, world: MetersWorld
+) -> None:
+    """Regression test for trace_id 2931af48c24fb9d0c4d94dc9c6e0cb79.
+
+    When a resident updates their own reading without providing a reason,
+    _audit_reason must handle reason=None gracefully instead of calling .strip() on it.
+    """
+    first = await submit(api_client, world.owner_14, world.meter_14, "120.000")
+    assert first.status_code == 200
+    reading_id = first.json()["reading_id"]
+
+    # Update without a reason - this should not crash
+    second = await submit(api_client, world.owner_14, world.meter_14, "121.000", reason=None)
+
+    assert second.status_code == 200
+    assert second.json()["reading_id"] == reading_id
+    assert second.json()["value"] == "121.000"
+
+    # Verify audit log has the default reason
+    reasons = list(
+        await db_session.scalars(
+            select(MeterReadingLog.reason)
+            .where(MeterReadingLog.reading_id == uuid.UUID(reading_id))
+            .order_by(MeterReadingLog.changed_at)
+        )
+    )
+    assert reasons == ["Resident submission", "Resident update"]
+
+
 async def test_staff_who_live_in_the_building_submit_as_residents_while_open(
     api_client: AsyncClient, db_session: AsyncSession, world: MetersWorld
 ) -> None:

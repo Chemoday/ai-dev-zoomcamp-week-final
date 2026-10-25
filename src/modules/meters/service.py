@@ -345,7 +345,9 @@ class MetersService:
         default = MetersService._default_reason(source, old_value)
         if old_value is None:
             return reason or default
-        return f"{default}: {reason.strip()} (was {old_value})"
+        if reason is None:
+            return default
+        return reason.strip()
 
     @staticmethod
     def _default_reason(source: ReadingSource, old_value: Decimal | None) -> str:
