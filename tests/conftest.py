@@ -1,16 +1,101 @@
+import asyncio
 import io
 import json
+import os
 from collections.abc import AsyncIterator, Iterator
 
 import pytest
+from alembic import command
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 
 from src.core.config import get_settings
+from src.core.database import get_db_session
+from src.core.migrations import alembic_config
 from src.core.telemetry import PIIScrubbingSpanExporter, configure_logging, configure_tracing
 from src.main import create_app
+
+# --- Database (integration tests) --------------------------------------------------------------
+
+
+@pytest.fixture(scope="session")
+def database_url() -> Iterator[str]:
+    """TEST_DATABASE_URL if set (CI service), otherwise a throwaway PostgreSQL container.
+
+    The container keeps `pytest` a single command locally: only Docker is required.
+    """
+    if url := os.environ.get("TEST_DATABASE_URL"):
+        yield url
+        return
+    from testcontainers.community.postgres import PostgresContainer
+
+    with PostgresContainer("postgres:16-alpine", driver="asyncpg") as postgres:
+        yield postgres.get_connection_url()
+
+
+@pytest.fixture(scope="session")
+async def db_engine(database_url: str) -> AsyncIterator[AsyncEngine]:
+    """Engine for a database migrated with the real Alembic migrations (tested on every run)."""
+    # Alembic's env.py calls asyncio.run(), so it runs outside this event loop.
+    await asyncio.to_thread(command.upgrade, alembic_config(database_url), "head")
+    engine = create_async_engine(database_url)
+    yield engine
+    await engine.dispose()
+
+
+@pytest.fixture
+async def db_session(db_engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
+    """A session inside an outer transaction that is rolled back after the test.
+
+    Commits issued by the app only release a SAVEPOINT, so tests never leak data.
+    """
+    async with db_engine.connect() as connection:
+        transaction = await connection.begin()
+        session = AsyncSession(
+            bind=connection,
+            expire_on_commit=False,
+            autoflush=False,
+            join_transaction_mode="create_savepoint",
+        )
+        try:
+            yield session
+        finally:
+            await session.close()
+            await transaction.rollback()
+
+
+@pytest.fixture
+def db_app(app: FastAPI, db_session: AsyncSession) -> Iterator[FastAPI]:
+    """The app with get_db_session bound to the test transaction (same commit/rollback rules).
+
+    Each request starts by committing (releasing the SAVEPOINT of) the test's own setup data, so a
+    failing request rolls back only its own changes, as it would with a real per-request session.
+    """
+
+    async def override_db_session() -> AsyncIterator[AsyncSession]:
+        await db_session.commit()
+        try:
+            yield db_session
+            await db_session.commit()
+        except Exception:
+            await db_session.rollback()
+            raise
+
+    app.dependency_overrides[get_db_session] = override_db_session
+    yield app
+    app.dependency_overrides.pop(get_db_session, None)
+
+
+@pytest.fixture
+async def api_client(db_app: FastAPI) -> AsyncIterator[AsyncClient]:
+    async with AsyncClient(transport=ASGITransport(app=db_app), base_url="http://test") as client:
+        yield client
+
+
+# --- App, telemetry and logs -------------------------------------------------------------------
 
 
 @pytest.fixture(scope="session")

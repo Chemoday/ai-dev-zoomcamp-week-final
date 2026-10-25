@@ -52,10 +52,18 @@ async def _current_revisions(database_url: str) -> set[str]:
     return set(heads)
 
 
-def run_startup_migrations() -> MigrationAction:
+def alembic_config(database_url: str) -> Config:
     config = Config(str(ALEMBIC_INI))
+    # ConfigParser interpolation: a literal "%" (e.g. in a password) must be doubled.
+    config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
+    return config
+
+
+def run_startup_migrations(database_url: str | None = None) -> MigrationAction:
+    database_url = database_url or settings.DATABASE_URL
+    config = alembic_config(database_url)
     known = {revision.revision for revision in ScriptDirectory.from_config(config).walk_revisions()}
-    current = asyncio.run(_current_revisions(settings.DATABASE_URL))
+    current = asyncio.run(_current_revisions(database_url))
 
     action = plan_migration(current, known)
     if action is MigrationAction.SKIP_SCHEMA_AHEAD:

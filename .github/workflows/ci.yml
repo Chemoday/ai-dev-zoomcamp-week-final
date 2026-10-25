@@ -31,7 +31,8 @@ jobs:
           --health-timeout 3s
           --health-retries 20
     env:
-      DATABASE_URL: postgresql+asyncpg://app:app@localhost:5432/app
+      # Integration tests use this database instead of starting their own container.
+      TEST_DATABASE_URL: postgresql+asyncpg://app:app@localhost:5432/app
     steps:
       - uses: actions/checkout@v4
 
