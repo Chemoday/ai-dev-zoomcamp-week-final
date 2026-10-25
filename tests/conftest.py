@@ -18,7 +18,8 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from src.core.config import get_settings
-from src.core.database import build_engine, get_db_session
+from src.core.database import build_engine, get_db_session, transaction
+from src.core.event_bus import DomainEvent, event_bus
 from src.core.migrations import alembic_config
 from src.core.telemetry import PIIScrubbingSpanExporter, configure_logging, configure_tracing
 from src.main import create_app
@@ -74,7 +75,8 @@ async def db_session(db_engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
 
 @pytest.fixture
 def db_app(app: FastAPI, db_session: AsyncSession) -> Iterator[FastAPI]:
-    """The app with get_db_session bound to the test transaction (same commit/rollback rules).
+    """The app with get_db_session bound to the test transaction (same commit/rollback rules,
+    and the same event outbox: events are published only after the request's commit).
 
     Each request behaves like a fresh per-request session:
     - the test's setup data is committed first (its SAVEPOINT released), so a failing request rolls
@@ -87,17 +89,27 @@ def db_app(app: FastAPI, db_session: AsyncSession) -> Iterator[FastAPI]:
         await db_session.commit()
         db_session.expunge_all()
         try:
-            yield db_session
-            await db_session.commit()
-        except Exception:
-            await db_session.rollback()
-            raise
+            async with transaction(db_session):
+                yield db_session
         finally:
             db_session.expunge_all()
 
     app.dependency_overrides[get_db_session] = override_db_session
     yield app
     app.dependency_overrides.pop(get_db_session, None)
+
+
+@pytest.fixture
+def published_events() -> Iterator[list[DomainEvent]]:
+    """Every domain event published on the app's bus during the test, in order."""
+    received: list[DomainEvent] = []
+
+    async def record(event: DomainEvent) -> None:
+        received.append(event)
+
+    event_bus.subscribe(DomainEvent, record)
+    yield received
+    event_bus.unsubscribe(DomainEvent, record)
 
 
 @pytest.fixture

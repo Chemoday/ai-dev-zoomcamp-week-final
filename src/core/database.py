@@ -1,7 +1,8 @@
 """Async SQLAlchemy engine, session factory, declarative Base and the request-scoped session."""
 
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterator
+from contextlib import asynccontextmanager
 from enum import StrEnum
 from typing import Annotated
 
@@ -17,6 +18,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from src.core.config import settings
+from src.core.event_bus import EventBus, EventOutbox, get_event_bus
 
 
 def build_engine(database_url: str) -> AsyncEngine:
@@ -63,18 +65,52 @@ def varchar_enum(enum_cls: type[StrEnum], check_name: str, length: int = 32) -> 
     )
 
 
+_OUTBOX_KEY = "event_outbox"
+
+
+def session_outbox(session: AsyncSession, bus: EventBus) -> EventOutbox:
+    """The event outbox of this session's unit of work (created on first use)."""
+    outbox = session.info.get(_OUTBOX_KEY)
+    if outbox is None:
+        outbox = session.info[_OUTBOX_KEY] = EventOutbox(bus)
+    return outbox
+
+
+@asynccontextmanager
+async def transaction(session: AsyncSession) -> AsyncIterator[AsyncSession]:
+    """One unit of work: commit on success, roll back on any exception.
+
+    Domain events collected in the session's outbox are published only after the COMMIT
+    succeeded, and dropped otherwise.
+    """
+    committed = False
+    try:
+        yield session
+        await session.commit()
+        committed = True
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        outbox: EventOutbox | None = session.info.pop(_OUTBOX_KEY, None)
+        if committed and outbox is not None:
+            await outbox.publish_pending()
+
+
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
-    """Yield one session per request: commit on success, roll back on any exception."""
-    async with async_session_factory() as session:
-        try:
-            yield session
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            raise
+    """Yield one session per request: commit on success, roll back on any exception, then
+    publish the request's domain events (see `transaction`)."""
+    async with async_session_factory() as session, transaction(session):
+        yield session
 
 
 # Always depend on the session through this alias. scope="function" ends the dependency (commit or
 # rollback) BEFORE the response is sent. FastAPI's default "request" scope would commit after the
 # client already got a 2xx, so a failed commit would still look successful.
 DbSession = Annotated[AsyncSession, Depends(get_db_session, scope="function")]
+
+
+def get_event_outbox(session: DbSession, bus: EventBus = Depends(get_event_bus)) -> EventOutbox:
+    """FastAPI dependency: the request's outbox. Services add events here instead of publishing
+    them directly; they go out after the request's transaction commits."""
+    return session_outbox(session, bus)
