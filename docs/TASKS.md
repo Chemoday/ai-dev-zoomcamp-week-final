@@ -137,12 +137,12 @@ Each task is atomic, self-contained, and designed to be executed sequentially by
   - [x] **8.4 Alert rule.** `ops/alert-rules.yaml` (Grafana alerting provisioning): a Loki rule on 5xx log lines of `POST /api/v1/meters/readings`, grouped by `trace_id`, so the firing alert carries the `trace_id` and the error log; contact point = webhook to the on-call receiver. Add a fault switch for the demo only if a real failing input is not available.
   - [x] **8.5 On-call agent.** `scripts/oncall_agent.py`: `serve` (webhook receiver; forwards the alert as a GitHub `repository_dispatch` when `GITHUB_TOKEN` is set) and `respond` (reads the payload, extracts `trace_id`, error type and the offending file/line from the traceback, asks Claude for a regression test and a patch, runs `pytest`, opens a PR referencing the alert). Unit tests for payload parsing and traceback extraction, no network.
   - [x] **8.6 Workflow.** `.github/workflows/oncall-responder.yml`: `repository_dispatch` (`oncall-alert`) and `workflow_dispatch` with a sample payload; runs `respond` with the `ANTHROPIC_API_KEY` secret (the project owner adds it). The PR must reference the alert and pass CI.
-  - [ ] **8.7 End-to-end demo and docs.** `docs/OBSERVABILITY.md`: how to open the dashboards, follow one `trace_id` across trace, logs and metrics, trigger the alert, and what the agent did (link to its PR). Tick the acceptance criteria below, mark the PR ready for review.
+  - [x] **8.7 End-to-end demo and docs.** `docs/OBSERVABILITY.md`: how to open the dashboards, follow one `trace_id` across trace, logs and metrics, trigger the alert, and what the agent did (link to its PR). Tick the acceptance criteria below, mark the PR ready for review.
 - **Acceptance Criteria & Tests:**
   - [x] `docker compose up` also starts the collector and the trace/log/metric backends; one `POST /api/v1/meters/readings` request is viewable in the UI as a trace, metrics and logs sharing the same `trace_id`.
   - [x] Exported telemetry contains no PII or credentials (covered by a test).
   - [x] The alert fires when `POST /api/v1/meters/readings` returns 5xx and delivers a webhook payload containing the `trace_id`.
-  - [ ] The on-call agent, triggered by that webhook, finds the correlated error log, adds a regression test, gets `pytest` green and opens a pull request that references the alert.
+  - [x] The on-call agent, triggered by that webhook, finds the correlated error log, adds a regression test, gets `pytest` green and opens a pull request that references the alert.
 
 ---
 
