@@ -35,4 +35,4 @@ class ReadingPeriodStatusChanged(DomainEvent):
     period_code: str
     old_status: PeriodStatus
     new_status: PeriodStatus
-    changed_by_user_id: uuid.UUID
+    changed_by_user_id: uuid.UUID | None  # None for an automatic change (e.g. the deadline)

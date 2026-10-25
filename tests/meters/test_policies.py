@@ -132,8 +132,9 @@ def test_negative_confirmation_level_is_refused() -> None:
 # --- Rolling average ----------------------------------------------------------------------------
 
 
-def test_average_without_history_is_the_default() -> None:
-    assert calculate_rolling_average_delta([], D("4.2")) == D("4.200")
+def test_average_without_history_is_the_default_in_canonical_form() -> None:
+    assert str(calculate_rolling_average_delta([], D("4.2"))) == "4.200"
+    assert str(calculate_rolling_average_delta([], D("0"))) == "0.000"
 
 
 def test_average_uses_only_the_last_three_deltas() -> None:
@@ -148,22 +149,32 @@ def test_average_with_shorter_history_uses_what_exists() -> None:
 @pytest.mark.parametrize(
     ("deltas", "expected"),
     [
-        (["1.000", "1.000", "2.000"], "1.333"),  # 1.3333... rounds down
-        (["1.000", "1.000", "3.001"], "1.667"),  # 1.6670 stays
-        (["0.0015"], "0.002"),  # half-up, not banker's rounding
-        (["0.0025"], "0.003"),
+        (["0.001", "0.001", "0.002"], "0.001"),  # 0.001333... rounds down
+        (["1.000", "1.000", "3.001"], "1.667"),  # 1.667 exactly
+        (["0.001", "0.002"], "0.002"),  # 0.0015: half-up and banker's agree
+        (["0.002", "0.003"], "0.003"),  # 0.0025: half-up gives 0.003, banker's would give 0.002
     ],
 )
 def test_average_is_rounded_half_up_to_meter_precision(deltas: list[str], expected: str) -> None:
     result = calculate_rolling_average_delta([D(d) for d in deltas], D("0"))
 
-    assert result == D(expected)
-    assert result.as_tuple().exponent == -3
+    assert str(result) == expected
 
 
-def test_negative_deltas_are_ignored() -> None:
+def test_negative_deltas_inside_the_window_are_dropped() -> None:
     deltas = [D("5.000"), D("-100.000"), D("7.000")]
-    assert calculate_rolling_average_delta(deltas, D("0")) == D("6.000")
+    assert str(calculate_rolling_average_delta(deltas, D("0"))) == "6.000"
+
+
+def test_the_window_never_reaches_further_back_than_three_periods() -> None:
+    # Window = the last three periods (-1, -1, 1); the 9 from four periods ago is not used.
+    deltas = [D("9.000"), D("-1.000"), D("-1.000"), D("1.000")]
+    assert str(calculate_rolling_average_delta(deltas, D("0"))) == "1.000"
+
+
+def test_a_window_of_only_corrections_falls_back_to_the_default() -> None:
+    deltas = [D("8.000"), D("-1.000"), D("-2.000"), D("-3.000")]
+    assert str(calculate_rolling_average_delta(deltas, D("0"))) == "0.000"
 
 
 def test_average_refuses_floats() -> None:
@@ -171,3 +182,31 @@ def test_average_refuses_floats() -> None:
         calculate_rolling_average_delta([4.2], D("0"))
     with pytest.raises(TypeError):
         calculate_rolling_average_delta([], 4.2)
+
+
+# --- Canonical values (regressions from the independent review) --------------------------------
+
+
+def test_delta_is_canonical_even_for_non_canonical_inputs() -> None:
+    result = validate_reading_delta(D("124"), D("1254.1"), MAX, AVG, 2)
+
+    assert str(result.consumption_delta) == "1130.100"
+
+
+def test_zero_delta_is_never_negative_zero() -> None:
+    result = validate_reading_delta(D("-0"), D("0"), MAX, AVG, 0)
+
+    assert str(result.consumption_delta) == "0.000"
+    assert result.status == ReadingCheckStatus.OK
+
+
+def test_more_than_three_decimals_are_refused_not_rounded() -> None:
+    with pytest.raises(ValueError, match="more than 3 decimal places"):
+        validate_reading_delta(D("1.000"), D("1.0005"), MAX, AVG, 0)
+
+
+def test_confirmation_above_two_saves_like_two() -> None:
+    result = check("124.000", "1254.000", level=3)
+
+    assert result.status == ReadingCheckStatus.OK
+    assert result.is_anomaly_confirmed is True

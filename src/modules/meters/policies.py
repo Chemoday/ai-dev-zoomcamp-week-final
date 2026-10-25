@@ -39,13 +39,24 @@ class ReadingCheck:
         )
 
 
+def canonical_meter_value(value: Decimal) -> Decimal:
+    """NUMERIC(12, 3) canonical form: exactly 3 decimals and never -0.
+
+    Raises ValueError instead of rounding: losing a digit of a meter value is never silent.
+    """
+    quantized = value.quantize(METER_PRECISION)
+    if quantized != value:
+        raise ValueError(f"{value} has more than 3 decimal places")
+    return quantized.copy_abs() if quantized.is_zero() else quantized
+
+
 def _require_decimal(name: str, value: object) -> Decimal:
     # Guardrail: floats never enter meter arithmetic (AGENTS.md, "Precision").
     if not isinstance(value, Decimal):
         raise TypeError(f"{name} must be a Decimal, got {type(value).__name__}")
     if not value.is_finite():
         raise ValueError(f"{name} must be finite")
-    return value
+    return canonical_meter_value(value)
 
 
 def is_anomalous_delta(delta: Decimal, max_delta: Decimal, avg_delta: Decimal) -> bool:
@@ -77,7 +88,7 @@ def validate_reading_delta(
     if confirmation_level < 0:
         raise ValueError("confirmation_level must be >= 0")
 
-    delta = new_value - prev_value
+    delta = canonical_meter_value(new_value - prev_value)
     if delta < 0:
         return ReadingCheck(ReadingCheckStatus.ERR_BELOW_PREV, delta, is_anomaly=False)
     if not is_anomalous_delta(delta, max_delta, avg_delta):
@@ -92,15 +103,16 @@ def validate_reading_delta(
 def calculate_rolling_average_delta(
     historical_deltas: Sequence[Decimal], default_delta: Decimal
 ) -> Decimal:
-    """Mean of the last ROLLING_WINDOW deltas (chronological order, oldest first).
+    """Mean of the last ROLLING_WINDOW period deltas (chronological order, oldest first).
 
-    Negative deltas are correction artefacts and are ignored. Without usable history the
-    default applies. The result is rounded half-up to the meter precision (0.001).
+    Negative deltas inside the window are correction artefacts and are dropped; the window never
+    reaches further back. Without usable deltas the caller's default applies (see
+    docs/ROADMAP_MVP.md for which readings count as history). Rounded half-up to 0.001.
     """
     default_delta = _require_decimal("default_delta", default_delta)
     checked = [_require_decimal("historical delta", delta) for delta in historical_deltas]
-    window = [delta for delta in checked if delta >= 0][-ROLLING_WINDOW:]
-    if not window:
-        return default_delta.quantize(METER_PRECISION, rounding=ROUND_HALF_UP)
-    average = sum(window, start=Decimal(0)) / len(window)
-    return average.quantize(METER_PRECISION, rounding=ROUND_HALF_UP)
+    usable = [delta for delta in checked[-ROLLING_WINDOW:] if delta >= 0]
+    if not usable:
+        return default_delta
+    average = sum(usable, start=Decimal(0)) / len(usable)
+    return canonical_meter_value(average.quantize(METER_PRECISION, rounding=ROUND_HALF_UP))

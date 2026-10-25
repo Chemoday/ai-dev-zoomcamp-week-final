@@ -5,12 +5,15 @@ rejected on input: a float like 1254.1 cannot be represented exactly, and the va
 billing. Clients send values as strings ("1254.100"), and responses return them as strings.
 """
 
+import re
 import uuid
 from decimal import Decimal
 from enum import StrEnum
 from typing import Annotated, Any
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field, StrictInt
+
+from src.modules.meters.policies import canonical_meter_value
 
 
 class ResourceType(StrEnum):
@@ -40,17 +43,25 @@ class ReadingSource(StrEnum):
     IOT_WEBHOOK = "IOT_WEBHOOK"
 
 
-def _reject_float(value: Any) -> Any:
-    if isinstance(value, float):
+# ASCII digits only, at most 9 integer digits and 3 decimals: no exponents, signs, separators
+# ("1_000"), commas or non-ASCII digits that Python's Decimal would otherwise accept.
+_METER_VALUE_TEXT = re.compile(r"[0-9]{1,9}(\.[0-9]{1,3})?")
+
+
+def _parse_meter_value(value: Any) -> Any:
+    if isinstance(value, bool | float):
         raise ValueError('meter values must be sent as strings (e.g. "1254.100"), not floats')
+    if isinstance(value, str) and not _METER_VALUE_TEXT.fullmatch(value):
+        raise ValueError('meter values are plain decimals with up to 3 places, e.g. "1254.100"')
     return value
 
 
-# NUMERIC(12, 3): up to 999 999 999.999, never negative.
+# NUMERIC(12, 3): 0 .. 999 999 999.999, always returned with exactly 3 decimals ("1254.000").
 MeterValue = Annotated[
     Decimal,
-    BeforeValidator(_reject_float),
+    BeforeValidator(_parse_meter_value),
     Field(ge=0, max_digits=12, decimal_places=3, allow_inf_nan=False),
+    AfterValidator(canonical_meter_value),
 ]
 
 PERIOD_CODE_PATTERN = r"^[0-9]{4}-(0[1-9]|1[0-2])$"
@@ -66,5 +77,6 @@ class ReadingSubmitRequest(BaseModel):
     period_code: PeriodCode
     value: MeterValue
     # docs/API.md: 0 -> popup #1, 1 -> popup #2, >= 2 -> save as a confirmed anomaly.
-    confirmation_level: int = Field(default=0, ge=0)
+    # Strict: true, "2" and 1.0 are not confirmation levels.
+    confirmation_level: StrictInt = Field(default=0, ge=0, le=100)
     reason: str | None = Field(default=None, max_length=500)
