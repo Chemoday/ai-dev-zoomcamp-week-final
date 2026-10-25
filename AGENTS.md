@@ -8,7 +8,7 @@ All AI coding, testing, and on-call agents operating in this repository MUST fol
 - [MVP Scope & Roadmap](docs/ROADMAP_MVP.md)
 - [Database Schema Specification](docs/SCHEMA.md)
 - [REST API Contracts](docs/API.md) and the machine-readable [OpenAPI contract](docs/openapi.json)
-- [Frontend Integration Guide](docs/FRONTEND_GUIDE.md)
+- [Frontend Integration Guide](docs/FRONTEND_GUIDE.md) and the [Frontend Git Workflow](docs/FRONTEND_GIT_WORKFLOW.md)
 - [Implementation Task Backlog](docs/TASKS.md)
 - [Product Backlog: known problems after the MVP](docs/BACKLOG.md)
 - [Deployment, CD & Rollback](docs/DEPLOYMENT.md)
