@@ -19,7 +19,14 @@ When delta = new_value - previous_value exceeds max_reasonable_delta (or 3x hist
 If request confirmation_level == 0: Return HTTP 409 Conflict (code: ANOMALY_CONFIRMATION_STEP_1 — triggers Popup #1: "Value is unusually high, are you sure?").
 If request confirmation_level == 1: Return HTTP 409 Conflict (code: ANOMALY_CONFIRMATION_STEP_2 — triggers Popup #2: "Please double-check digits; this goes directly to billing!").
 If request confirmation_level >= 2: Save reading with is_anomaly_confirmed = True.
-The 3-month average (`calculate_rolling_average_delta`) is the mean of the last 3 available period deltas of that meter, rounded to 0.001 (half-up). Negative deltas (correction artefacts) are ignored. Without history the meter's default applies.
+The 3-month average (`calculate_rolling_average_delta`):
+- **Window:** the meter's last 3 period deltas (chronological). Negative deltas inside that window (correction artefacts) are dropped, and the rest are averaged. The window never reaches further back.
+- **What counts as history:** only `RESIDENT`, `ADMIN_OVERRIDE` and `IOT_WEBHOOK` readings with `is_anomaly_confirmed = FALSE`. Estimates of estimates would drift, and one confirmed leak month (e.g. 1130 m³) would otherwise switch off the 3× rule for three months.
+- **Default without history:** the caller passes it explicitly:
+  - `0` for anomaly detection, so only the meter limit applies, and the 409 payload shows `average_delta: "0.000"`;
+  - `0` for estimating a missing reading, so a meter without history is estimated at its previous value and no consumption is invented.
+- **Rounding:** the result is rounded half-up to 0.001 *before* the 3× comparison. The 409 payload's `average_delta` is that same rounded value.
+- **Values:** every meter value and delta is canonical NUMERIC(12, 3): exactly 3 decimals, never `-0`, and ASCII digits only on input.
 D. Three-Tier Communication & Privacy Masking (communication)
 Post types:
 EMERGENCY: Sticky red banner in UI + immediate EventBus trigger. Supports geographical targeting (ALL_BUILDING, ENTRANCE, or APARTMENT_LIST using apartment entrance and floor).
