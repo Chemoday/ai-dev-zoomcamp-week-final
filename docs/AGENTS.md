@@ -9,6 +9,7 @@ All AI coding, testing, and on-call agents operating in this repository MUST fol
 - [Database Schema Specification](docs/SCHEMA.md) *(to be generated)*
 - [REST API Contracts](docs/API.md) *(to be generated)*
 - [Implementation Task Backlog](docs/TASKS.md) *(to be generated)*
+- [Product Backlog: known problems after the MVP](docs/BACKLOG.md)
 - [Deployment, CD & Rollback](docs/DEPLOYMENT.md)
 
 ## 2. Agent Team Roles
