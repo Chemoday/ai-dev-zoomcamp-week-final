@@ -18,7 +18,7 @@ from alembic import command
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from src.core.database import build_engine
-from src.core.event_bus import InMemoryEventBus
+from src.core.event_bus import EventOutbox, InMemoryEventBus
 from src.core.exceptions import DomainError
 from src.core.migrations import alembic_config
 from src.modules.meters.schemas import PeriodStatus, ReadingSource, ReadingSubmitRequest
@@ -47,7 +47,7 @@ async def committed(database_url: str) -> AsyncIterator[tuple[AsyncEngine, Meter
 async def service_for(session: AsyncSession, user_id):
     property_service = PropertyService(session)
     user = await property_service.get_current_user(user_id)
-    return MetersService(session, property_service, InMemoryEventBus()), user
+    return MetersService(session, property_service, EventOutbox(InMemoryEventBus())), user
 
 
 def reading(meter, value: str, reason: str | None = None) -> ReadingSubmitRequest:

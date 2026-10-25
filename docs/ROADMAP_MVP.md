@@ -33,6 +33,7 @@ EMERGENCY: Sticky red banner in UI + immediate EventBus trigger. Supports geogra
 OFFICIAL_NOTICE: Board announcements with optional comments.
 FORUM_TOPIC: Resident micro-forum categorized by topics.
 Author attribution is resolved dynamically via PropertyService.get_masked_author_badge(user_id, apartment_id) respecting the user's privacy_display_mode.
+Targeting: residents see a targeted post only if one of their apartments is in the target (its entrance for ENTRANCE, the apartment itself for APARTMENT_LIST); the chairman and the board see all posts of the building. "Acknowledge" hides the banner for that user only; the board resolves an emergency to end it for everyone. Full rules: docs/API.md, section 4.
 
 
 
@@ -70,9 +71,11 @@ Goal: Deliver a production-grade, extensible Modular Monolith implementing `prop
 - Parent/Child expense distribution engine (allocating `Master Meter - Sum(Apartment Meters)` water losses).
 - Telegram Bot & WebPush plugins subscribed to `EmergencyAlertPublished` and `ReadingDeadlineApproaching` events.
 - Country plugin `ee/e_arve_xml` and accounting exports.
+- Forum moderation beyond the MVP (the MVP only lets the chairman delete a forum topic): authors edit or delete their own posts and comments; the board hides single comments; residents report abusive posts; a moderation log; purging soft-deleted content after a retention period (GDPR). Tracked in [#18](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/18) and docs/BACKLOG.md (B-2).
 
 ## Phase 3: Legal Governance, IoT & Managed Cloud
 - Cryptographic Voting (`governance`): Generates PDF ballots per choice (`POOLT` / `VASTU`), stores SHA-256 digests, and verifies uploaded `.asice` containers automatically.
 - Smart-ID / Web eID authentication plugin.
 - AI OCR meter reading from smartphone photos.
 - Automated Managed Cloud provisioning plane (Caddy + Docker API).
+- Associations with several buildings and management companies serving many associations: see docs/BACKLOG.md (B-1).

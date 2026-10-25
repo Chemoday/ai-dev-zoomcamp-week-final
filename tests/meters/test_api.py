@@ -17,6 +17,7 @@ from src.modules.meters.events import MeterReadingSubmitted, ReadingPeriodStatus
 from src.modules.meters.models import MeterDevice, MeterReading, MeterReadingLog, ReadingPeriod
 from src.modules.meters.schemas import MeterUnit, PeriodStatus, ReadingSource, ResourceType
 from src.modules.property.models import ApartmentMembership
+from tests.db_utils import failing_commit
 from tests.factories import (
     create_apartment,
     create_building,
@@ -352,6 +353,27 @@ async def test_submission_publishes_an_event_without_personal_data(
     assert event.source == ReadingSource.RESIDENT
     assert str(event.consumption_delta) == "5.000"
     assert not {"full_name", "email", "phone"} & {f.name for f in fields(event)}
+
+
+async def test_no_event_is_published_when_the_commit_fails(
+    api_client: AsyncClient, world: MetersWorld, db_session: AsyncSession, published_events
+) -> None:
+    # Regression (#16 review): events were published before COMMIT, so a failed commit still
+    # sent out a notification for a reading that was never saved.
+    async with failing_commit(db_session, MeterReading):
+        response = await submit(api_client, world.owner_14, world.meter_14, "120.000")
+
+    assert response.status_code == 500
+    assert published_events == []
+    saved = await db_session.scalar(
+        select(func.count())
+        .select_from(MeterReading)
+        .where(
+            MeterReading.meter_id == world.meter_14.id,
+            MeterReading.period_id == world.periods["2026-10"].id,
+        )
+    )
+    assert saved == 0
 
 
 # --- Period status ------------------------------------------------------------------------------

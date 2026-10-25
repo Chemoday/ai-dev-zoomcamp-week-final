@@ -34,4 +34,4 @@ Database Foreign Keys vs. ORM Relationships:
 PostgreSQL enforces foreign keys across tables (e.g., meters.apartment_id -> property_apartments.id).
 SQLAlchemy relationship() across module boundaries is FORBIDDEN. Cross-module data is fetched via public Service methods returning DTOs.
 In-Memory Async Event Bus:
-Side effects (e.g., sending notifications on Emergency Alerts, logging anomalies) are decoupled via event_bus.publish(DomainEvent).
+Side effects (e.g., sending notifications on Emergency Alerts, logging anomalies) are decoupled via domain events. Services add them to the request's EventOutbox; they are published on the event bus only after the request's transaction commits (see docs/BACKEND_CONVENTIONS.md, section 2.B).

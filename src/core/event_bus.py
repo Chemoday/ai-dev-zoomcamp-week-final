@@ -107,6 +107,44 @@ class InMemoryEventBus:
                 )
 
 
+class EventOutbox:
+    """Domain events of one unit of work (one request), held back until it commits.
+
+    Services add events while they work. The owner of the transaction publishes them after
+    COMMIT, or discards them on rollback (src/core/database.py, `transaction`). So a
+    notification never goes out for a change that was rolled back, and slow handlers never
+    run while the transaction still holds row locks.
+    """
+
+    def __init__(self, bus: EventBus) -> None:
+        self._bus = bus
+        self._pending: list[DomainEvent] = []
+
+    @property
+    def pending(self) -> tuple[DomainEvent, ...]:
+        return tuple(self._pending)
+
+    def add(self, event: DomainEvent) -> None:
+        self._pending.append(event)
+
+    def discard(self) -> None:
+        self._pending.clear()
+
+    async def publish_pending(self) -> None:
+        """Publish in the order added. Never raises: the change is already committed, so a
+        failure here must not turn a successful request into an error."""
+        events, self._pending = self._pending, []
+        for event in events:
+            try:
+                await self._bus.publish(event)
+            except Exception:
+                logger.exception(
+                    "domain_event_publish_failed",
+                    event_name=event.event_name,
+                    event_id=str(event.event_id),
+                )
+
+
 event_bus = InMemoryEventBus()
 
 

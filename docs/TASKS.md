@@ -73,10 +73,10 @@ Each task is atomic, self-contained, and designed to be executed sequentially by
 - **Tracking Issue:** [#6](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/6)
 - **Target Module:** `src/modules/communication/`
 - **Files to Create:**
-  - `src/modules/communication/models.py`, `schemas.py`, `service.py`, `router.py`, `events.py`
+  - `src/modules/communication/models.py`, `schemas.py`, `policies.py`, `service.py`, `router.py`, `events.py`
   - Alembic migration `003_communication.py`
 - **Requirements:**
-  - Implement `comm_posts` and `comm_comments`.
+  - Implement `comm_posts`, `comm_comments` and `comm_emergency_acks` (the "Acknowledge" button of Task 6), plus resolving an emergency.
   - Filter `GET /emergencies/active` by resident's building, `entrance`, and `apartment_id`.
   - Resolve all post/comment authors via `PropertyService.get_masked_author_badge()` (no cross-module SQLAlchemy joins).
   - Emit `EmergencyAlertPublished` event on `EventBus` when an `EMERGENCY` post is created.

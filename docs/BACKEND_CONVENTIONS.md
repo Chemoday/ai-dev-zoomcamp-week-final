@@ -42,19 +42,17 @@ class Base(DeclarativeBase):
 
 
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
-    async with async_session_factory() as session:
-        try:
-            yield session
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            raise
+    # transaction(): commit on success, roll back on any exception, then publish the
+    # session's domain events (see "Domain events" below).
+    async with async_session_factory() as session, transaction(session):
+        yield session
 B. Transaction Rule
 Services use await self.session.flush() to obtain generated IDs or validate constraints within a transaction.
 The outer get_db_session dependency automatically commits on request success or rolls back on exception.
 ALWAYS inject the session through the `DbSession` alias from `src/core/database.py` (`Annotated[AsyncSession, Depends(get_db_session, scope="function")]`), never with a bare `Depends(get_db_session)`. FastAPI's default "request" scope ends a yield-dependency only AFTER the response is sent, so the commit would run after the client already received a 2xx: a failed commit would look successful, and an immediate follow-up request could read stale data. `scope="function"` commits (or rolls back) before the response. This is covered by `tests/core/test_database.py`.
 **Lock order.** When a request locks several rows, it always locks the parent first, then the child: e.g. the reading period, then the meter. Lock a period you only read `FOR SHARE`, and one you change `FOR NO KEY UPDATE` (`with_for_update(key_share=True)`). Plain `FOR UPDATE` on a parent also blocks the `FOR KEY SHARE` that foreign-key checks of child inserts need, which deadlocks against a transaction that already holds the child. `tests/meters/test_concurrency.py` drives this with two real connections.
-**Free text.** Every free-text input uses the types in `src/core/validation.py` (`SafeText`, `optional_safe_text(max_length)`). They reject control characters: a NUL byte would otherwise become a 500 from PostgreSQL.
+**Domain events go out after the commit.** Services never call `event_bus.publish()` directly. They inject the request's `EventOutbox` (`Depends(get_event_outbox)` from `src/core/database.py`) and call `outbox.add(event)`. `transaction()` publishes the collected events after `COMMIT` succeeded and drops them on rollback, so a notification never goes out for a change that was rolled back, and slow handlers never run while the transaction holds row locks. Handlers still run before the response is sent; a failing handler (or bus) is logged and never turns the committed request into an error. Code outside a request uses `async with transaction(session):` and `session_outbox(session, bus)` the same way. Covered by `tests/core/test_outbox.py`.
+**Free text.** Every free-text input uses the types in `src/core/validation.py`: `safe_text(max_length)` for required text (never blank), `optional_safe_text(max_length)` for optional text (blank means `None`), or `SafeText` without a limit. They trim first, then check the length, and reject control characters: a NUL byte would otherwise become a 500 from PostgreSQL.
 The engine is created by `build_engine()` with `hide_parameters=True`, so database error texts (which reach logs and spans) never contain bound values such as names or emails.
 C. SQLAlchemy 2.0 Typed Models Pattern
 NEVER use legacy Column(...). Always use Mapped[...] and mapped_column(...).
@@ -150,8 +148,8 @@ Python
 # src/modules/communication/service.py
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from src.core.database import DbSession
-from src.core.event_bus import EventBus, get_event_bus
+from src.core.database import DbSession, get_event_outbox
+from src.core.event_bus import EventOutbox
 from src.modules.property.service import PropertyService, get_property_service
 
 
@@ -161,19 +159,19 @@ class CommunicationService:
         self,
         session: AsyncSession,
         property_service: PropertyService,
-        event_bus: EventBus,
+        outbox: EventOutbox,  # outbox.add(event): published after the request commits
     ):
         self.session = session
         self.property_service = property_service
-        self.event_bus = event_bus
+        self.outbox = outbox
 
 
 def get_communication_service(
     session: DbSession,  # from src.core.database: commits before the response is sent
     property_service: PropertyService = Depends(get_property_service),
-    event_bus: EventBus = Depends(get_event_bus),
+    outbox: EventOutbox = Depends(get_event_outbox),
 ) -> CommunicationService:
-    return CommunicationService(session, property_service, event_bus)
+    return CommunicationService(session, property_service, outbox)
 5. Authentication & Demo Role Switching (src/core/security.py)
 To make both automated integration testing and UI role-switching effortless in Phase 1 while keeping the architecture production-ready:
 Support Authorization: Bearer <jwt_token> for standard login.
