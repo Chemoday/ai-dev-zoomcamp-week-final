@@ -65,5 +65,6 @@ class ReadingSubmitRequest(BaseModel):
     meter_id: uuid.UUID
     period_code: PeriodCode
     value: MeterValue
-    confirmation_level: int = Field(default=0, ge=0, le=2)
+    # docs/API.md: 0 -> popup #1, 1 -> popup #2, >= 2 -> save as a confirmed anomaly.
+    confirmation_level: int = Field(default=0, ge=0)
     reason: str | None = Field(default=None, max_length=500)

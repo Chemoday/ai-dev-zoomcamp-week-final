@@ -63,10 +63,14 @@ def test_invalid_period_codes_are_rejected(code: str) -> None:
         submit(period_code=code)
 
 
-@pytest.mark.parametrize("level", [-1, 3])
-def test_confirmation_level_is_0_to_2(level: int) -> None:
+def test_negative_confirmation_level_is_rejected() -> None:
     with pytest.raises(ValidationError):
-        submit(confirmation_level=level)
+        submit(confirmation_level=-1)
+
+
+def test_confirmation_level_above_two_is_accepted_as_confirmed() -> None:
+    # The contract is ">= 2 saves the reading", so clients may send any level from 2 up.
+    assert submit(confirmation_level=3).confirmation_level == 3
 
 
 def test_unknown_fields_and_long_reasons_are_rejected() -> None:
