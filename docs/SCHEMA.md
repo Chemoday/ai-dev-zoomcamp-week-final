@@ -2,7 +2,9 @@
 
 All tables use `UUID` primary keys (`uuid4`), UTC timestamps (`TIMESTAMPTZ`), and module-prefixed table names to maintain strict logical boundaries inside a single PostgreSQL database.
 
-## 1. Module: `core` (Users & Identity Providers)
+## 1. Users & Identity Providers (tables `core_*`, owned by module `property`)
+
+> **Ownership rule:** the `core_users` and `core_user_identities` tables keep the `core_` prefix because every module references users by FK, but their SQLAlchemy models (`User`, `UserIdentity`) live in `src/modules/property/models.py`, as listed in `src/core/models_registry.py`. `src/core/` holds no domain models. Other modules never import these models: they read users only through DTOs: `CurrentUserDTO` from `get_current_user` (`src/core/security.py`) or `PropertyService` methods such as `get_masked_author_badge`.
 
 ### Table: `core_users`
 | Column | Type | Constraints | Description |
