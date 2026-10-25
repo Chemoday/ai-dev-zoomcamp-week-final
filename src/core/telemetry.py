@@ -267,6 +267,8 @@ class RequestTelemetryMiddleware:
             await self.app(scope, receive, send)
             return
 
+        # Request-scoped log context (e.g. user_id bound by core.security) starts empty.
+        structlog.contextvars.clear_contextvars()
         trace_id = current_trace_id()
         started_at = time.perf_counter()
         response: dict[str, Any] = {"started": False, "status_code": 500}

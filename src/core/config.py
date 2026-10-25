@@ -17,6 +17,11 @@ class Settings(BaseSettings):
     # Allows the X-Demo-User-Id header to impersonate seeded users (local Docker and tests only).
     DEMO_MODE_ENABLED: bool = True
 
+    # Bearer tokens are rejected while no secret is configured (safe default: no forgeable key).
+    JWT_SECRET_KEY: str = ""
+    JWT_ALGORITHM: str = "HS256"
+    JWT_ACCESS_TOKEN_TTL_MINUTES: int = 60
+
     LOG_LEVEL: str = "INFO"
     LOG_JSON: bool = True
 

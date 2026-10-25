@@ -1,0 +1,242 @@
+"""Public facade of the property module for routers and other modules."""
+
+import uuid
+from collections.abc import Iterable
+
+from fastapi import Depends
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.core.database import get_db_session
+from src.core.exceptions import DomainError
+from src.modules.property.models import Apartment, ApartmentMembership, User
+from src.modules.property.policies import format_author_badge
+from src.modules.property.schemas import (
+    ApartmentMembershipDTO,
+    AuthorBadgeDTO,
+    BuildingRole,
+    CurrentUserDTO,
+    DisplayMode,
+    MembershipView,
+    MeResponse,
+    PrivacyUpdateResponse,
+    RoleBadge,
+)
+
+# Shown when a post or comment outlives its author's account.
+UNKNOWN_AUTHOR_BADGE = AuthorBadgeDTO(
+    display_label="Неизвестный автор", role_badge=RoleBadge.RESIDENT
+)
+
+type AuthorKey = tuple[uuid.UUID, uuid.UUID | None]
+
+
+class PropertyService:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    # --- Authentication support -----------------------------------------------------------------
+
+    async def get_current_user(self, user_id: uuid.UUID) -> CurrentUserDTO | None:
+        """Load an active user with their memberships, or None if unknown or deactivated."""
+        user = await self.session.get(User, user_id)
+        if user is None or not user.is_active:
+            return None
+        memberships = await self._memberships_of(user_id)
+        return CurrentUserDTO(
+            id=user.id,
+            building_id=user.building_id,
+            building_role=user.building_role,
+            privacy_display_mode=(
+                memberships[0].privacy_display_mode if memberships else DisplayMode.APARTMENT_ONLY
+            ),
+            memberships=tuple(memberships),
+        )
+
+    # --- Profile and privacy --------------------------------------------------------------------
+
+    async def get_me(self, current_user: CurrentUserDTO) -> MeResponse:
+        full_name = await self._full_name_of(current_user.id)
+        return MeResponse(
+            user_id=current_user.id,
+            building_id=current_user.building_id,
+            building_role=current_user.building_role,
+            privacy_display_mode=current_user.privacy_display_mode,
+            memberships=[
+                MembershipView(
+                    **membership.model_dump(),
+                    preview_badge=self._badge_for_membership(
+                        full_name, membership, current_user.building_role
+                    ),
+                )
+                for membership in current_user.memberships
+            ],
+        )
+
+    async def update_privacy_mode(
+        self, current_user: CurrentUserDTO, membership_id: uuid.UUID, mode: DisplayMode
+    ) -> PrivacyUpdateResponse:
+        membership = await self.session.scalar(
+            select(ApartmentMembership).where(
+                ApartmentMembership.id == membership_id,
+                ApartmentMembership.user_id == current_user.id,
+            )
+        )
+        if membership is None:
+            # Same answer for "does not exist" and "not yours", so IDs cannot be probed.
+            raise DomainError(
+                status_code=404,
+                error_code="MEMBERSHIP_NOT_FOUND",
+                message="Membership not found.",
+            )
+        membership.privacy_display_mode = mode
+        await self.session.flush()
+
+        apartment = await self.session.get(Apartment, membership.apartment_id)
+        full_name = await self._full_name_of(current_user.id)
+        badge = format_author_badge(
+            full_name=full_name,
+            apt_number=apartment.number if apartment else None,
+            relation_type=membership.relation_type,
+            building_role=current_user.building_role,
+            display_mode=mode,
+        )
+        return PrivacyUpdateResponse(
+            membership_id=membership.id, privacy_display_mode=mode, preview_badge=badge
+        )
+
+    # --- Privacy masker for other modules -------------------------------------------------------
+
+    async def get_masked_author_badge(
+        self, user_id: uuid.UUID, apartment_id: uuid.UUID | None
+    ) -> AuthorBadgeDTO:
+        badges = await self.get_masked_author_badges([(user_id, apartment_id)])
+        return badges[(user_id, apartment_id)]
+
+    async def get_masked_author_badges(
+        self, authors: Iterable[AuthorKey]
+    ) -> dict[AuthorKey, AuthorBadgeDTO]:
+        """Resolve many (user_id, apartment_id) authors at once (no N+1 queries for feeds).
+
+        The display mode comes from the user's membership in that apartment. Without an
+        apartment context the user's primary mode applies. If the user no longer lives in the
+        apartment, only the apartment is shown, because nobody consented to show the name there.
+        """
+        keys = set(authors)
+        if not keys:
+            return {}
+        user_ids = {user_id for user_id, _ in keys}
+
+        users = {
+            user.id: user
+            for user in await self.session.scalars(select(User).where(User.id.in_(user_ids)))
+        }
+        membership_rows = (
+            await self.session.execute(
+                select(ApartmentMembership, Apartment.number)
+                .join(Apartment, Apartment.id == ApartmentMembership.apartment_id)
+                .where(ApartmentMembership.user_id.in_(user_ids))
+                .order_by(Apartment.entrance, Apartment.number)
+            )
+        ).all()
+        memberships: dict[tuple[uuid.UUID, uuid.UUID], tuple[ApartmentMembership, str]] = {}
+        primary_mode: dict[uuid.UUID, DisplayMode] = {}
+        for membership, number in membership_rows:
+            memberships[(membership.user_id, membership.apartment_id)] = (membership, number)
+            primary_mode.setdefault(membership.user_id, membership.privacy_display_mode)
+
+        orphan_apartment_ids = {
+            apartment_id
+            for user_id, apartment_id in keys
+            if apartment_id is not None and (user_id, apartment_id) not in memberships
+        }
+        orphan_numbers: dict[uuid.UUID, str] = {}
+        if orphan_apartment_ids:
+            orphan_numbers = dict(
+                (
+                    await self.session.execute(
+                        select(Apartment.id, Apartment.number).where(
+                            Apartment.id.in_(orphan_apartment_ids)
+                        )
+                    )
+                ).all()
+            )
+
+        result: dict[AuthorKey, AuthorBadgeDTO] = {}
+        for user_id, apartment_id in keys:
+            user = users.get(user_id)
+            if user is None:
+                result[(user_id, apartment_id)] = UNKNOWN_AUTHOR_BADGE
+                continue
+            if apartment_id is None:
+                badge = format_author_badge(
+                    full_name=user.full_name,
+                    apt_number=None,
+                    relation_type=None,
+                    building_role=user.building_role,
+                    display_mode=primary_mode.get(user_id, DisplayMode.APARTMENT_ONLY),
+                )
+            elif (user_id, apartment_id) in memberships:
+                membership, number = memberships[(user_id, apartment_id)]
+                badge = format_author_badge(
+                    full_name=user.full_name,
+                    apt_number=number,
+                    relation_type=membership.relation_type,
+                    building_role=user.building_role,
+                    display_mode=membership.privacy_display_mode,
+                )
+            else:
+                badge = format_author_badge(
+                    full_name=user.full_name,
+                    apt_number=orphan_numbers.get(apartment_id),
+                    relation_type=None,
+                    building_role=user.building_role,
+                    display_mode=DisplayMode.APARTMENT_ONLY,
+                )
+            result[(user_id, apartment_id)] = badge
+        return result
+
+    # --- Internals ------------------------------------------------------------------------------
+
+    async def _memberships_of(self, user_id: uuid.UUID) -> list[ApartmentMembershipDTO]:
+        rows = await self.session.execute(
+            select(ApartmentMembership, Apartment)
+            .join(Apartment, Apartment.id == ApartmentMembership.apartment_id)
+            .where(ApartmentMembership.user_id == user_id)
+            .order_by(Apartment.entrance, Apartment.number)
+        )
+        return [
+            ApartmentMembershipDTO(
+                membership_id=membership.id,
+                apartment_id=apartment.id,
+                apartment_number=apartment.number,
+                entrance=apartment.entrance,
+                floor=apartment.floor,
+                relation_type=membership.relation_type,
+                can_submit_readings=membership.can_submit_readings,
+                can_view_bills=membership.can_view_bills,
+                can_vote=membership.can_vote,
+                privacy_display_mode=membership.privacy_display_mode,
+            )
+            for membership, apartment in rows.all()
+        ]
+
+    async def _full_name_of(self, user_id: uuid.UUID) -> str:
+        full_name = await self.session.scalar(select(User.full_name).where(User.id == user_id))
+        return full_name or ""
+
+    @staticmethod
+    def _badge_for_membership(
+        full_name: str, membership: ApartmentMembershipDTO, building_role: BuildingRole
+    ) -> AuthorBadgeDTO:
+        return format_author_badge(
+            full_name=full_name,
+            apt_number=membership.apartment_number,
+            relation_type=membership.relation_type,
+            building_role=building_role,
+            display_mode=membership.privacy_display_mode,
+        )
+
+
+def get_property_service(session: AsyncSession = Depends(get_db_session)) -> PropertyService:
+    return PropertyService(session)

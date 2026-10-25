@@ -1,0 +1,73 @@
+"""Pure privacy-masking rules (no database access; unit-tested directly).
+
+Badge texts are in Russian because the resident UI is (see docs/API.md, "Author badge rules").
+"""
+
+from src.modules.property.schemas import (
+    AuthorBadgeDTO,
+    BuildingRole,
+    DisplayMode,
+    RelationType,
+    RoleBadge,
+)
+
+APARTMENT_LABEL = "Кв."
+
+# Shown instead of a name when there is no apartment context and the user keeps the default mode.
+BUILDING_ROLE_LABELS: dict[BuildingRole, str] = {
+    BuildingRole.CHAIRMAN: "Председатель",
+    BuildingRole.BOARD: "Правление",
+    BuildingRole.ACCOUNTANT: "Бухгалтер",
+    BuildingRole.USER: "Житель",
+}
+
+_BOARD_ROLES = frozenset({BuildingRole.CHAIRMAN, BuildingRole.BOARD})
+
+
+def format_initials(full_name: str) -> str:
+    """'Иван Петров' -> 'И. П.'; extra whitespace is ignored."""
+    return " ".join(f"{part[0].upper()}." for part in full_name.split())
+
+
+def resolve_role_badge(
+    relation_type: RelationType | None, building_role: BuildingRole
+) -> RoleBadge:
+    """Board membership takes precedence, so neighbours know they are talking to the board."""
+    if building_role in _BOARD_ROLES:
+        return RoleBadge.BOARD
+    if building_role == BuildingRole.ACCOUNTANT:
+        return RoleBadge.ACCOUNTANT
+    if relation_type == RelationType.OWNER:
+        return RoleBadge.OWNER
+    return RoleBadge.RESIDENT
+
+
+def format_author_badge(
+    full_name: str,
+    apt_number: str | None,
+    relation_type: RelationType | None,
+    building_role: BuildingRole,
+    display_mode: DisplayMode,
+) -> AuthorBadgeDTO:
+    """Build the only representation of a person that other residents may ever see.
+
+    APARTMENT_ONLY -> "Кв. 14"   INITIALS -> "И. П. (Кв. 14)"   FULL_NAME -> "Иван Петров (Кв. 14)"
+    Without an apartment the name stands alone, or the building role label is used.
+    """
+    apartment = f"{APARTMENT_LABEL} {apt_number}" if apt_number else None
+
+    name: str | None = None
+    if display_mode == DisplayMode.INITIALS:
+        name = format_initials(full_name) or None
+    elif display_mode == DisplayMode.FULL_NAME:
+        name = " ".join(full_name.split()) or None
+
+    if name and apartment:
+        label = f"{name} ({apartment})"
+    else:
+        label = name or apartment or BUILDING_ROLE_LABELS[building_role]
+
+    return AuthorBadgeDTO(
+        display_label=label,
+        role_badge=resolve_role_badge(relation_type, building_role),
+    )
