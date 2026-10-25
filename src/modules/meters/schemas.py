@@ -7,13 +7,14 @@ billing. Clients send values as strings ("1254.100"), and responses return them 
 
 import re
 import uuid
+from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 from typing import Annotated, Any
 
 from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field, StrictInt
 
-from src.modules.meters.policies import canonical_meter_value
+from src.modules.property.schemas import AuthorBadgeDTO
 
 
 class ResourceType(StrEnum):
@@ -36,6 +37,15 @@ class PeriodStatus(StrEnum):
     LOCKED = "LOCKED"
 
 
+class SubmissionStatus(StrEnum):
+    """Per meter and per apartment in the chairman matrix."""
+
+    SUBMITTED = "SUBMITTED"
+    MISSING = "MISSING"
+    AUTO_ESTIMATED = "AUTO_ESTIMATED"
+    ANOMALY_CONFIRMED = "ANOMALY_CONFIRMED"
+
+
 class ReadingSource(StrEnum):
     RESIDENT = "RESIDENT"
     ADMIN_OVERRIDE = "ADMIN_OVERRIDE"
@@ -46,6 +56,20 @@ class ReadingSource(StrEnum):
 # ASCII digits only, at most 9 integer digits and 3 decimals: no exponents, signs, separators
 # ("1_000"), commas or non-ASCII digits that Python's Decimal would otherwise accept.
 _METER_VALUE_TEXT = re.compile(r"[0-9]{1,9}(\.[0-9]{1,3})?")
+
+
+METER_PRECISION = Decimal("0.001")  # NUMERIC(12, 3)
+
+
+def canonical_meter_value(value: Decimal) -> Decimal:
+    """NUMERIC(12, 3) canonical form: exactly 3 decimals and never -0.
+
+    Raises ValueError instead of rounding: losing a digit of a meter value is never silent.
+    """
+    quantized = value.quantize(METER_PRECISION)
+    if quantized != value:
+        raise ValueError(f"{value} has more than 3 decimal places")
+    return quantized.copy_abs() if quantized.is_zero() else quantized
 
 
 def _parse_meter_value(value: Any) -> Any:
@@ -80,3 +104,127 @@ class ReadingSubmitRequest(BaseModel):
     # Strict: true, "2" and 1.0 are not confirmation levels.
     confirmation_level: StrictInt = Field(default=0, ge=0, le=100)
     reason: str | None = Field(default=None, max_length=500)
+
+
+# --- Response DTOs (docs/API.md, sections 2 and 3) -----------------------------------------------
+# Decimal fields serialize as canonical strings ("1254.000"), never as JSON numbers.
+
+
+class PeriodDTO(BaseModel):
+    period_code: str
+    status: PeriodStatus
+    due_date: datetime
+
+
+class ReadingSummary(BaseModel):
+    reading_id: uuid.UUID
+    value: Decimal
+    consumption_delta: Decimal
+    source: ReadingSource
+    is_anomaly_confirmed: bool
+
+
+class ReadingResponse(BaseModel):
+    reading_id: uuid.UUID
+    meter_id: uuid.UUID
+    period_code: str
+    value: Decimal
+    consumption_delta: Decimal
+    source: ReadingSource
+    is_anomaly_confirmed: bool
+
+
+class DashboardMeter(BaseModel):
+    meter_id: uuid.UUID
+    resource_type: ResourceType
+    serial_number: str
+    location_label: str
+    unit: MeterUnit
+    previous_value: Decimal
+    reading: ReadingSummary | None
+
+
+class DashboardApartment(BaseModel):
+    apartment_id: uuid.UUID
+    apartment_number: str
+    can_submit_readings: bool
+    meters: list[DashboardMeter]
+
+
+class DashboardResponse(BaseModel):
+    period: PeriodDTO | None
+    apartments: list[DashboardApartment]
+
+
+class MatrixMeter(BaseModel):
+    meter_id: uuid.UUID
+    resource_type: ResourceType
+    location_label: str
+    unit: MeterUnit
+    status: SubmissionStatus
+    reading: ReadingSummary | None
+
+
+class MatrixApartment(BaseModel):
+    apartment_id: uuid.UUID
+    apartment_number: str
+    entrance: int
+    floor: int
+    status: SubmissionStatus
+    meters: list[MatrixMeter]
+
+
+class ResourceBalance(BaseModel):
+    resource_type: ResourceType
+    unit: MeterUnit
+    master_total: Decimal | None  # None while any master meter of this type has no reading
+    apartments_sum: Decimal
+    unallocated_loss: Decimal | None
+
+
+class MatrixResponse(BaseModel):
+    period: PeriodDTO
+    balances: list[ResourceBalance]
+    apartments: list[MatrixApartment]
+
+
+class EstimatedReading(BaseModel):
+    reading_id: uuid.UUID
+    meter_id: uuid.UUID
+    apartment_id: uuid.UUID
+    value: Decimal
+    consumption_delta: Decimal
+
+
+class EstimateResponse(BaseModel):
+    period_code: str
+    estimated_count: int
+    estimated: list[EstimatedReading]
+
+
+class PeriodStatusUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: PeriodStatus
+
+
+class PeriodStatusUpdateResponse(BaseModel):
+    period_code: str
+    previous_status: PeriodStatus
+    status: PeriodStatus
+
+
+class HistoryEntry(BaseModel):
+    changed_at: datetime
+    old_value: Decimal | None
+    new_value: Decimal
+    source: ReadingSource
+    reason: str | None
+    changed_by: AuthorBadgeDTO | None  # masked; None for the system
+
+
+class ReadingHistoryResponse(BaseModel):
+    reading_id: uuid.UUID
+    meter_id: uuid.UUID
+    period_code: str
+    entries: list[HistoryEntry]

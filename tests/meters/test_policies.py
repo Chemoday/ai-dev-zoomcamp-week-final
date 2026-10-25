@@ -6,9 +6,13 @@ import pytest
 
 from src.modules.meters.policies import (
     ReadingCheckStatus,
+    apartment_submission_status,
     calculate_rolling_average_delta,
+    can_transition_period,
+    meter_submission_status,
     validate_reading_delta,
 )
+from src.modules.meters.schemas import PeriodStatus, ReadingSource, SubmissionStatus
 
 D = Decimal
 MAX = D("25.000")
@@ -210,3 +214,57 @@ def test_confirmation_above_two_saves_like_two() -> None:
 
     assert result.status == ReadingCheckStatus.OK
     assert result.is_anomaly_confirmed is True
+
+
+# --- Period state machine and matrix statuses (Task 4) ------------------------------------------
+
+OPEN, REVIEW, LOCKED = (
+    PeriodStatus.OPEN_FOR_RESIDENTS,
+    PeriodStatus.REVIEW_BY_BOARD,
+    PeriodStatus.LOCKED,
+)
+
+
+@pytest.mark.parametrize(
+    ("current", "target", "allowed"),
+    [
+        (OPEN, REVIEW, True),
+        (REVIEW, OPEN, True),
+        (REVIEW, LOCKED, True),
+        (LOCKED, REVIEW, True),
+        (OPEN, LOCKED, False),  # no skipping the board review
+        (LOCKED, OPEN, False),  # a locked period never goes straight back to residents
+        (OPEN, OPEN, False),
+        (LOCKED, LOCKED, False),
+    ],
+)
+def test_period_transitions(current, target, allowed: bool) -> None:
+    assert can_transition_period(current, target) is allowed
+
+
+@pytest.mark.parametrize(
+    ("source", "anomaly", "expected"),
+    [
+        (None, False, SubmissionStatus.MISSING),
+        (ReadingSource.RESIDENT, False, SubmissionStatus.SUBMITTED),
+        (ReadingSource.ADMIN_OVERRIDE, False, SubmissionStatus.SUBMITTED),
+        (ReadingSource.AUTO_ESTIMATED, False, SubmissionStatus.AUTO_ESTIMATED),
+        (ReadingSource.RESIDENT, True, SubmissionStatus.ANOMALY_CONFIRMED),
+    ],
+)
+def test_meter_submission_status(source, anomaly: bool, expected) -> None:
+    assert meter_submission_status(source, anomaly) == expected
+
+
+@pytest.mark.parametrize(
+    ("statuses", "expected"),
+    [
+        (["SUBMITTED", "MISSING", "ANOMALY_CONFIRMED"], "MISSING"),
+        (["SUBMITTED", "AUTO_ESTIMATED", "ANOMALY_CONFIRMED"], "ANOMALY_CONFIRMED"),
+        (["SUBMITTED", "AUTO_ESTIMATED"], "AUTO_ESTIMATED"),
+        (["SUBMITTED", "SUBMITTED"], "SUBMITTED"),
+    ],
+)
+def test_apartment_status_is_the_most_urgent_meter_status(statuses, expected: str) -> None:
+    result = apartment_submission_status(SubmissionStatus(s) for s in statuses)
+    assert result == SubmissionStatus(expected)
