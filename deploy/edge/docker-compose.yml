@@ -1,0 +1,28 @@
+# The only containers of this project that bind host ports. Started by bootstrap.sh as project
+# "aap-edge"; settings (HTTPS_PORT, PROD_HOST, DEV_HOST) come from /opt/aap/edge/.env.
+services:
+  caddy:
+    image: caddy:2.8.4-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "${HTTPS_PORT:-443}:${HTTPS_PORT:-443}"
+    environment:
+      HTTPS_PORT: ${HTTPS_PORT:-443}
+      PROD_HOST: ${PROD_HOST:?set in /opt/aap/edge/.env}
+      DEV_HOST: ${DEV_HOST:?set in /opt/aap/edge/.env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - edge
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+networks:
+  edge:
+    external: true
+    name: aap-edge

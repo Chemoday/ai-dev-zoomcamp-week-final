@@ -1,0 +1,76 @@
+name: Deploy
+
+# Called by CI for automatic dev deploys, or run manually to promote to prod / roll back.
+# A rollback is a manual run with an older image tag (any commit SHA that CI built).
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        type: choice
+        options: [prod, dev]
+        default: prod
+      image_tag:
+        description: Full commit SHA of a CI-built image (an older SHA rolls back)
+        type: string
+        required: true
+  workflow_call:
+    inputs:
+      environment:
+        type: string
+        required: true
+      image_tag:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy ${{ inputs.image_tag }} to ${{ inputs.environment }}
+    runs-on: ubuntu-24.04
+    environment:
+      name: ${{ inputs.environment == 'prod' && 'production' || 'dev' }}
+      url: ${{ inputs.environment == 'prod' && vars.PROD_URL || vars.DEV_URL }}
+    env:
+      TARGET_ENV: ${{ inputs.environment }}
+      IMAGE_TAG: ${{ inputs.image_tag }}
+      APP_URL: ${{ inputs.environment == 'prod' && vars.PROD_URL || vars.DEV_URL }}
+    steps:
+      - name: Validate inputs
+        run: |
+          [[ "$TARGET_ENV" =~ ^(dev|prod)$ ]] || { echo "::error::Unknown environment $TARGET_ENV"; exit 1; }
+          [[ "$IMAGE_TAG" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::image_tag must be a full commit SHA"; exit 1; }
+          [[ -n "$APP_URL" ]] || { echo "::error::Repository variable DEV_URL/PROD_URL is not set"; exit 1; }
+
+      - name: Configure SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Deploy on the server
+        env:
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # The deploy key is pinned to a forced command on the server (deploy/ssh-gate.sh):
+          # it can only run "deploy <env> <sha>". The registry token goes over stdin.
+          printf '%s\n' "$GHCR_TOKEN" | ssh -i ~/.ssh/deploy_key -o BatchMode=yes \
+            "deploy@${DEPLOY_HOST}" "deploy ${TARGET_ENV} ${IMAGE_TAG}"
+
+      - name: Smoke test through the public URL
+        run: |
+          headers=$(curl -fsS --retry 10 --retry-delay 3 --retry-all-errors -D - -o /dev/null "${APP_URL}/health/ready")
+          echo "$headers"
+          grep -qi '^x-trace-id: [0-9a-f]\{32\}' <<< "$headers" || { echo "::error::X-Trace-Id header missing"; exit 1; }

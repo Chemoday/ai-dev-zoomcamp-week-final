@@ -1,0 +1,58 @@
+# One environment (dev or prod) on the VPS. Started by deploy.sh as Compose project "aap-<env>":
+#   IMAGE_REF, APP_ENV come from deploy.sh; POSTGRES_PASSWORD from /opt/aap/<env>/.env.
+# No host ports are published: Caddy (deploy/edge) reaches the backend over the "aap-edge" network.
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in /opt/aap/<env>/.env}
+      POSTGRES_DB: app
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  backend:
+    image: ${IMAGE_REF:?set by deploy.sh}
+    pull_policy: never
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://app:${POSTGRES_PASSWORD}@db:5432/app
+      ENVIRONMENT: ${APP_ENV:?set by deploy.sh}
+      # Public demo: graders switch roles via X-Demo-User-Id. Seeded data only, no real residents.
+      DEMO_MODE_ENABLED: "true"
+      LOG_LEVEL: INFO
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      internal: {}
+      edge:
+        aliases:
+          - aap-${APP_ENV}-backend
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=3)"
+      interval: 5s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
+volumes:
+  pgdata:
+
+networks:
+  internal: {}
+  edge:
+    external: true
+    name: aap-edge
