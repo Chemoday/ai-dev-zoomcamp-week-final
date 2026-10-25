@@ -12,7 +12,15 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import Annotated, Any
 
-from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field, StrictInt
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    StrictInt,
+    WithJsonSchema,
+)
 
 from src.core.validation import optional_safe_text
 from src.modules.property.schemas import AuthorBadgeDTO
@@ -90,6 +98,21 @@ MeterValue = Annotated[
     BeforeValidator(_parse_meter_value),
     Field(ge=0, max_digits=12, decimal_places=3, allow_inf_nan=False),
     AfterValidator(canonical_meter_value),
+    # The contract (docs/openapi.json) says what the API really accepts: a string, never a number.
+    WithJsonSchema(
+        {"type": "string", "pattern": f"^{_METER_VALUE_TEXT.pattern}$", "examples": ["1254.100"]},
+        mode="validation",
+    ),
+]
+
+# A meter value or delta in a response: a canonical string with exactly 3 decimals. Deltas such as
+# unallocated_loss can be negative.
+MeterAmount = Annotated[
+    Decimal,
+    WithJsonSchema(
+        {"type": "string", "pattern": r"^-?[0-9]+\.[0-9]{3}$", "examples": ["1254.000"]},
+        mode="serialization",
+    ),
 ]
 
 PERIOD_CODE_PATTERN = r"^[0-9]{4}-(0[1-9]|1[0-2])$"
@@ -123,8 +146,8 @@ class PeriodDTO(BaseModel):
 
 class ReadingSummary(BaseModel):
     reading_id: uuid.UUID
-    value: Decimal
-    consumption_delta: Decimal
+    value: MeterAmount
+    consumption_delta: MeterAmount
     source: ReadingSource
     is_anomaly_confirmed: bool
 
@@ -133,8 +156,8 @@ class ReadingResponse(BaseModel):
     reading_id: uuid.UUID
     meter_id: uuid.UUID
     period_code: str
-    value: Decimal
-    consumption_delta: Decimal
+    value: MeterAmount
+    consumption_delta: MeterAmount
     source: ReadingSource
     is_anomaly_confirmed: bool
 
@@ -145,7 +168,7 @@ class DashboardMeter(BaseModel):
     serial_number: str
     location_label: str
     unit: MeterUnit
-    previous_value: Decimal
+    previous_value: MeterAmount
     reading: ReadingSummary | None
 
 
@@ -186,7 +209,7 @@ class MasterMeterRow(BaseModel):
     resource_type: ResourceType
     location_label: str
     unit: MeterUnit
-    previous_value: Decimal
+    previous_value: MeterAmount
     status: SubmissionStatus
     reading: ReadingSummary | None
 
@@ -194,9 +217,9 @@ class MasterMeterRow(BaseModel):
 class ResourceBalance(BaseModel):
     resource_type: ResourceType
     unit: MeterUnit
-    master_total: Decimal | None  # None while any master meter of this type has no reading
-    apartments_sum: Decimal
-    unallocated_loss: Decimal | None
+    master_total: MeterAmount | None  # None while any master meter of this type has no reading
+    apartments_sum: MeterAmount
+    unallocated_loss: MeterAmount | None
 
 
 class MatrixResponse(BaseModel):
@@ -210,8 +233,8 @@ class EstimatedReading(BaseModel):
     reading_id: uuid.UUID
     meter_id: uuid.UUID
     apartment_id: uuid.UUID
-    value: Decimal
-    consumption_delta: Decimal
+    value: MeterAmount
+    consumption_delta: MeterAmount
 
 
 class EstimateResponse(BaseModel):
@@ -234,8 +257,8 @@ class PeriodStatusUpdateResponse(BaseModel):
 
 class HistoryEntry(BaseModel):
     changed_at: datetime
-    old_value: Decimal | None
-    new_value: Decimal
+    old_value: MeterAmount | None
+    new_value: MeterAmount
     source: ReadingSource
     reason: str | None
     changed_by: AuthorBadgeDTO | None  # masked; None for the system

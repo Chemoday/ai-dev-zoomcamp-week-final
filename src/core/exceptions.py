@@ -1,10 +1,12 @@
 """Unified error payloads: {"error_code", "message", ...extra} for every error the API returns."""
 
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 _HTTP_ERROR_CODES = {
@@ -72,3 +74,56 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(DomainError, domain_error_handler)
     app.add_exception_handler(RequestValidationError, validation_error_handler)
     app.add_exception_handler(StarletteHTTPException, http_error_handler)
+
+
+# --- OpenAPI contract (docs/openapi.json) ---------------------------------------------------------
+
+
+class ValidationErrorItem(BaseModel):
+    loc: list[str | int]
+    message: str
+    type: str
+
+
+class ErrorResponse(BaseModel):
+    """Body of every error response. The frontend picks its text by error_code.
+
+    Some errors add fields of their own (e.g. `required_confirmation_level`,
+    `allowed_statuses`, `unknown_apartment_ids`); docs/API.md lists them per endpoint.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    error_code: str
+    message: str
+    errors: list[ValidationErrorItem] | None = None  # only for VALIDATION_ERROR
+    trace_id: str | None = None  # only for INTERNAL_SERVER_ERROR
+
+
+AUTH_ERRORS = ("NOT_AUTHENTICATED", "INVALID_TOKEN", "UNKNOWN_USER")
+
+_STATUS_TITLES = {
+    401: "Not authenticated",
+    403: "Forbidden",
+    404: "Not found (or not visible to the caller)",
+    409: "Conflict with the current state",
+    422: "Invalid input",
+    500: "Internal server error",
+    503: "Service unavailable",
+}
+
+
+def error_responses(codes: Mapping[int, Sequence[str]]) -> dict[int | str, dict[str, Any]]:
+    """OpenAPI `responses` for the given status codes, each listing its possible error_codes.
+
+    Every endpoint that takes parameters must list 422 (with VALIDATION_ERROR), otherwise FastAPI
+    documents its own HTTPValidationError shape, which this API never returns.
+    """
+    return {
+        status: {
+            "model": ErrorResponse,
+            "description": f"{_STATUS_TITLES[status]}. error_code: "
+            + ", ".join(f"`{code}`" for code in error_codes),
+        }
+        for status, error_codes in sorted(codes.items())
+    }

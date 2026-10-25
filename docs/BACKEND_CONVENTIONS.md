@@ -93,6 +93,7 @@ from src.modules.property.models import Apartment, ApartmentMembership, Building
 __all__ = ["Base"]
 3. Unified Error Handling (src/core/exceptions.py)
 NEVER raise raw fastapi.HTTPException with arbitrary strings. Always raise DomainError subclasses so the frontend receives predictable JSON payloads.
+Every endpoint documents its errors with `responses=error_responses({404: ["METER_NOT_FOUND"], 422: ["VALIDATION_ERROR"]})` (routers add 401 and 500 for all their endpoints). An endpoint with parameters must list 422, otherwise FastAPI documents its own `HTTPValidationError`, which this API never returns. After any API change run `uv run python -m src.core.openapi` and commit `docs/openapi.json`; `tests/core/test_openapi.py` enforces both.
 code
 Python
 # src/core/exceptions.py

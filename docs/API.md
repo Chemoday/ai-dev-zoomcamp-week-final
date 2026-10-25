@@ -2,6 +2,13 @@
 
 All responses include `X-Trace-Id` header populated by OpenTelemetry middleware for observability correlation.
 
+**Machine-readable contract:** [`docs/openapi.json`](openapi.json) (OpenAPI 3.1), generated from the app. Build the frontend against it; this file explains the rules behind it.
+- Every endpoint lists its error statuses, and each status lists its possible `error_code` values. All errors use the `ErrorResponse` schema (section 0).
+- Meter values are strings with a pattern in both directions (`"1254.100"`); numbers are rejected.
+- TypeScript types: `npx openapi-typescript docs/openapi.json -o src/api/schema.ts`.
+- Interactive docs of a running instance: `/docs` (Swagger UI) and `/openapi.json`.
+- After any API change, regenerate the file with `uv run python -m src.core.openapi`; `tests/core/test_openapi.py` fails while it is out of date.
+
 ## 0. Authentication & Error Format
 
 Error `message` texts are **English only**. They are meant for developers and logs; the frontend shows localized texts chosen by `error_code`. The backend contains no Russian at all: author badges are English too (`Apt. 14`, `Chairman`).
