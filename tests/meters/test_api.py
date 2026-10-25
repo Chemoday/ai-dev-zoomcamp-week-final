@@ -1014,3 +1014,29 @@ async def test_export_without_the_csv_plugin_is_a_clear_404(
 
     assert response.status_code == 404
     assert response.json()["error_code"] == "EXPORTER_NOT_ENABLED"
+
+
+async def test_resident_update_without_reason_does_not_crash(
+    api_client: AsyncClient, db_session: AsyncSession, world: MetersWorld
+) -> None:
+    """Regression: trace_id 2931af48c24fb9d0c4d94dc9c6e0cb79 - AttributeError when
+    resident updates their reading without providing a reason."""
+    first = await submit(api_client, world.owner_14, world.meter_14, "120.000")
+    assert first.status_code == 200
+
+    # Update without a reason - this should not crash with AttributeError
+    second = await submit(api_client, world.owner_14, world.meter_14, "121.000")
+
+    assert second.status_code == 200
+    assert second.json()["value"] == "121.000"
+    reading_id = second.json()["reading_id"]
+
+    # Verify the audit log has the correct default reason
+    reasons = list(
+        await db_session.scalars(
+            select(MeterReadingLog.reason)
+            .where(MeterReadingLog.reading_id == uuid.UUID(reading_id))
+            .order_by(MeterReadingLog.changed_at)
+        )
+    )
+    assert reasons == ["Resident submission", "Resident update"]
