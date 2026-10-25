@@ -8,6 +8,12 @@
 	}
 }
 
+# Caddy's automatic HTTP->HTTPS redirect drops a non-default https_port, so redirect explicitly.
+# ACME HTTP-01 challenges on port 80 are still answered before this route.
+http://{$PROD_HOST}, http://{$DEV_HOST} {
+	redir https://{host}:{$HTTPS_PORT:443}{uri} 308
+}
+
 {$PROD_HOST} {
 	encode zstd gzip
 	reverse_proxy aap-prod-backend:8000

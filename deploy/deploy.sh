@@ -15,6 +15,8 @@ SHA=$2
 MODE=${3:-}
 ENV_DIR="$AAP_ROOT/$ENV_NAME"
 RELEASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# docker compose stats the working directory; never depend on where the caller happened to be.
+cd "$RELEASE_DIR"
 
 log() { echo "[deploy $ENV_NAME $(date -u +%H:%M:%S)] $*"; }
 

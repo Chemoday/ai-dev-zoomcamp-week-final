@@ -66,7 +66,10 @@ log "docker network aap-edge"
 docker network inspect aap-edge > /dev/null 2>&1 || docker network create aap-edge > /dev/null
 
 log "edge proxy: https://$PROD_HOST:$HTTPS_PORT (prod), https://$DEV_HOST:$HTTPS_PORT (dev)"
-install -m 644 "$HERE/edge/Caddyfile" "$HERE/edge/docker-compose.yml" "$AAP_ROOT/edge/"
+install -d -o root -g root -m 755 "$AAP_ROOT/edge/caddy"
+install -m 644 "$HERE/edge/docker-compose.yml" "$AAP_ROOT/edge/"
+install -m 644 "$HERE/edge/Caddyfile" "$AAP_ROOT/edge/caddy/Caddyfile"
+rm -f "$AAP_ROOT/edge/Caddyfile"  # pre-directory-mount layout
 cat > "$AAP_ROOT/edge/.env" <<EOF
 HTTPS_PORT=$HTTPS_PORT
 PROD_HOST=$PROD_HOST
@@ -77,10 +80,16 @@ edge_compose() {
         --env-file "$AAP_ROOT/edge/.env" "$@"
 }
 edge_compose up -d --remove-orphans
-# A bind-mounted Caddyfile change does not recreate the container, so reload explicitly.
+# A Caddyfile change does not recreate the container, so reload explicitly (Caddy may still be
+# starting, hence the retries; the last error is shown if every attempt fails).
+reloaded=false
 for _ in $(seq 1 15); do
-    edge_compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile > /dev/null 2>&1 && break
+    if reload_output=$(edge_compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile 2>&1); then
+        reloaded=true
+        break
+    fi
     sleep 1
 done
+$reloaded || { echo "caddy reload failed: $reload_output" >&2; exit 1; }
 
 log "done"
