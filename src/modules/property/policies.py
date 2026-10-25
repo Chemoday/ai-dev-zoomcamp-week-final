@@ -3,6 +3,8 @@
 Badge texts are in Russian because the resident UI is (see docs/API.md, "Author badge rules").
 """
 
+from collections.abc import Iterable
+
 from src.modules.property.schemas import (
     AuthorBadgeDTO,
     BuildingRole,
@@ -22,6 +24,18 @@ BUILDING_ROLE_LABELS: dict[BuildingRole, str] = {
 }
 
 _BOARD_ROLES = frozenset({BuildingRole.CHAIRMAN, BuildingRole.BOARD})
+
+# From most private to least private.
+_PRIVACY_ORDER = (DisplayMode.APARTMENT_ONLY, DisplayMode.INITIALS, DisplayMode.FULL_NAME)
+
+
+def most_private_display_mode(modes: Iterable[DisplayMode]) -> DisplayMode:
+    """The strictest of the given modes (APARTMENT_ONLY when there are none).
+
+    Used wherever no single apartment decides: consenting to be named in one apartment's
+    context must never reveal the name in another.
+    """
+    return min(modes, key=_PRIVACY_ORDER.index, default=DisplayMode.APARTMENT_ONLY)
 
 
 def format_initials(full_name: str) -> str:

@@ -7,15 +7,19 @@ import jwt
 import pytest
 from fastapi import Depends, FastAPI
 from httpx import AsyncClient
+from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import Settings, get_settings
 from src.core.security import DEMO_USER_HEADER, create_access_token, require_building_roles
+from src.modules.property.models import ApartmentMembership
 from src.modules.property.schemas import BuildingRole, CurrentUserDTO, DisplayMode, RoleBadge
 from src.modules.property.service import UNKNOWN_AUTHOR_BADGE, PropertyService
 from tests.factories import (
     DemoBuilding,
     create_apartment,
+    create_building,
     create_demo_building,
     create_membership,
     create_user,
@@ -34,8 +38,10 @@ def as_user(user_id: uuid.UUID) -> dict[str, str]:
 
 
 def assert_no_raw_pii(raw_json: str, demo: DemoBuilding) -> None:
-    for secret in (demo.owner_14.full_name, demo.owner_14.email, demo.owner_14.phone):
-        assert secret not in raw_json
+    """No name (not even a part or the initials), email or phone, and no such fields at all."""
+    owner = demo.owner_14
+    for secret in (owner.full_name, *owner.full_name.split(), "И. П.", owner.email, owner.phone):
+        assert secret not in raw_json, secret
     for key in ('"full_name"', '"email"', '"phone"'):
         assert key not in raw_json
 
@@ -107,7 +113,7 @@ async def test_me_for_staff_without_apartment(api_client: AsyncClient, demo: Dem
 
 
 async def test_privacy_update_returns_preview_and_persists(
-    api_client: AsyncClient, demo: DemoBuilding
+    api_client: AsyncClient, db_session: AsyncSession, demo: DemoBuilding
 ) -> None:
     url = f"/api/v1/property/memberships/{demo.owner_14_membership.id}/privacy"
 
@@ -121,6 +127,12 @@ async def test_privacy_update_returns_preview_and_persists(
         "privacy_display_mode": "INITIALS",
         "preview_badge": {"display_label": "И. П. (Кв. 14)", "role_badge": "OWNER"},
     }
+    stored = await db_session.scalar(
+        select(ApartmentMembership.privacy_display_mode).where(
+            ApartmentMembership.id == demo.owner_14_membership.id
+        )
+    )
+    assert stored == DisplayMode.INITIALS
     me = (await api_client.get("/api/v1/property/me", headers=as_user(demo.owner_14.id))).json()
     assert me["privacy_display_mode"] == "INITIALS"
     assert me["memberships"][0]["preview_badge"]["display_label"] == "И. П. (Кв. 14)"
@@ -155,8 +167,6 @@ async def test_privacy_update_back_to_apartment_only_has_no_raw_pii(
 async def test_cannot_change_someone_elses_membership(
     api_client: AsyncClient, demo: DemoBuilding
 ) -> None:
-    # Plain values up front: a failed request rolls back its SAVEPOINT, which expires the ORM
-    # objects it touched, and expired objects cannot lazy-load outside the async context.
     neighbour = as_user(demo.tenant_2.id)
     foreign_membership_id = demo.owner_14_membership.id
 
@@ -367,3 +377,77 @@ async def test_masked_author_badge_single_lookup(
 
     assert badge.display_label == "Кв. 14"
     assert badge.role_badge == RoleBadge.OWNER
+
+
+# --- Regression tests from the independent review ----------------------------------------------
+
+
+async def test_401_tells_the_client_how_to_authenticate(api_client: AsyncClient) -> None:
+    response = await api_client.get("/api/v1/property/me")
+
+    assert response.status_code == 401
+    assert response.headers["WWW-Authenticate"] == "Bearer"
+
+
+async def test_name_consent_in_one_apartment_does_not_leak_to_posts_without_apartment(
+    db_session: AsyncSession, demo: DemoBuilding
+) -> None:
+    # Apt 14 stays APARTMENT_ONLY. A second apartment (entrance 1, so it sorts first) opts into
+    # FULL_NAME. Posts without an apartment context must keep the most private mode.
+    apt_3 = await create_apartment(db_session, demo.building, "3", entrance=1)
+    await create_membership(db_session, demo.owner_14, apt_3, mode=DisplayMode.FULL_NAME)
+    service = PropertyService(db_session)
+
+    badge = await service.get_masked_author_badge(demo.owner_14.id, None)
+    current_user = await service.get_current_user(demo.owner_14.id)
+
+    assert badge.display_label == "Житель"
+    assert current_user.privacy_display_mode == DisplayMode.APARTMENT_ONLY
+
+
+async def test_memberships_in_another_building_are_ignored(
+    db_session: AsyncSession, demo: DemoBuilding
+) -> None:
+    other_building = await create_building(db_session, name="KÜ Mujal 1")
+    foreign_apartment = await create_apartment(db_session, other_building, "7")
+    await create_membership(
+        db_session, demo.owner_14, foreign_apartment, mode=DisplayMode.FULL_NAME
+    )
+    service = PropertyService(db_session)
+
+    current_user = await service.get_current_user(demo.owner_14.id)
+    badge = await service.get_masked_author_badge(demo.owner_14.id, foreign_apartment.id)
+
+    assert [m.apartment_number for m in current_user.memberships] == ["14"]
+    assert badge.display_label == "Кв. 7"  # treated like a non-member: no name
+
+
+async def test_memberships_are_ordered_naturally(
+    db_session: AsyncSession, demo: DemoBuilding
+) -> None:
+    for number in ("10", "9", "14A"):
+        apartment = await create_apartment(db_session, demo.building, number, entrance=2)
+        await create_membership(db_session, demo.owner_14, apartment)
+
+    current_user = await PropertyService(db_session).get_current_user(demo.owner_14.id)
+
+    assert [m.apartment_number for m in current_user.memberships] == ["9", "10", "14", "14A"]
+
+
+@pytest.mark.parametrize(
+    ("table", "column", "bad_value"),
+    [
+        ("core_users", "building_role", "chairman"),
+        ("property_memberships", "relation_type", "LANDLORD"),
+        ("property_memberships", "privacy_display_mode", "EVERYTHING"),
+    ],
+)
+async def test_database_rejects_unknown_enum_values(
+    db_session: AsyncSession, demo: DemoBuilding, table: str, column: str, bad_value: str
+) -> None:
+    # Without CHECK constraints one stray value would crash every request that loads the row.
+    with pytest.raises(IntegrityError, match="ck_"):
+        await db_session.execute(
+            text(f"UPDATE {table} SET {column} = :value"), {"value": bad_value}
+        )
+    await db_session.rollback()

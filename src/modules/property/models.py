@@ -28,12 +28,15 @@ from src.core.database import Base
 from src.modules.property.schemas import BuildingRole, DisplayMode, RelationType
 
 
-def _varchar_enum(enum_cls: type[StrEnum]) -> SAEnum:
-    """Store a StrEnum as VARCHAR(32) (no native PostgreSQL enum type), as the schema specifies."""
+def _varchar_enum(enum_cls: type[StrEnum], check_name: str) -> SAEnum:
+    """Store a StrEnum as VARCHAR(32) (no native PostgreSQL enum type), as the schema specifies,
+    with a named CHECK constraint so a stray value cannot be written and later crash every read.
+    """
     return SAEnum(
         enum_cls,
         native_enum=False,
-        create_constraint=False,
+        create_constraint=True,
+        name=check_name,
         length=32,
         values_callable=lambda members: [member.value for member in members],
         validate_strings=True,
@@ -69,7 +72,7 @@ class User(Base):
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
     phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
     building_role: Mapped[BuildingRole] = mapped_column(
-        _varchar_enum(BuildingRole),
+        _varchar_enum(BuildingRole, "ck_core_users_building_role"),
         nullable=False,
         default=BuildingRole.USER,
         server_default=BuildingRole.USER.value,
@@ -134,7 +137,9 @@ class ApartmentMembership(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("core_users.id"), nullable=False, index=True
     )
-    relation_type: Mapped[RelationType] = mapped_column(_varchar_enum(RelationType), nullable=False)
+    relation_type: Mapped[RelationType] = mapped_column(
+        _varchar_enum(RelationType, "ck_property_memberships_relation_type"), nullable=False
+    )
     can_submit_readings: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=text("true")
     )
@@ -145,7 +150,7 @@ class ApartmentMembership(Base):
         Boolean, nullable=False, default=False, server_default=text("false")
     )
     privacy_display_mode: Mapped[DisplayMode] = mapped_column(
-        _varchar_enum(DisplayMode),
+        _varchar_enum(DisplayMode, "ck_property_memberships_privacy_display_mode"),
         nullable=False,
         default=DisplayMode.APARTMENT_ONLY,
         server_default=DisplayMode.APARTMENT_ONLY.value,

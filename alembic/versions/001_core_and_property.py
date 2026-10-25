@@ -47,6 +47,10 @@ def upgrade() -> None:
             "created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
         ),
         sa.UniqueConstraint("email", name="core_users_email_key"),
+        sa.CheckConstraint(
+            "building_role IN ('CHAIRMAN', 'BOARD', 'ACCOUNTANT', 'USER')",
+            name="ck_core_users_building_role",
+        ),
     )
     op.create_index("ix_core_users_building_id", "core_users", ["building_id"])
 
@@ -111,6 +115,14 @@ def upgrade() -> None:
         ),
         sa.UniqueConstraint(
             "apartment_id", "user_id", name="uq_property_memberships_apartment_user"
+        ),
+        sa.CheckConstraint(
+            "relation_type IN ('OWNER', 'TENANT', 'RESIDENT')",
+            name="ck_property_memberships_relation_type",
+        ),
+        sa.CheckConstraint(
+            "privacy_display_mode IN ('APARTMENT_ONLY', 'INITIALS', 'FULL_NAME')",
+            name="ck_property_memberships_privacy_display_mode",
         ),
     )
     op.create_index(

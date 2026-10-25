@@ -2,7 +2,12 @@
 
 import pytest
 
-from src.modules.property.policies import format_author_badge, format_initials, resolve_role_badge
+from src.modules.property.policies import (
+    format_author_badge,
+    format_initials,
+    most_private_display_mode,
+    resolve_role_badge,
+)
 from src.modules.property.schemas import BuildingRole, DisplayMode, RelationType, RoleBadge
 
 
@@ -110,3 +115,17 @@ def test_plain_string_inputs_are_accepted() -> None:
     result = format_author_badge("Иван Петров", "14", "OWNER", "USER", "INITIALS")
     assert result.display_label == "И. П. (Кв. 14)"
     assert result.role_badge == RoleBadge.OWNER
+
+
+@pytest.mark.parametrize(
+    ("modes", "expected"),
+    [
+        ([], DisplayMode.APARTMENT_ONLY),
+        ([DisplayMode.FULL_NAME], DisplayMode.FULL_NAME),
+        ([DisplayMode.FULL_NAME, DisplayMode.INITIALS], DisplayMode.INITIALS),
+        ([DisplayMode.FULL_NAME, DisplayMode.APARTMENT_ONLY], DisplayMode.APARTMENT_ONLY),
+        (["FULL_NAME", "INITIALS"], DisplayMode.INITIALS),
+    ],
+)
+def test_most_private_display_mode(modes, expected) -> None:
+    assert most_private_display_mode(modes) == expected

@@ -3,14 +3,13 @@
 import uuid
 from collections.abc import Iterable
 
-from fastapi import Depends
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.database import get_db_session
+from src.core.database import DbSession
 from src.core.exceptions import DomainError
 from src.modules.property.models import Apartment, ApartmentMembership, User
-from src.modules.property.policies import format_author_badge
+from src.modules.property.policies import format_author_badge, most_private_display_mode
 from src.modules.property.schemas import (
     ApartmentMembershipDTO,
     AuthorBadgeDTO,
@@ -30,6 +29,9 @@ UNKNOWN_AUTHOR_BADGE = AuthorBadgeDTO(
 
 type AuthorKey = tuple[uuid.UUID, uuid.UUID | None]
 
+# Entrance, then apartment number in natural order: "2" < "10" < "14" < "14A".
+_APARTMENT_ORDER = (Apartment.entrance, func.length(Apartment.number), Apartment.number)
+
 
 class PropertyService:
     def __init__(self, session: AsyncSession):
@@ -42,13 +44,13 @@ class PropertyService:
         user = await self.session.get(User, user_id)
         if user is None or not user.is_active:
             return None
-        memberships = await self._memberships_of(user_id)
+        memberships = await self._memberships_of(user.id, user.building_id)
         return CurrentUserDTO(
             id=user.id,
             building_id=user.building_id,
             building_role=user.building_role,
-            privacy_display_mode=(
-                memberships[0].privacy_display_mode if memberships else DisplayMode.APARTMENT_ONLY
+            privacy_display_mode=most_private_display_mode(
+                m.privacy_display_mode for m in memberships
             ),
             memberships=tuple(memberships),
         )
@@ -119,7 +121,8 @@ class PropertyService:
         """Resolve many (user_id, apartment_id) authors at once (no N+1 queries for feeds).
 
         The display mode comes from the user's membership in that apartment. Without an
-        apartment context the user's primary mode applies. If the user no longer lives in the
+        apartment context the most private of the user's modes applies, so consenting to be named
+        in one apartment never reveals the name elsewhere. If the user no longer lives in the
         apartment, only the apartment is shown, because nobody consented to show the name there.
         """
         keys = set(authors)
@@ -135,15 +138,18 @@ class PropertyService:
             await self.session.execute(
                 select(ApartmentMembership, Apartment.number)
                 .join(Apartment, Apartment.id == ApartmentMembership.apartment_id)
-                .where(ApartmentMembership.user_id.in_(user_ids))
-                .order_by(Apartment.entrance, Apartment.number)
+                .join(User, User.id == ApartmentMembership.user_id)
+                .where(
+                    ApartmentMembership.user_id.in_(user_ids),
+                    Apartment.building_id == User.building_id,
+                )
             )
         ).all()
         memberships: dict[tuple[uuid.UUID, uuid.UUID], tuple[ApartmentMembership, str]] = {}
-        primary_mode: dict[uuid.UUID, DisplayMode] = {}
+        modes_by_user: dict[uuid.UUID, list[DisplayMode]] = {}
         for membership, number in membership_rows:
             memberships[(membership.user_id, membership.apartment_id)] = (membership, number)
-            primary_mode.setdefault(membership.user_id, membership.privacy_display_mode)
+            modes_by_user.setdefault(membership.user_id, []).append(membership.privacy_display_mode)
 
         orphan_apartment_ids = {
             apartment_id
@@ -174,7 +180,7 @@ class PropertyService:
                     apt_number=None,
                     relation_type=None,
                     building_role=user.building_role,
-                    display_mode=primary_mode.get(user_id, DisplayMode.APARTMENT_ONLY),
+                    display_mode=most_private_display_mode(modes_by_user.get(user_id, ())),
                 )
             elif (user_id, apartment_id) in memberships:
                 membership, number = memberships[(user_id, apartment_id)]
@@ -198,12 +204,16 @@ class PropertyService:
 
     # --- Internals ------------------------------------------------------------------------------
 
-    async def _memberships_of(self, user_id: uuid.UUID) -> list[ApartmentMembershipDTO]:
+    async def _memberships_of(
+        self, user_id: uuid.UUID, building_id: uuid.UUID
+    ) -> list[ApartmentMembershipDTO]:
+        # Only apartments of the user's own building: CurrentUserDTO.building_id and the
+        # membership apartments must never disagree for the modules that scope by them.
         rows = await self.session.execute(
             select(ApartmentMembership, Apartment)
             .join(Apartment, Apartment.id == ApartmentMembership.apartment_id)
-            .where(ApartmentMembership.user_id == user_id)
-            .order_by(Apartment.entrance, Apartment.number)
+            .where(ApartmentMembership.user_id == user_id, Apartment.building_id == building_id)
+            .order_by(*_APARTMENT_ORDER)
         )
         return [
             ApartmentMembershipDTO(
@@ -238,5 +248,5 @@ class PropertyService:
         )
 
 
-def get_property_service(session: AsyncSession = Depends(get_db_session)) -> PropertyService:
+def get_property_service(session: DbSession) -> PropertyService:
     return PropertyService(session)
