@@ -90,7 +90,7 @@ Each task is atomic, self-contained, and designed to be executed sequentially by
 
 ### Task 6: Frontend UI — Resident Mobile View & Chairman Dashboard
 - **Tracking Issue:** [#7](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/7)
-- **Target Module:** `src/frontend/` (served via FastAPI StaticFiles / Templates)
+- **Target Module:** `frontend/` at the repository root, built against the API contract [`docs/openapi.json`](openapi.json) (see [API.md](API.md)). How the built files are served (by the backend or by Caddy) is decided in this task.
 - **Requirements:**
   - Role switcher / Demo login bar at the top for easy grading (`Switch Role: Resident Apt 14 | Resident Apt 2 | Chairman | Accountant`).
   - Sticky red **Emergency Alert Banner** when active emergency exists for the user's entrance/building.
