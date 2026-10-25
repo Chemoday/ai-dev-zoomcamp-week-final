@@ -139,9 +139,9 @@ Each task is atomic, self-contained, and designed to be executed sequentially by
   - [x] **8.6 Workflow.** `.github/workflows/oncall-responder.yml`: `repository_dispatch` (`oncall-alert`) and `workflow_dispatch` with a sample payload; runs `respond` with the `ANTHROPIC_API_KEY` secret (the project owner adds it). The PR must reference the alert and pass CI.
   - [ ] **8.7 End-to-end demo and docs.** `docs/OBSERVABILITY.md`: how to open the dashboards, follow one `trace_id` across trace, logs and metrics, trigger the alert, and what the agent did (link to its PR). Tick the acceptance criteria below, mark the PR ready for review.
 - **Acceptance Criteria & Tests:**
-  - [ ] `docker compose up` also starts the collector and the trace/log/metric backends; one `POST /api/v1/meters/readings` request is viewable in the UI as a trace, metrics and logs sharing the same `trace_id`.
-  - [ ] Exported telemetry contains no PII or credentials (covered by a test).
-  - [ ] The alert fires when `POST /api/v1/meters/readings` returns 5xx and delivers a webhook payload containing the `trace_id`.
+  - [x] `docker compose up` also starts the collector and the trace/log/metric backends; one `POST /api/v1/meters/readings` request is viewable in the UI as a trace, metrics and logs sharing the same `trace_id`.
+  - [x] Exported telemetry contains no PII or credentials (covered by a test).
+  - [x] The alert fires when `POST /api/v1/meters/readings` returns 5xx and delivers a webhook payload containing the `trace_id`.
   - [ ] The on-call agent, triggered by that webhook, finds the correlated error log, adds a regression test, gets `pytest` green and opens a pull request that references the alert.
 
 ---
