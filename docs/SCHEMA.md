@@ -100,6 +100,7 @@ All tables use `UUID` primary keys (`uuid4`), UTC timestamps (`TIMESTAMPTZ`), an
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
 | `id` | `UUID` | `PK` | Reading ID |
+| `building_id` | `UUID` | `FK(property_buildings.id), NOT NULL` | Building of both the meter and the period (enforced, see below) |
 | `meter_id` | `UUID` | `FK(meters_devices.id), INDEX` | Target meter |
 | `period_id` | `UUID` | `FK(meters_periods.id), INDEX` | Accounting period |
 | `value` | `NUMERIC(12, 3)`| `NOT NULL` | Current cumulative meter reading |
@@ -108,8 +109,20 @@ All tables use `UUID` primary keys (`uuid4`), UTC timestamps (`TIMESTAMPTZ`), an
 | `source` | `VARCHAR(32)` | `NOT NULL` | Enum: `RESIDENT`, `ADMIN_OVERRIDE`, `AUTO_ESTIMATED`, `IOT_WEBHOOK` |
 | `is_anomaly_confirmed`| `BOOLEAN` | `NOT NULL, DEFAULT FALSE` | `TRUE` if user passed 2-step popup confirmation |
 | `submitted_by_user_id`| `UUID` | `FK(core_users.id), NULLABLE`| User who submitted/modified (NULL if system `AUTO_ESTIMATED`) |
-| `recorded_at` | `TIMESTAMPTZ` | `NOT NULL` | Timestamp of last modification |
+| `recorded_at` | `TIMESTAMPTZ` | `NOT NULL` | Timestamp of last modification (ORM `onupdate`; a raw `INSERT … ON CONFLICT DO UPDATE` must set it explicitly) |
 | `UNIQUE` | `(meter_id, period_id)` | | **Strictly 1 active reading per meter per period** |
+
+**Integrity constraints of `meters_*` tables** (enforced by PostgreSQL, so no code path can bypass them):
+- Every enum column (`resource_type`, `unit`, `status`, `source`) has a named `CHECK (… IN (…))`.
+- `meters_periods.period_code` must match `^[0-9]{4}-(0[1-9]|1[0-2])$`.
+- `meters_devices`: `initial_value >= 0` and `max_monthly_delta > 0`.
+- `meters_readings`: `value >= 0`, `previous_value >= 0`, and `consumption_delta = value - previous_value` (the stored delta can never disagree with the values).
+- `meters_reading_logs` is append-only: triggers reject every `UPDATE`, `DELETE` and `TRUNCATE`.
+- **One building per row chain.** `meters_devices` and `meters_periods` are `UNIQUE (id, building_id)`, and `property_apartments` is `UNIQUE (id, building_id)`. Composite foreign keys then guarantee that:
+  - a reading's meter and period belong to the reading's building: `(meter_id, building_id)` → `meters_devices` and `(period_id, building_id)` → `meters_periods`;
+  - an apartment meter's apartment is in the meter's building: `(apartment_id, building_id)` → `property_apartments`. Master meters with `apartment_id NULL` are not checked.
+- `CHECK` constraints and triggers are invisible to `alembic check`. `tests/core/test_migrations.py` therefore compares every constraint and index of a migrated database with one built from the models, and asserts that the triggers exist.
+- **Known gap (additive migration later):** there is no link from a replaced meter to its successor, and no `installed_at` / `deactivated_at`. Only `is_active` exists.
 
 ### Table: `meters_reading_logs` (Immutable Audit Trail)
 | Column | Type | Constraints | Description |

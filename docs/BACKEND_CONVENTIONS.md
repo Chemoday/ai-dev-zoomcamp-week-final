@@ -131,7 +131,7 @@ code
 Python
 raise DomainError(
     status_code=409,
-    error_code="ANOMALY_WARN_STEP_1",
+    error_code="ANOMALY_CONFIRMATION_STEP_1",  # codes as in docs/API.md
     message=(
         f"You entered a very large value (delta: {delta} m3). Are you sure?"
     ),
