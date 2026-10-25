@@ -8,6 +8,8 @@ from fastapi import APIRouter, Depends, Query, Response
 from src.core.security import get_current_user, require_building_roles
 from src.modules.communication.policies import MODERATOR_ROLES, PUBLISHER_ROLES
 from src.modules.communication.schemas import (
+    COMMENTS_PAGE_DEFAULT,
+    COMMENTS_PAGE_MAX,
     FEED_PAGE_MAX,
     AcknowledgeResponse,
     CommentCreateRequest,
@@ -79,10 +81,12 @@ async def create_post(
 @router.get("/posts/{post_id}", response_model=PostDetail)
 async def get_post(
     post_id: uuid.UUID,
+    comments_limit: Annotated[int, Query(ge=1, le=COMMENTS_PAGE_MAX)] = COMMENTS_PAGE_DEFAULT,
+    comments_offset: Annotated[int, Query(ge=0, le=100_000)] = 0,
     user: CurrentUserDTO = Depends(get_current_user),
     service: CommunicationService = Depends(get_communication_service),
 ) -> PostDetail:
-    return await service.get_post(user, post_id)
+    return await service.get_post(user, post_id, comments_limit, comments_offset)
 
 
 @router.delete("/posts/{post_id}", status_code=204)

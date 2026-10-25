@@ -171,20 +171,26 @@ class CommunicationService:
         )
         return await self._post_views(user, posts)
 
-    async def get_post(self, user: CurrentUserDTO, post_id: uuid.UUID) -> PostDetail:
+    async def get_post(
+        self, user: CurrentUserDTO, post_id: uuid.UUID, comments_limit: int, comments_offset: int
+    ) -> PostDetail:
+        """The post with one page of its comments, oldest first; comments_count is the total."""
         post = await self._visible_post(user, post_id)
         comments = list(
             await self.session.scalars(
                 select(Comment)
                 .where(Comment.post_id == post.id)
                 .order_by(Comment.created_at, Comment.id)
+                .limit(comments_limit)
+                .offset(comments_offset)
             )
         )
+        total = (await self._comment_counts([post.id])).get(post.id, 0)
         badges = await self.property_service.get_masked_author_badges(
             [_author_key(post), *(_author_key(comment) for comment in comments)]
         )
         return PostDetail(
-            **self._post_view(user, post, badges[_author_key(post)], len(comments)).model_dump(),
+            **self._post_view(user, post, badges[_author_key(post)], total).model_dump(),
             comments=[
                 self._comment_view(user, comment, badges[_author_key(comment)])
                 for comment in comments

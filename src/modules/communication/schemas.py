@@ -39,21 +39,25 @@ POST_BODY_MAX_LENGTH = 10_000
 COMMENT_BODY_MAX_LENGTH = 4_000
 MAX_TARGET_APARTMENTS = 500
 FEED_PAGE_MAX = 100
+COMMENTS_PAGE_MAX = 500
+COMMENTS_PAGE_DEFAULT = 200
 
 TitleText = safe_text(TITLE_MAX_LENGTH)
 PostBodyText = safe_text(POST_BODY_MAX_LENGTH)
 CommentBodyText = safe_text(COMMENT_BODY_MAX_LENGTH)
 
 
-def _unique_in_order(ids: list[uuid.UUID] | None) -> list[uuid.UUID] | None:
-    return None if ids is None else list(dict.fromkeys(ids))
+def _unique_apartment_ids(ids: list[uuid.UUID] | None) -> list[uuid.UUID] | None:
+    """Drop duplicates (keeping order), then apply the limit; an empty list means "not given"."""
+    if not ids:
+        return None
+    unique = list(dict.fromkeys(ids))
+    if len(unique) > MAX_TARGET_APARTMENTS:
+        raise ValueError(f"at most {MAX_TARGET_APARTMENTS} different apartments can be targeted")
+    return unique
 
 
-TargetApartmentIds = Annotated[
-    list[uuid.UUID] | None,
-    Field(max_length=MAX_TARGET_APARTMENTS),
-    AfterValidator(_unique_in_order),
-]
+TargetApartmentIds = Annotated[list[uuid.UUID] | None, AfterValidator(_unique_apartment_ids)]
 
 
 # --- Requests ------------------------------------------------------------------------------------

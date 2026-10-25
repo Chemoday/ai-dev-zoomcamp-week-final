@@ -9,6 +9,7 @@ from httpx import AsyncClient, Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.database import get_db_session
 from src.core.security import DEMO_USER_HEADER
 from src.modules.communication.events import EmergencyAlertPublished, EmergencyAlertResolved
 from src.modules.communication.models import Post
@@ -572,3 +573,109 @@ async def test_posts_of_another_building_cannot_be_deleted(
 
     assert response.status_code == 404
     assert (await db_session.get(Post, uuid.UUID(foreign["id"]))).deleted_at is None
+
+
+# --- Review follow-ups ---------------------------------------------------------------------------
+
+
+async def test_the_board_of_another_building_cannot_touch_this_building(
+    api_client: AsyncClient, world: CommWorld, published_events
+) -> None:
+    alert = await emergency(api_client, world.chairman)
+    topic = (await publish(api_client, world.owner_14)).json()
+    stranger = as_user(world.other_chairman)
+
+    assert await active_ids(api_client, world.other_chairman) == []
+    assert alert["id"] not in await feed_ids(api_client, world.other_chairman)
+    for response in (
+        await api_client.get(f"{API}/posts/{alert['id']}", headers=stranger),
+        await api_client.post(f"{API}/emergencies/{alert['id']}/resolve", headers=stranger),
+        await api_client.post(f"{API}/emergencies/{alert['id']}/acknowledge", headers=stranger),
+        await api_client.delete(f"{API}/posts/{topic['id']}", headers=stranger),
+    ):
+        assert response.status_code == 404
+        assert response.json()["error_code"] == "POST_NOT_FOUND"
+    assert await active_ids(api_client, world.owner_14) == [alert["id"]]
+    assert topic["id"] in await feed_ids(api_client, world.owner_14)
+    assert [type(e).__name__ for e in published_events] == ["EmergencyAlertPublished"]
+
+
+async def test_one_request_uses_one_session_for_the_service_auth_and_outbox(
+    db_app, api_client: AsyncClient, world: CommWorld, published_events
+) -> None:
+    # The outbox lives on the session. If a dependency without scope="function" got its own
+    # session, events would be collected on a session that never commits.
+    original = db_app.dependency_overrides[get_db_session]
+    calls = 0
+
+    async def counting_session():
+        nonlocal calls
+        calls += 1
+        async for session in original():
+            yield session
+
+    db_app.dependency_overrides[get_db_session] = counting_session
+    response = await publish(api_client, world.chairman, post_type="EMERGENCY")
+
+    assert response.status_code == 201
+    assert calls == 1
+    assert len(published_events) == 1
+
+
+async def test_text_limits_apply_after_trimming(api_client: AsyncClient, world: CommWorld) -> None:
+    response = await publish(api_client, world.owner_14, title="  " + "t" * 255 + "\n")
+
+    assert response.status_code == 201
+    assert response.json()["title"] == "t" * 255
+
+
+async def test_the_apartment_limit_counts_different_apartments(
+    api_client: AsyncClient, world: CommWorld
+) -> None:
+    repeated = await publish(
+        api_client,
+        world.chairman,
+        post_type="EMERGENCY",
+        target_scope="APARTMENT_LIST",
+        target_apartment_ids=[str(world.apt_2.id)] * 501,
+    )
+    too_many = await publish(
+        api_client,
+        world.chairman,
+        post_type="EMERGENCY",
+        target_scope="APARTMENT_LIST",
+        target_apartment_ids=[str(uuid.uuid4()) for _ in range(501)],
+    )
+    empty_list = await publish(api_client, world.chairman, target_apartment_ids=[])
+
+    assert repeated.status_code == 201
+    assert repeated.json()["target_apartment_ids"] == [str(world.apt_2.id)]
+    assert too_many.status_code == 422
+    assert too_many.json()["error_code"] == "VALIDATION_ERROR"
+    assert empty_list.status_code == 201, "an empty list means no apartment list"
+    assert empty_list.json()["target_apartment_ids"] is None
+
+
+async def test_post_detail_pages_its_comments(api_client: AsyncClient, world: CommWorld) -> None:
+    topic = (await publish(api_client, world.owner_14)).json()
+    for n in range(5):
+        await api_client.post(
+            f"{API}/posts/{topic['id']}/comments",
+            json={"body": f"Comment {n}"},
+            headers=as_user(world.tenant_2),
+        )
+
+    page = await api_client.get(
+        f"{API}/posts/{topic['id']}",
+        params={"comments_limit": 2, "comments_offset": 1},
+        headers=as_user(world.owner_14),
+    )
+    too_big = await api_client.get(
+        f"{API}/posts/{topic['id']}",
+        params={"comments_limit": 501},
+        headers=as_user(world.owner_14),
+    )
+
+    assert [c["body"] for c in page.json()["comments"]] == ["Comment 1", "Comment 2"]
+    assert page.json()["comments_count"] == 5, "the total, not the page size"
+    assert too_big.status_code == 422

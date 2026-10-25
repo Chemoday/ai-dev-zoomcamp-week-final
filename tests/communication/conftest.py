@@ -4,7 +4,8 @@ Apt 14 (entrance 2, floor 4): owner Ivan Petrov (with email and phone).
 Apt 2  (entrance 1, floor 1): tenant Mari Tamm.
 Apt 15 (entrance 2, floor 5): nobody (an entrance-2 target that is not Apt 14).
 Staff: chairman, board member, accountant (no apartments).
-A second building with its own resident, who must never see this building's posts.
+A second building with its own resident and chairman, who must never see or touch this
+building's posts.
 """
 
 from dataclasses import dataclass
@@ -37,6 +38,7 @@ class CommWorld:
     accountant: User
     other_apartment: Apartment
     other_resident: User
+    other_chairman: User
 
 
 @pytest.fixture
@@ -52,6 +54,9 @@ async def world(db_session: AsyncSession) -> CommWorld:
     other_apartment = await create_apartment(db_session, other_building, "1")
     other_resident = await create_user(db_session, other_building, "Jaan Tamm")
     await create_membership(db_session, other_resident, other_apartment)
+    other_chairman = await create_user(
+        db_session, other_building, "Kalle Kask", role=BuildingRole.CHAIRMAN
+    )
 
     return CommWorld(
         building=demo.building,
@@ -66,4 +71,5 @@ async def world(db_session: AsyncSession) -> CommWorld:
         accountant=accountant,
         other_apartment=other_apartment,
         other_resident=other_resident,
+        other_chairman=other_chairman,
     )

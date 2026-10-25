@@ -24,9 +24,15 @@ TARGET_CONSISTENT_CHECK = (
     " AND target_apartment_ids IS NULL)"
     " OR (target_scope = 'ENTRANCE' AND target_entrance IS NOT NULL"
     " AND target_apartment_ids IS NULL)"
+    # IS NOT NULL first: jsonb_typeof(NULL) is NULL, and a NULL CHECK result counts as passed.
     " OR (target_scope = 'APARTMENT_LIST' AND target_entrance IS NULL"
+    " AND target_apartment_ids IS NOT NULL"
     " AND jsonb_typeof(target_apartment_ids) = 'array'"
-    " AND target_apartment_ids <> '[]'::jsonb)"
+    " AND target_apartment_ids <> '[]'::jsonb"
+    # Every element is a canonical (lowercase) UUID string, as the service writes them.
+    " AND NOT jsonb_path_exists(target_apartment_ids,"
+    ' \'$[*] ? (!(@.type() == "string"'
+    ' && @ like_regex "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"))\'))'
 )
 
 
@@ -94,6 +100,7 @@ def upgrade() -> None:
     op.create_index("ix_comm_posts_building_id", "comm_posts", ["building_id"])
     op.create_index("ix_comm_posts_post_type", "comm_posts", ["post_type"])
     op.create_index("ix_comm_posts_created_at", "comm_posts", ["created_at"])
+    op.create_index("ix_comm_posts_author_user_id", "comm_posts", ["author_user_id"])
 
     op.create_table(
         "comm_comments",
@@ -117,6 +124,7 @@ def upgrade() -> None:
         sa.CheckConstraint("btrim(body) <> ''", name="ck_comm_comments_body_not_blank"),
     )
     op.create_index("ix_comm_comments_post_id", "comm_comments", ["post_id"])
+    op.create_index("ix_comm_comments_author_user_id", "comm_comments", ["author_user_id"])
 
     op.create_table(
         "comm_emergency_acks",

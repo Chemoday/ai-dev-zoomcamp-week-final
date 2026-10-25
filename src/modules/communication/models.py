@@ -33,9 +33,15 @@ TARGET_CONSISTENT_CHECK = (
     " AND target_apartment_ids IS NULL)"
     " OR (target_scope = 'ENTRANCE' AND target_entrance IS NOT NULL"
     " AND target_apartment_ids IS NULL)"
+    # IS NOT NULL first: jsonb_typeof(NULL) is NULL, and a NULL CHECK result counts as passed.
     " OR (target_scope = 'APARTMENT_LIST' AND target_entrance IS NULL"
+    " AND target_apartment_ids IS NOT NULL"
     " AND jsonb_typeof(target_apartment_ids) = 'array'"
-    " AND target_apartment_ids <> '[]'::jsonb)"
+    " AND target_apartment_ids <> '[]'::jsonb"
+    # Every element is a canonical (lowercase) UUID string, as the service writes them.
+    " AND NOT jsonb_path_exists(target_apartment_ids,"
+    ' \'$[*] ? (!(@.type() == "string"'
+    ' && @ like_regex "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"))\'))'
 )
 
 
@@ -94,7 +100,7 @@ class Post(Base):
         UUID(as_uuid=True), ForeignKey("property_buildings.id"), nullable=False, index=True
     )
     author_user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("core_users.id"), nullable=False
+        UUID(as_uuid=True), ForeignKey("core_users.id"), nullable=False, index=True
     )
     author_apartment_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     post_type: Mapped[PostType] = mapped_column(
@@ -158,7 +164,7 @@ class Comment(Base):
         UUID(as_uuid=True), ForeignKey("property_buildings.id"), nullable=False
     )
     author_user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("core_users.id"), nullable=False
+        UUID(as_uuid=True), ForeignKey("core_users.id"), nullable=False, index=True
     )
     author_apartment_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     body: Mapped[str] = mapped_column(Text, nullable=False)
