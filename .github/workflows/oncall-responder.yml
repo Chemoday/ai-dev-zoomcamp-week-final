@@ -1,6 +1,7 @@
 # On-call responder (Task 8): turns a user-impact alert into a fix pull request.
 # Triggered by `scripts/oncall_agent.py serve` (repository_dispatch "oncall-alert") or by hand
-# with an incident JSON. Needs the ANTHROPIC_API_KEY secret (added by the project owner).
+# with an incident JSON. Needs one Claude credential as a secret (added by the project owner):
+# ANTHROPIC_API_KEY (API key) or CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`).
 # PRs opened with the default GITHUB_TOKEN do not trigger CI; set ONCALL_PR_TOKEN (a PAT) so the
 # fix PR runs CI like any other.
 name: On-call responder
@@ -13,6 +14,9 @@ on:
       incident:
         description: Incident JSON as written by `oncall_agent.py serve` (incidents/<trace_id>.json)
         required: true
+      base:
+        description: Branch the fix pull request targets (default - the branch this run uses)
+        required: false
 
 permissions:
   contents: write
@@ -58,6 +62,15 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Check the Claude credential
+        env:
+          HAS_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+        run: |
+          if [ "$HAS_KEY" != "true" ]; then
+            echo "::error::Set the ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN repository secret."
+            exit 1
+          fi
+
       - name: Install Claude Code
         run: npm install -g @anthropic-ai/claude-code@2.0.14
 
@@ -74,8 +87,11 @@ jobs:
       - name: Respond (regression test, fix, pytest, pull request)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           GH_TOKEN: ${{ secrets.ONCALL_PR_TOKEN || github.token }}
+          BASE_BRANCH: ${{ github.event.inputs.base || github.event.client_payload.base || github.ref_name }}
         run: |
           git config user.name "oncall-agent"
           git config user.email "oncall-agent@users.noreply.github.com"
-          uv run python scripts/oncall_agent.py respond --incident "$RUNNER_TEMP/incident.json"
+          uv run python scripts/oncall_agent.py respond \
+            --incident "$RUNNER_TEMP/incident.json" --base "$BASE_BRANCH"
