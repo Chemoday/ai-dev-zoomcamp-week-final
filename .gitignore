@@ -9,3 +9,5 @@ htmlcov/
 
 # Claude Code runtime files
 .claude/scheduled_tasks.lock
+# On-call agent output (docker compose oncall-agent)
+incidents/
