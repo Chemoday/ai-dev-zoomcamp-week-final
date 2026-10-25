@@ -15,9 +15,11 @@ One Active Row per Period: UNIQUE(meter_id, period_id) in meter_readings.
 Full Audit Log: Every insert or update to a reading writes an immutable record to meter_reading_logs (old_value, new_value, source, changed_by_user_id, reason, changed_at).
 C. Two-Step Anomaly Confirmation (meters)
 When delta = new_value - previous_value exceeds max_reasonable_delta (or 3x historical average):
-If request confirmation_level == 0: Return HTTP 409 Conflict (code: ANOMALY_WARN_STEP_1 — triggers Popup #1: "Value is unusually high, are you sure?").
-If request confirmation_level == 1: Return HTTP 409 Conflict (code: ANOMALY_WARN_STEP_2 — triggers Popup #2: "Please double-check digits; this goes directly to billing!").
+- Precisely: the delta is anomalous when `delta > max_monthly_delta` of the meter, OR when a historical average exists (`average_delta > 0`) and `delta > 3 × average_delta`. "Exceeds" is strict, so a delta equal to the limit is accepted. A value below `previous_value` is rejected outright (`ERR_BELOW_PREV` → `422 READING_BELOW_PREVIOUS`) at any confirmation level. Implemented by the pure function `meters.policies.validate_reading_delta`.
+If request confirmation_level == 0: Return HTTP 409 Conflict (code: ANOMALY_CONFIRMATION_STEP_1 — triggers Popup #1: "Value is unusually high, are you sure?").
+If request confirmation_level == 1: Return HTTP 409 Conflict (code: ANOMALY_CONFIRMATION_STEP_2 — triggers Popup #2: "Please double-check digits; this goes directly to billing!").
 If request confirmation_level >= 2: Save reading with is_anomaly_confirmed = True.
+The 3-month average (`calculate_rolling_average_delta`) is the mean of the last 3 available period deltas of that meter, rounded to 0.001 (half-up). Negative deltas (correction artefacts) are ignored. Without history the meter's default applies.
 D. Three-Tier Communication & Privacy Masking (communication)
 Post types:
 EMERGENCY: Sticky red banner in UI + immediate EventBus trigger. Supports geographical targeting (ALL_BUILDING, ENTRANCE, or APARTMENT_LIST using apartment entrance and floor).

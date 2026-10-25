@@ -111,6 +111,13 @@ All tables use `UUID` primary keys (`uuid4`), UTC timestamps (`TIMESTAMPTZ`), an
 | `recorded_at` | `TIMESTAMPTZ` | `NOT NULL` | Timestamp of last modification |
 | `UNIQUE` | `(meter_id, period_id)` | | **Strictly 1 active reading per meter per period** |
 
+**Integrity constraints of `meters_*` tables** (enforced by PostgreSQL, so no code path can bypass them):
+- Every enum column (`resource_type`, `unit`, `status`, `source`) has a named `CHECK (… IN (…))`.
+- `meters_periods.period_code` must match `^[0-9]{4}-(0[1-9]|1[0-2])$`.
+- `meters_devices`: `initial_value >= 0` and `max_monthly_delta > 0`.
+- `meters_readings`: `value >= 0`, `previous_value >= 0`, and `consumption_delta = value - previous_value` (the stored delta can never disagree with the values).
+- `meters_reading_logs` is append-only: a trigger rejects every `UPDATE` and `DELETE`.
+
 ### Table: `meters_reading_logs` (Immutable Audit Trail)
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
