@@ -31,7 +31,7 @@ Each task is atomic, self-contained, and designed to be executed sequentially by
   - Implement pure function `format_author_badge(full_name, apt_number, relation_type, building_role, display_mode)` in `policies.py`.
   - Implement endpoints `GET /api/v1/property/me` and `PATCH /api/v1/property/memberships/{id}/privacy`.
 - **Acceptance Criteria & Tests (`tests/property/`):**
-  - [ ] Unit tests verify `APARTMENT_ONLY` outputs `"Кв. 14"` (`OWNER`), `INITIALS` outputs `"И. П. (Кв. 14)"`, `FULL_NAME` outputs `"Иван Петров (Кв. 14)"`.
+  - [ ] Unit tests verify `APARTMENT_ONLY` outputs `"Apt. 14"` (`OWNER`), `INITIALS` outputs `"I. P. (Apt. 14)"`, `FULL_NAME` outputs `"Ivan Petrov (Apt. 14)"`.
   - [ ] Network JSON payload never contains raw `full_name`, `email`, or `phone` when `APARTMENT_ONLY` is selected.
 
 ---
@@ -82,7 +82,7 @@ Each task is atomic, self-contained, and designed to be executed sequentially by
   - Emit `EmergencyAlertPublished` event on `EventBus` when an `EMERGENCY` post is created.
 - **Acceptance Criteria & Tests (`tests/communication/`):**
   - [ ] Emergency targeted at `Entrance 2` is visible to Apt 14 (Entrance 2) and hidden from Apt 2 (Entrance 1).
-  - [ ] Forum posts and comments display masked badges (`"Кв. 14 • OWNER"`) without leaking PII.
+  - [ ] Forum posts and comments display masked badges (`"Apt. 14 • OWNER"`) without leaking PII.
 
 ---
 
@@ -93,7 +93,7 @@ Each task is atomic, self-contained, and designed to be executed sequentially by
   - Role switcher / Demo login bar at the top for easy grading (`Switch Role: Resident Apt 14 | Resident Apt 2 | Chairman | Accountant`).
   - Sticky red **Emergency Alert Banner** when active emergency exists for the user's entrance/building.
   - **Meter Submission Card** implementing the **Two-Popup Confirmation Flow** on `409 Conflict` (`ANOMALY_CONFIRMATION_STEP_1` -> `STEP_2` -> save).
-  - **Community Micro-Forum** with inline Privacy Display Mode selector (`Кв. 14` / `И. П. (Кв. 14)` / `Иван Петров (Кв. 14)`).
+  - **Community Micro-Forum** with inline Privacy Display Mode selector (`Apt. 14` / `I. P. (Apt. 14)` / `Ivan Petrov (Apt. 14)`).
   - **Chairman View:** Monthly Reading Matrix, Master Meter comparison, 1-click "Estimate Missing by Average", Reading History modal (🕒), and "Publish Emergency Alert" form.
 - **Acceptance Criteria & Tests:**
   - [ ] Switching role changes the acting demo user (`X-Demo-User-Id`) and the UI shows only the views that role is allowed to use.

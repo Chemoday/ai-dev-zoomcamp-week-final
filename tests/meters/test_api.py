@@ -145,15 +145,13 @@ async def test_anomaly_needs_two_confirmations_and_reports_the_numbers(
         "consumption_delta": "1130.000",
         "average_delta": "5.000",
         "max_reasonable_delta": "25.000",
-        "message": "Вы ввели слишком большое число (расход 1130.000 м³). "
-        "Вы точно уверены, что всё нормально?",
+        "message": "Value is unusually high (consumption 1130.000 m3), are you sure?",
     }
     assert step_2.json() == {
         "error_code": "ANOMALY_CONFIRMATION_STEP_2",
         "required_confirmation_level": 2,
         "consumption_delta": "1130.000",
-        "message": "Проверьте, что данные введены точно! "
-        "Они пойдут в ваш счет, это очень большой расход.",
+        "message": "Please double-check the digits; this goes directly to billing!",
     }
     # Warnings write nothing: no reading, no audit row.
     assert await db_session.scalar(select(func.count()).select_from(MeterReadingLog)) == logs_before
@@ -327,7 +325,7 @@ async def test_submission_publishes_an_event_without_personal_data(
     assert event.meter_id == world.meter_14.id
     assert event.source == ReadingSource.RESIDENT
     assert str(event.consumption_delta) == "5.000"
-    assert "Иван" not in repr(event)
+    assert "Ivan" not in repr(event)
 
 
 # --- Period status ------------------------------------------------------------------------------
@@ -462,7 +460,7 @@ async def test_matrix_shows_statuses_and_the_master_balance(
     ]
     missing_cell = body["apartments"][1]["meters"][0]
     assert missing_cell["status"] == "MISSING" and missing_cell["reading"] is None
-    for name in ("Иван", "Петров", "Мари", "Тамм", "Кузнецов"):
+    for name in ("Ivan", "Petrov", "Mari", "Tamm", "Kuznetsov"):
         assert name not in response.text
 
 
@@ -502,10 +500,10 @@ async def test_history_masks_every_actor(api_client: AsyncClient, world: MetersW
     response = await api_client.get(url, headers=as_user(world.accountant))
 
     assert [e["changed_by"] for e in response.json()["entries"]] == [
-        {"display_label": "Кв. 14", "role_badge": "OWNER"},
-        {"display_label": "Председатель", "role_badge": "BOARD"},
+        {"display_label": "Apt. 14", "role_badge": "OWNER"},
+        {"display_label": "Chairman", "role_badge": "BOARD"},
     ]
-    for secret in ("Иван", "Сидоров", str(world.owner_14.id), str(world.chairman.id)):
+    for secret in ("Ivan", "Sidorov", str(world.owner_14.id), str(world.chairman.id)):
         assert secret not in response.text
 
 
@@ -584,7 +582,7 @@ async def test_csv_contains_master_meters_and_no_personal_data(
         ("MASTER", "1020.000", "1030.000"),
     ]
     assert rows[2]["entrance"] == ""
-    for name in ("Иван", "Петров", "Мари", "Тамм"):
+    for name in ("Ivan", "Petrov", "Mari", "Tamm"):
         assert name not in response.text
 
 

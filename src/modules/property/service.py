@@ -24,9 +24,7 @@ from src.modules.property.schemas import (
 )
 
 # Shown when a post or comment outlives its author's account.
-UNKNOWN_AUTHOR_BADGE = AuthorBadgeDTO(
-    display_label="Неизвестный автор", role_badge=RoleBadge.RESIDENT
-)
+UNKNOWN_AUTHOR_BADGE = AuthorBadgeDTO(display_label="Unknown author", role_badge=RoleBadge.RESIDENT)
 
 type AuthorKey = tuple[uuid.UUID, uuid.UUID | None]
 

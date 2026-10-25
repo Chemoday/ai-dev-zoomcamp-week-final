@@ -1,8 +1,8 @@
 """A building with history, shaped like the Task 7 demo data.
 
 Periods 2026-07..09 are LOCKED with readings; 2026-10 is OPEN_FOR_RESIDENTS.
-Apt 14 (entrance 2): owner Иван Петров, cold water meter, history deltas 4, 5, 6 (avg 5.000).
-Apt 2  (entrance 1): tenant Мари Тамм, cold water meter, history deltas 3, 3, 3.
+Apt 14 (entrance 2): owner Ivan Petrov, cold water meter, history deltas 4, 5, 6 (avg 5.000).
+Apt 2  (entrance 1): tenant Mari Tamm, cold water meter, history deltas 3, 3, 3.
 Apt 5  (entrance 1): owner who never submits, cold water meter without history.
 Basement: one COLD_WATER master meter with history.
 Staff: chairman, accountant, board member (no apartments).
@@ -55,14 +55,12 @@ async def world(db_session: AsyncSession) -> MetersWorld:
     apt_2 = await create_apartment(db_session, building, "2", entrance=1, floor=1)
     apt_5 = await create_apartment(db_session, building, "5", entrance=1, floor=2)
 
-    owner_14 = await create_user(db_session, building, "Иван Петров", phone="+372 5555 1234")
-    tenant_2 = await create_user(db_session, building, "Мари Тамм")
-    owner_5 = await create_user(db_session, building, "Олег Кузнецов")
-    chairman = await create_user(db_session, building, "Олег Сидоров", role=BuildingRole.CHAIRMAN)
-    accountant = await create_user(
-        db_session, building, "Анна Бухгалтер", role=BuildingRole.ACCOUNTANT
-    )
-    board = await create_user(db_session, building, "Пётр Правлев", role=BuildingRole.BOARD)
+    owner_14 = await create_user(db_session, building, "Ivan Petrov", phone="+372 5555 1234")
+    tenant_2 = await create_user(db_session, building, "Mari Tamm")
+    owner_5 = await create_user(db_session, building, "Oleg Kuznetsov")
+    chairman = await create_user(db_session, building, "Oleg Sidorov", role=BuildingRole.CHAIRMAN)
+    accountant = await create_user(db_session, building, "Anna Kask", role=BuildingRole.ACCOUNTANT)
+    board = await create_user(db_session, building, "Peeter Saar", role=BuildingRole.BOARD)
     await create_membership(db_session, owner_14, apt_14)
     tenant_2_membership = await create_membership(
         db_session, tenant_2, apt_2, relation=RelationType.TENANT

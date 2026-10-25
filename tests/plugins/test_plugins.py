@@ -20,7 +20,7 @@ def row(**overrides) -> ReadingExportRow:
         "meter_id": uuid.UUID(int=1),
         "resource_type": "COLD_WATER",
         "serial_number": "SN-1",
-        "location_label": "Ванная",
+        "location_label": "Bathroom",
         "unit": "m3",
         "previous_value": Decimal("115.000"),
         "value": Decimal("120.000"),
@@ -44,7 +44,7 @@ def test_csv_has_bom_header_and_canonical_values() -> None:
     parsed = list(csv.reader(io.StringIO(text.lstrip("﻿"))))
     assert tuple(parsed[0]) == COLUMNS
     assert parsed[1] == [
-        "2026-10", "2", "14", str(uuid.UUID(int=1)), "COLD_WATER", "SN-1", "Ванная", "m3",
+        "2026-10", "2", "14", str(uuid.UUID(int=1)), "COLD_WATER", "SN-1", "Bathroom", "m3",
         "115.000", "120.000", "5.000", "RESIDENT", "false", "2026-10-25T10:00:00+00:00",
     ]  # fmt: skip
     assert parsed[2][1:3] == ["", "MASTER"]

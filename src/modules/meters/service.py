@@ -60,7 +60,6 @@ HISTORY_SOURCES = (ReadingSource.RESIDENT, ReadingSource.ADMIN_OVERRIDE, Reading
 NO_HISTORY_AVERAGE = Decimal("0.000")
 ESTIMATE_REASON = "3-month avg estimate"
 
-UNIT_LABELS = {MeterUnit.M3: "м³", MeterUnit.KWH: "кВт·ч", MeterUnit.MWH: "МВт·ч"}
 
 tracer = trace.get_tracer(__name__)
 
@@ -227,15 +226,13 @@ class MetersService:
                     "submitted_value": str(submitted_value),
                 },
             )
-        unit = UNIT_LABELS.get(MeterUnit(meter.unit), meter.unit)
+        # Messages are English only; the frontend localizes them by error_code.
+        unit = MeterUnit(meter.unit).value
         if check.status == ReadingCheckStatus.WARN_STEP_1:
             raise DomainError(
                 status_code=409,
                 error_code="ANOMALY_CONFIRMATION_STEP_1",
-                message=(
-                    f"Вы ввели слишком большое число (расход {delta} {unit}). "
-                    "Вы точно уверены, что всё нормально?"
-                ),
+                message=f"Value is unusually high (consumption {delta} {unit}), are you sure?",
                 extra={
                     "required_confirmation_level": check.required_confirmation_level,
                     "consumption_delta": str(delta),
@@ -247,10 +244,7 @@ class MetersService:
             raise DomainError(
                 status_code=409,
                 error_code="ANOMALY_CONFIRMATION_STEP_2",
-                message=(
-                    "Проверьте, что данные введены точно! "
-                    "Они пойдут в ваш счет, это очень большой расход."
-                ),
+                message="Please double-check the digits; this goes directly to billing!",
                 extra={
                     "required_confirmation_level": check.required_confirmation_level,
                     "consumption_delta": str(delta),

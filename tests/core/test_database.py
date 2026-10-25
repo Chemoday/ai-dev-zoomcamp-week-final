@@ -68,15 +68,17 @@ async def test_failed_commit_is_reported_as_an_error_not_a_success(app: FastAPI)
 async def test_database_errors_do_not_carry_bound_parameters(db_session: AsyncSession) -> None:
     # Exception texts reach logs and spans; with bound parameters they would contain the name.
     building = await create_building(db_session)
-    await create_user(db_session, building, "Тайный Соседов", email="secret.neighbour@example.com")
+    await create_user(
+        db_session, building, "Secret Neighbour", email="secret.neighbour@example.com"
+    )
 
     with pytest.raises(IntegrityError) as caught:
         await create_user(
-            db_session, building, "Тайный Соседов", email="secret.neighbour@example.com"
+            db_session, building, "Secret Neighbour", email="secret.neighbour@example.com"
         )
 
     message = str(caught.value)
     assert "core_users_email_key" in message
-    assert "Тайный Соседов" not in message
+    assert "Secret Neighbour" not in message
     assert "secret.neighbour@example.com" not in message
     await db_session.rollback()

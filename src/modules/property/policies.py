@@ -1,6 +1,7 @@
 """Pure privacy-masking rules (no database access; unit-tested directly).
 
-Badge texts are in Russian because the resident UI is (see docs/API.md, "Author badge rules").
+Badge texts are English, like everything the backend returns (see docs/API.md,
+"Author badge rules").
 """
 
 from collections.abc import Iterable
@@ -13,14 +14,14 @@ from src.modules.property.schemas import (
     RoleBadge,
 )
 
-APARTMENT_LABEL = "Кв."
+APARTMENT_LABEL = "Apt."
 
 # Shown instead of a name when there is no apartment context and the user keeps the default mode.
 BUILDING_ROLE_LABELS: dict[BuildingRole, str] = {
-    BuildingRole.CHAIRMAN: "Председатель",
-    BuildingRole.BOARD: "Правление",
-    BuildingRole.ACCOUNTANT: "Бухгалтер",
-    BuildingRole.USER: "Житель",
+    BuildingRole.CHAIRMAN: "Chairman",
+    BuildingRole.BOARD: "Board",
+    BuildingRole.ACCOUNTANT: "Accountant",
+    BuildingRole.USER: "Resident",
 }
 
 _BOARD_ROLES = frozenset({BuildingRole.CHAIRMAN, BuildingRole.BOARD})
@@ -39,7 +40,7 @@ def most_private_display_mode(modes: Iterable[DisplayMode]) -> DisplayMode:
 
 
 def format_initials(full_name: str) -> str:
-    """'Иван Петров' -> 'И. П.'; extra whitespace is ignored."""
+    """'Ivan Petrov' -> 'I. P.'; extra whitespace is ignored."""
     return " ".join(f"{part[0].upper()}." for part in full_name.split())
 
 
@@ -65,7 +66,9 @@ def format_author_badge(
 ) -> AuthorBadgeDTO:
     """Build the only representation of a person that other residents may ever see.
 
-    APARTMENT_ONLY -> "Кв. 14"   INITIALS -> "И. П. (Кв. 14)"   FULL_NAME -> "Иван Петров (Кв. 14)"
+    APARTMENT_ONLY -> "Apt. 14"
+    INITIALS       -> "I. P. (Apt. 14)"
+    FULL_NAME      -> "Ivan Petrov (Apt. 14)"
     Without an apartment the name stands alone, or the building role label is used.
     """
     apartment = f"{APARTMENT_LABEL} {apt_number}" if apt_number else None

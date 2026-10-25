@@ -4,6 +4,8 @@ All responses include `X-Trace-Id` header populated by OpenTelemetry middleware 
 
 ## 0. Authentication & Error Format
 
+Error `message` texts are **English only**. They are meant for developers and logs; the frontend shows localized texts chosen by `error_code`. The backend contains no Russian at all: author badges are English too (`Apt. 14`, `Chairman`).
+
 Every `/api/v1` endpoint requires an authenticated user:
 - `Authorization: Bearer <jwt>`: HS256 token with `sub = <user uuid>` and `exp`. It is accepted only when `JWT_SECRET_KEY` is configured.
 - `X-Demo-User-Id: <user uuid>`: accepted only when `DEMO_MODE_ENABLED=true` (local Docker, tests and the public demo). If both headers are sent, the Bearer token wins.
@@ -23,9 +25,9 @@ All errors share one JSON shape, `{"error_code": "...", "message": "...", ...ext
 ### Author badge rules (`property.policies.format_author_badge`)
 | `privacy_display_mode` | With apartment | Without apartment context |
 | :--- | :--- | :--- |
-| `APARTMENT_ONLY` (default) | `Кв. 14` | Role label: `Председатель` / `Правление` / `Бухгалтер` / `Житель` |
-| `INITIALS` | `И. П. (Кв. 14)` | `И. П.` |
-| `FULL_NAME` | `Иван Петров (Кв. 14)` | `Иван Петров` |
+| `APARTMENT_ONLY` (default) | `Apt. 14` | Role label: `Chairman` / `Board` / `Accountant` / `Resident` |
+| `INITIALS` | `I. P. (Apt. 14)` | `I. P.` |
+| `FULL_NAME` | `Ivan Petrov (Apt. 14)` | `Ivan Petrov` |
 
 - **With an apartment**, the mode is that membership's mode. If the author is no longer a member of that apartment, `APARTMENT_ONLY` is used, because nobody consented to show the name there.
 - **Without an apartment context** (e.g. a board notice), the mode is the *most private* of the author's memberships, so consenting to be named in one apartment never reveals the name anywhere else. A user with no membership (e.g. an external accountant) always shows the role label.
@@ -59,7 +61,7 @@ The payload never contains the raw `full_name`, `email` or `phone`, not even the
       "can_view_bills": true,
       "can_vote": true,
       "privacy_display_mode": "APARTMENT_ONLY",
-      "preview_badge": { "display_label": "Кв. 14", "role_badge": "OWNER" }
+      "preview_badge": { "display_label": "Apt. 14", "role_badge": "OWNER" }
     }
   ]
 }
@@ -81,7 +83,7 @@ JSON
   "membership_id": "uuid",
   "privacy_display_mode": "INITIALS",
   "preview_badge": {
-    "display_label": "И. П. (Кв. 14)",
+    "display_label": "I. P. (Apt. 14)",
     "role_badge": "OWNER"
   }
 }
@@ -152,7 +154,7 @@ JSON
   "consumption_delta": "1130.000",
   "average_delta": "4.200",
   "max_reasonable_delta": "25.000",
-  "message": "Вы ввели слишком большое число (расход 1130.000 м³). Вы точно уверены, что всё нормально?"
+  "message": "Value is unusually high (consumption 1130.000 m3), are you sure?"
 }
 409 Conflict — Popup #2 (confirmation_level == 1 and delta > threshold):
 code
@@ -161,7 +163,7 @@ JSON
   "error_code": "ANOMALY_CONFIRMATION_STEP_2",
   "required_confirmation_level": 2,
   "consumption_delta": "1130.000",
-  "message": "Проверьте, что данные введены точно! Они пойдут в ваш счет, это очень большой расход."
+  "message": "Please double-check the digits; this goes directly to billing!"
 }
 200 OK (Normal delta OR confirmation_level >= 2):
 Saves reading, appends row to meters_reading_logs, emits MeterReadingSubmitted event.
@@ -246,10 +248,10 @@ JSON
     "id": "uuid",
     "post_type": "FORUM_TOPIC",
     "category": "GENERAL",
-    "title": "Давайте установим велопарковку во дворе",
-    "body": "Соседи, что думаете?",
+    "title": "Let's install a bike rack in the yard",
+    "body": "Neighbours, what do you think?",
     "author_badge": {
-      "display_label": "Кв. 14",
+      "display_label": "Apt. 14",
       "role_badge": "OWNER"
     },
     "comments_count": 3,
