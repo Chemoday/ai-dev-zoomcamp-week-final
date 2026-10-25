@@ -7,7 +7,6 @@ only through DTOs from core.security or PropertyService.
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
-from enum import StrEnum
 
 from sqlalchemy import (
     Boolean,
@@ -20,37 +19,17 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from src.core.database import Base
+from src.core.database import Base, uuid_pk, varchar_enum
 from src.modules.property.schemas import BuildingRole, DisplayMode, RelationType
-
-
-def _varchar_enum(enum_cls: type[StrEnum], check_name: str) -> SAEnum:
-    """Store a StrEnum as VARCHAR(32) (no native PostgreSQL enum type), as the schema specifies,
-    with a named CHECK constraint so a stray value cannot be written and later crash every read.
-    """
-    return SAEnum(
-        enum_cls,
-        native_enum=False,
-        create_constraint=True,
-        name=check_name,
-        length=32,
-        values_callable=lambda members: [member.value for member in members],
-        validate_strings=True,
-    )
-
-
-def _uuid_pk() -> Mapped[uuid.UUID]:
-    return mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
 
 class Building(Base):
     __tablename__ = "property_buildings"
 
-    id: Mapped[uuid.UUID] = _uuid_pk()
+    id: Mapped[uuid.UUID] = uuid_pk()
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     address: Mapped[str] = mapped_column(String(500), nullable=False)
     country_code: Mapped[str] = mapped_column(
@@ -64,7 +43,7 @@ class Building(Base):
 class User(Base):
     __tablename__ = "core_users"
 
-    id: Mapped[uuid.UUID] = _uuid_pk()
+    id: Mapped[uuid.UUID] = uuid_pk()
     building_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("property_buildings.id"), nullable=False, index=True
     )
@@ -72,7 +51,7 @@ class User(Base):
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
     phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
     building_role: Mapped[BuildingRole] = mapped_column(
-        _varchar_enum(BuildingRole, "ck_core_users_building_role"),
+        varchar_enum(BuildingRole, "ck_core_users_building_role"),
         nullable=False,
         default=BuildingRole.USER,
         server_default=BuildingRole.USER.value,
@@ -96,7 +75,7 @@ class UserIdentity(Base):
         ),
     )
 
-    id: Mapped[uuid.UUID] = _uuid_pk()
+    id: Mapped[uuid.UUID] = uuid_pk()
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("core_users.id"), nullable=False, index=True
     )
@@ -111,7 +90,7 @@ class Apartment(Base):
         UniqueConstraint("building_id", "number", name="uq_property_apartments_building_number"),
     )
 
-    id: Mapped[uuid.UUID] = _uuid_pk()
+    id: Mapped[uuid.UUID] = uuid_pk()
     building_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("property_buildings.id"), nullable=False
     )
@@ -130,7 +109,7 @@ class ApartmentMembership(Base):
         UniqueConstraint("apartment_id", "user_id", name="uq_property_memberships_apartment_user"),
     )
 
-    id: Mapped[uuid.UUID] = _uuid_pk()
+    id: Mapped[uuid.UUID] = uuid_pk()
     apartment_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("property_apartments.id"), nullable=False, index=True
     )
@@ -138,7 +117,7 @@ class ApartmentMembership(Base):
         UUID(as_uuid=True), ForeignKey("core_users.id"), nullable=False, index=True
     )
     relation_type: Mapped[RelationType] = mapped_column(
-        _varchar_enum(RelationType, "ck_property_memberships_relation_type"), nullable=False
+        varchar_enum(RelationType, "ck_property_memberships_relation_type"), nullable=False
     )
     can_submit_readings: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=text("true")
@@ -150,7 +129,7 @@ class ApartmentMembership(Base):
         Boolean, nullable=False, default=False, server_default=text("false")
     )
     privacy_display_mode: Mapped[DisplayMode] = mapped_column(
-        _varchar_enum(DisplayMode, "ck_property_memberships_privacy_display_mode"),
+        varchar_enum(DisplayMode, "ck_property_memberships_privacy_display_mode"),
         nullable=False,
         default=DisplayMode.APARTMENT_ONLY,
         server_default=DisplayMode.APARTMENT_ONLY.value,
