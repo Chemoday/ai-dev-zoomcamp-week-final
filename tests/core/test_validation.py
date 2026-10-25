@@ -29,3 +29,10 @@ def test_optional_text_turns_blank_into_none() -> None:
     assert Form(title="t", note="   ").note is None
     with pytest.raises(ValidationError):
         Form(title="t", note="\u0000")
+
+
+def test_length_limits_apply_after_trimming() -> None:
+    assert Form(title="  " + "x" * 10 + "\n").title == "x" * 10
+    assert Form(title="t", note=" " + "y" * 10 + " ").note == "y" * 10
+    with pytest.raises(ValidationError):
+        Form(title="t", note="y" * 11)

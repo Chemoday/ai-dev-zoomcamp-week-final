@@ -19,13 +19,6 @@ def clean_text(value: str) -> str:
     return value.strip()
 
 
-def clean_optional_text(value: str | None) -> str | None:
-    """Like clean_text, but blank input means "not given"."""
-    if value is None:
-        return None
-    return clean_text(value) or None
-
-
 def clean_required_text(value: str) -> str:
     """Like clean_text, but blank input is rejected."""
     cleaned = clean_text(value)
@@ -37,17 +30,24 @@ def clean_required_text(value: str) -> str:
 SafeText = Annotated[str, AfterValidator(clean_text)]
 
 
+# Length limits come AFTER the cleaning validator, so they apply to the trimmed text:
+# "  " + 255 characters is a valid 255-character title.
+
+
 def safe_text(max_length: int) -> object:
-    """Type for a required free-text field (titles, bodies, comments): length-checked, cleaned,
-    and never blank."""
-    return Annotated[
-        str, Field(min_length=1, max_length=max_length), AfterValidator(clean_required_text)
-    ]
+    """Type for a required free-text field (titles, bodies, comments): cleaned, never blank,
+    at most max_length characters after trimming."""
+    return Annotated[str, AfterValidator(clean_required_text), Field(max_length=max_length)]
+
+
+def _blank_to_none(value: str | None) -> str | None:
+    return value or None
 
 
 def optional_safe_text(max_length: int) -> object:
-    """Type for an optional free-text field: length-checked, cleaned, blank -> None."""
+    """Type for an optional free-text field: cleaned, length-checked after trimming,
+    blank -> None."""
     return Annotated[
-        Annotated[str, Field(max_length=max_length)] | None,
-        AfterValidator(clean_optional_text),
+        Annotated[str, AfterValidator(clean_text), Field(max_length=max_length)] | None,
+        AfterValidator(_blank_to_none),
     ]
