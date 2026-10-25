@@ -15,10 +15,11 @@ All errors share one JSON shape, `{"error_code": "...", "message": "...", ...ext
 | Status | `error_code` | When |
 | :--- | :--- | :--- |
 | 401 | `NOT_AUTHENTICATED` / `INVALID_TOKEN` / `UNKNOWN_USER` | No credentials, a bad or expired token, or an unknown or inactive user (sent with `WWW-Authenticate: Bearer`) |
-| 403 | `FORBIDDEN` | Authenticated, but the building role is not allowed |
-| 404 | `NOT_FOUND` / `MEMBERSHIP_NOT_FOUND` | Unknown route, or a resource that does not exist or is not yours |
+| 403 | `FORBIDDEN` | Authenticated, but the building role or a membership flag (e.g. `can_submit_readings`) does not allow it |
+| 404 | `NOT_FOUND`, `MEMBERSHIP_NOT_FOUND`, `METER_NOT_FOUND`, `PERIOD_NOT_FOUND`, `READING_NOT_FOUND`, `EXPORTER_NOT_ENABLED` | Unknown route, a resource that does not exist or is not visible to you, or a disabled plugin |
+| 409 | `ANOMALY_CONFIRMATION_STEP_1/2`, `PERIOD_CLOSED`, `PERIOD_LOCKED`, `PERIOD_NOT_IN_REVIEW`, `INVALID_PERIOD_TRANSITION`, `READING_SET_BY_BOARD`, `LATER_READING_EXISTS` | The request is valid, but conflicts with the current state |
 | 405 | `METHOD_NOT_ALLOWED` | The route exists but not for this HTTP method |
-| 422 | `VALIDATION_ERROR` | Request body or parameters are invalid; details are in `errors` |
+| 422 | `VALIDATION_ERROR`, `READING_BELOW_PREVIOUS`, `REASON_REQUIRED`, `ESTIMATE_OUT_OF_RANGE` | Invalid input; for `VALIDATION_ERROR` the details are in `errors`. Free-text fields reject control characters, e.g. NUL |
 | 500 | `INTERNAL_SERVER_ERROR` | Unhandled error; the body carries `trace_id` |
 | other | `HTTP_<status>` | Any other framework-level HTTP error |
 
@@ -90,7 +91,7 @@ JSON
 2. Meter Readings & Two-Step Anomaly Flow (meters)
 GET /api/v1/meters/my-dashboard?period_code=2026-10
 Returns the resident's apartment meters, previous readings, current period status, and deadline.
-`period_code` is optional and defaults to the building's latest period. `period` is `null` when the building has no periods yet. Only active meters of the user's own apartments are listed.
+`period_code` is optional. It defaults to the latest period that is `OPEN_FOR_RESIDENTS`, else the latest period overall, so a pre-created future period is never picked. `period` is `null` when the building has no periods yet. Only active meters of the user's own apartments are listed.
 ```json
 {
   "period": { "period_code": "2026-10", "status": "OPEN_FOR_RESIDENTS", "due_date": "2026-11-04T23:59:59Z" },
@@ -119,12 +120,16 @@ Who may submit, and in which period status:
 | Member of the meter's apartment with `can_submit_readings` | apartment meter | `OPEN_FOR_RESIDENTS` (otherwise `409 PERIOD_CLOSED`) | `RESIDENT` |
 | `CHAIRMAN` / `ACCOUNTANT` | any meter of the building, including master meters | `OPEN_FOR_RESIDENTS`, `REVIEW_BY_BOARD` (otherwise `409 PERIOD_LOCKED`) | `ADMIN_OVERRIDE` |
 
-- Changing a reading that already exists as `ADMIN_OVERRIDE` requires a `reason` (`422 REASON_REQUIRED`).
-- An unknown meter, or one the caller may not see, returns `404 METER_NOT_FOUND`. A member without `can_submit_readings` gets `403 FORBIDDEN`. An unknown period returns `404 PERIOD_NOT_FOUND`.
-- Re-submitting the identical value is a no-op: no audit row, no event.
+- **Reason.** A board change (`ADMIN_OVERRIDE`) to a reading that already exists requires a non-blank `reason` (`422 REASON_REQUIRED`). Blank reasons count as missing.
+- **Visibility.** An unknown meter, or one the caller may not see, returns `404 METER_NOT_FOUND`. `BOARD` members see meters in the matrix but get `403 FORBIDDEN` on submit. So does a member without `can_submit_readings`. An unknown period returns `404 PERIOD_NOT_FOUND`.
+- **Board corrections stay.** A resident cannot overwrite a reading the board set (`409 READING_SET_BY_BOARD`), even after the period is reopened. Replacing an `AUTO_ESTIMATED` reading is allowed.
+- **No rewriting history.** A reading cannot change once a later period already has a reading for that meter (`409 LATER_READING_EXISTS`), because that period's `previous_value` snapshot would silently break.
+- **Replaced meters.** An inactive (replaced) meter only accepts board corrections of a reading it already has in that period.
+- **No-op.** Re-submitting exactly what is stored is a no-op: no audit row, no event. "Exactly" means the same value, previous value, delta, source, anomaly flag and submitter, and no new `reason`. Otherwise the full path runs, e.g. the board confirming an estimate with the same value.
 - `previous_value` is the meter's reading in the latest earlier period, or `initial_value` if there is none.
 - `average_delta` follows docs/ROADMAP_MVP.md, section C.
-- Submissions for one meter are serialized with a row lock on the meter.
+- **Locking.** The period is taken `FOR SHARE`, then the meter `FOR UPDATE`. Status changes and estimates lock the period `FOR NO KEY UPDATE` first, then the meters. This one order means a submission and a status change or estimate run one after the other and never deadlock, and a reading can never land in a period that was just closed.
+- `due_date` is informational in the MVP. Periods are closed by `PATCH …/status`, not automatically.
 Request:
 code
 JSON
@@ -190,6 +195,11 @@ List of all apartments with submission status (SUBMITTED, MISSING, AUTO_ESTIMATE
   "balances": [
     { "resource_type": "COLD_WATER", "unit": "m3", "master_total": "52.000", "apartments_sum": "48.500", "unallocated_loss": "3.500" }
   ],
+  "master_meters": [
+    { "meter_id": "uuid", "resource_type": "COLD_WATER", "location_label": "Basement Master", "unit": "m3",
+      "previous_value": "1030.000", "status": "SUBMITTED",
+      "reading": { "reading_id": "uuid", "value": "1082.000", "consumption_delta": "52.000", "source": "ADMIN_OVERRIDE", "is_anomaly_confirmed": false } }
+  ],
   "apartments": [
     {
       "apartment_id": "uuid", "apartment_number": "14", "entrance": 2, "floor": 4, "status": "ANOMALY_CONFIRMED",
@@ -201,7 +211,8 @@ List of all apartments with submission status (SUBMITTED, MISSING, AUTO_ESTIMATE
   ]
 }
 ```
-- `balances` has one row per resource type that has master meters, so the generic names also cover kWh and MWh: `master_total_m3` is `master_total` with `unit` `m3`.
+- `master_meters` lists the Building Master Meters with their ids, so the board can submit them.
+- `balances` has one row per resource type and unit that has master meters (kWh and MWh are never summed together), so the generic names also cover kWh and MWh: `master_total_m3` is `master_total` with `unit` `m3`.
 - `master_total` is `null` while any master meter of that type has no reading; then `unallocated_loss` is `null` too.
 - `unallocated_loss = master_total - apartments_sum` can be negative, which points to a wrong reading.
 - A meter's status is `MISSING` without a reading; otherwise `ANOMALY_CONFIRMED`, `AUTO_ESTIMATED` or `SUBMITTED`.
@@ -213,6 +224,7 @@ Finds all active apartment meters without a reading in period_code, calculates t
 - Allowed only in `REVIEW_BY_BOARD` (`409 PERIOD_NOT_IN_REVIEW`), so residents can no longer submit.
 - The estimated `value` is `previous_value + average`, where the average defaults to `0.000` without history. The reading has `submitted_by_user_id = NULL`; its audit row records the triggering user and the reason `"3-month avg estimate"`.
 - Running it again estimates nothing new.
+- If `previous + average` would exceed NUMERIC(12, 3), nothing is saved and the response is `422 ESTIMATE_OUT_OF_RANGE` with that `meter_id`; enter that reading by hand.
 - Response: `{"period_code": "2026-10", "estimated_count": 2, "estimated": [{"reading_id", "meter_id", "apartment_id", "value", "consumption_delta"}]}`.
 PATCH /api/v1/meters/periods/{period_code}/status
 Transitions period status (OPEN_FOR_RESIDENTS ↔ REVIEW_BY_BOARD ↔ LOCKED).
@@ -235,7 +247,8 @@ Executes plugins/common/csv_export and streams a CSV file of the period's readin
 - Requires role `CHAIRMAN`, `BOARD` or `ACCOUNTANT`. Served as `text/csv; charset=utf-8` with `Content-Disposition: attachment; filename="readings-2026-10.csv"`.
 - Columns: `period_code, entrance, apartment_number, meter_id, resource_type, serial_number, location_label, unit, previous_value, value, consumption_delta, source, is_anomaly_confirmed, recorded_at`.
 - Master meters have an empty apartment, and `MASTER` in `apartment_number`.
-- Text cells that would start a spreadsheet formula (`= + - @`, tab, CR) are prefixed with `'` (CSV-injection guard). No names.
+- Text cells that would start a spreadsheet formula are prefixed with `'` (CSV-injection guard). That covers `= + - @`, also after leading whitespace or line breaks and in full-width forms (NFKC), and a leading tab, CR or LF. No names.
+- If the CSV plugin is not enabled (`ENABLED_PLUGINS`), the response is `404 EXPORTER_NOT_ENABLED`.
 4. Emergency Alerts & Community Forum (communication)
 GET /api/v1/communication/emergencies/active
 Returns active EMERGENCY posts matching the current user's building, entrance, or apartment ID.

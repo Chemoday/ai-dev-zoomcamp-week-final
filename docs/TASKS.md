@@ -80,6 +80,8 @@ Each task is atomic, self-contained, and designed to be executed sequentially by
   - Filter `GET /emergencies/active` by resident's building, `entrance`, and `apartment_id`.
   - Resolve all post/comment authors via `PropertyService.get_masked_author_badge()` (no cross-module SQLAlchemy joins).
   - Emit `EmergencyAlertPublished` event on `EventBus` when an `EMERGENCY` post is created.
+  - **Publish domain events after the transaction commits** (request-scoped outbox flushed after `get_db_session` commits). Notifications must never go out for a change that is later rolled back, and slow handlers must not hold row locks. This applies to the meters events too, which are currently published before commit.
+  - Titles, bodies and comments use `src/core/validation.py` safe-text types.
 - **Acceptance Criteria & Tests (`tests/communication/`):**
   - [ ] Emergency targeted at `Entrance 2` is visible to Apt 14 (Entrance 2) and hidden from Apt 2 (Entrance 1).
   - [ ] Forum posts and comments display masked badges (`"Apt. 14 • OWNER"`) without leaking PII.
