@@ -15,8 +15,8 @@ Each task is atomic, self-contained, and designed to be executed sequentially by
   - Implement `InMemoryEventBus` supporting async pub/sub handlers.
   - Configure OpenTelemetry SDK: auto-instrument FastAPI, inject `trace_id` into structured JSON logs and `X-Trace-Id` HTTP response headers. Ensure PII scrubbing middleware strips sensitive fields.
 - **Acceptance Criteria & Tests (`tests/core/`):**
-  - [ ] `GET /health` returns `200 OK` and includes `X-Trace-Id` header.
-  - [ ] `pytest tests/core/test_event_bus.py` verifies async event publishing and handler execution.
+  - [x] `GET /health` returns `200 OK` and includes `X-Trace-Id` header.
+  - [x] `pytest tests/core/test_event_bus.py` verifies async event publishing and handler execution.
 
 ---
 
@@ -31,8 +31,8 @@ Each task is atomic, self-contained, and designed to be executed sequentially by
   - Implement pure function `format_author_badge(full_name, apt_number, relation_type, building_role, display_mode)` in `policies.py`.
   - Implement endpoints `GET /api/v1/property/me` and `PATCH /api/v1/property/memberships/{id}/privacy`.
 - **Acceptance Criteria & Tests (`tests/property/`):**
-  - [ ] Unit tests verify `APARTMENT_ONLY` outputs `"Apt. 14"` (`OWNER`), `INITIALS` outputs `"I. P. (Apt. 14)"`, `FULL_NAME` outputs `"Ivan Petrov (Apt. 14)"`.
-  - [ ] Network JSON payload never contains raw `full_name`, `email`, or `phone` when `APARTMENT_ONLY` is selected.
+  - [x] Unit tests verify `APARTMENT_ONLY` outputs `"Apt. 14"` (`OWNER`), `INITIALS` outputs `"I. P. (Apt. 14)"`, `FULL_NAME` outputs `"Ivan Petrov (Apt. 14)"`.
+  - [x] Network JSON payload never contains raw `full_name`, `email`, or `phone` when `APARTMENT_ONLY` is selected.
 
 ---
 
@@ -48,8 +48,8 @@ Each task is atomic, self-contained, and designed to be executed sequentially by
     1. `validate_reading_delta(prev_value, new_value, max_delta, avg_delta, confirmation_level)` returning `OK`, `ERR_BELOW_PREV`, `WARN_STEP_1`, or `WARN_STEP_2`.
     2. `calculate_rolling_average_delta(historical_deltas, default_delta)`.
 - **Acceptance Criteria & Tests (`tests/meters/test_policies.py`):**
-  - [ ] Submitting `< prev_value` raises `ERR_BELOW_PREV`.
-  - [ ] Submitting anomalous delta with `confirmation_level=0` returns `WARN_STEP_1`; `confirmation_level=1` returns `WARN_STEP_2`; `confirmation_level=2` returns `OK` with `is_anomaly_confirmed=True`.
+  - [x] Submitting `< prev_value` raises `ERR_BELOW_PREV`.
+  - [x] Submitting anomalous delta with `confirmation_level=0` returns `WARN_STEP_1`; `confirmation_level=1` returns `WARN_STEP_2`; `confirmation_level=2` returns `OK` with `is_anomaly_confirmed=True`.
 
 ---
 
@@ -65,7 +65,7 @@ Each task is atomic, self-contained, and designed to be executed sequentially by
   - Implement Chairman Matrix endpoint (`GET /periods/{code}/matrix`) calculating `Master Meter - Sum(Apartment Meters)`.
   - Implement `POST /periods/{code}/estimate-missing` (`source = AUTO_ESTIMATED`) and CSV export plugin.
 - **Acceptance Criteria & Tests (`tests/meters/test_api.py`):**
-  - [ ] Integration test covers full lifecycle: resident submits -> updates -> audit log has 2 entries -> Chairman closes period -> auto-estimates missing apartments -> exports CSV.
+  - [x] Integration test covers full lifecycle: resident submits -> updates -> audit log has 2 entries -> Chairman closes period -> auto-estimates missing apartments -> exports CSV.
 
 ---
 
@@ -83,8 +83,8 @@ Each task is atomic, self-contained, and designed to be executed sequentially by
   - **Publish domain events after the transaction commits** (request-scoped outbox flushed after `get_db_session` commits). Notifications must never go out for a change that is later rolled back, and slow handlers must not hold row locks. This applies to the meters events too, which are currently published before commit.
   - Titles, bodies and comments use `src/core/validation.py` safe-text types.
 - **Acceptance Criteria & Tests (`tests/communication/`):**
-  - [ ] Emergency targeted at `Entrance 2` is visible to Apt 14 (Entrance 2) and hidden from Apt 2 (Entrance 1).
-  - [ ] Forum posts and comments display masked badges (`"Apt. 14 • OWNER"`) without leaking PII.
+  - [x] Emergency targeted at `Entrance 2` is visible to Apt 14 (Entrance 2) and hidden from Apt 2 (Entrance 1).
+  - [x] Forum posts and comments display masked badges (`"Apt. 14 • OWNER"`) without leaking PII.
 
 ---
 
@@ -159,11 +159,11 @@ Each task is atomic, self-contained, and designed to be executed sequentially by
   - Migrations stay backward compatible (expand/contract), so the previous image still runs after a rollback. The startup migration step (`src/core/migrations.py`) skips with a warning instead of crashing when the database schema is newer than the image being started.
   - Secrets (SSH key, database passwords) live only in GitHub Environment secrets and server-side env files, never in the repository.
 - **Acceptance Criteria & Tests:**
-  - [ ] CI runs `ruff` and `pytest` (with a PostgreSQL service) on every pull request and fails the check when a test fails.
-  - [ ] Merging a PR into `main` deploys that commit to dev automatically; `https://dev.<ip-with-dashes>.sslip.io/health` returns `200` with `X-Trace-Id`.
-  - [ ] Prod is deployed only through the manual workflow and serves `https://<ip-with-dashes>.sslip.io`.
-  - [ ] Both URLs serve valid HTTPS certificates.
-  - [ ] A deploy whose health check fails restores the previous image tag automatically; a manual rollback to an earlier tag works with one workflow run.
-  - [ ] Dev and prod use separate databases; a dev deploy never touches prod data.
-  - [ ] Containers on the VPS that are unrelated to this project keep running, and their ports are untouched.
-  - [ ] `docs/DEPLOYMENT.md` documents the one-time VPS setup, the pipeline and the rollback procedure.
+  - [x] CI runs `ruff` and `pytest` (with a PostgreSQL service) on every pull request and fails the check when a test fails.
+  - [x] Merging a PR into `main` deploys that commit to dev automatically; `https://dev.<ip-with-dashes>.sslip.io/health` returns `200` with `X-Trace-Id`.
+  - [x] Prod is deployed only through the manual workflow and serves `https://<ip-with-dashes>.sslip.io`.
+  - [x] Both URLs serve valid HTTPS certificates.
+  - [x] A deploy whose health check fails restores the previous image tag automatically; a manual rollback to an earlier tag works with one workflow run.
+  - [x] Dev and prod use separate databases; a dev deploy never touches prod data.
+  - [x] Containers on the VPS that are unrelated to this project keep running, and their ports are untouched.
+  - [x] `docs/DEPLOYMENT.md` documents the one-time VPS setup, the pipeline and the rollback procedure.
