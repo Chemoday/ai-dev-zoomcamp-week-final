@@ -21,6 +21,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://app:app@db:5432/app
       ENVIRONMENT: local
       DEMO_MODE_ENABLED: "true"
+      SEED_DEMO_DATA: "true"
       LOG_LEVEL: INFO
     ports:
       - "${BACKEND_PORT:-8000}:8000"

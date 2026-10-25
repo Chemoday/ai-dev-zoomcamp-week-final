@@ -28,6 +28,8 @@ services:
       ENVIRONMENT: ${APP_ENV:?set by deploy.sh}
       # Public demo: graders switch roles via X-Demo-User-Id. Seeded data only, no real residents.
       DEMO_MODE_ENABLED: "true"
+      # The demo building, seeded once into an empty database (src/core/seed.py).
+      SEED_DEMO_DATA: "true"
       LOG_LEVEL: INFO
     depends_on:
       db:

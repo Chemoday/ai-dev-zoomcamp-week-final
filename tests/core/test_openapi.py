@@ -42,14 +42,18 @@ def test_every_error_response_uses_the_shared_error_schema(contract: dict) -> No
 
 
 def test_api_endpoints_document_auth_and_validation_errors(contract: dict) -> None:
+    authenticated = 0
     for path, method, operation in operations(contract):
         if not path.startswith("/api/v1/"):
             continue
         responses = operation["responses"]
-        assert "401" in responses, (method, path)
+        if operation.get("security"):  # every authenticated endpoint can answer 401
+            authenticated += 1
+            assert "401" in responses, (method, path)
         assert "500" in responses, (method, path)
         if operation.get("parameters") or operation.get("requestBody"):
             assert "VALIDATION_ERROR" in responses["422"]["description"], (method, path)
+    assert authenticated >= 15, "FastAPI marks authenticated operations with `security`"
 
 
 def test_meter_values_are_strings_in_the_contract(contract: dict) -> None:

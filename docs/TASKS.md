@@ -110,8 +110,9 @@ Each task is atomic, self-contained, and designed to be executed sequentially by
 
 ### Task 7: Seed Data & Demo Building
 - **Tracking Issue:** [#8](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/8)
-- **Files to Create:** `src/core/seed.py`
+- **Files to Create:** `src/core/seed.py`, `src/core/demo.py` (`GET /api/v1/demo/users` for the role switcher)
 - **Requirements:**
+  - Seed only when `SEED_DEMO_DATA=true` (local Docker and the public demo; off by default) and only into an empty database, so a real association never gets fictitious residents. Concurrent starts are serialized by an advisory lock. The contents are described in [API.md](API.md), section 5.
   - Auto-seed a realistic demo building (`"KÜ Sõpruse 12"`) on first startup: 2 entrances, 6 apartments, Basement Master Meters, 3 historical periods (`2026-07`, `2026-08`, `2026-09`), and 1 open period (`2026-10`).
   - _The CI workflow originally planned here moved to Task 9, which runs right after Task 1 so every later task goes through CI._
 - **Acceptance Criteria & Tests:**

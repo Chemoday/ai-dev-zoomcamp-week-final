@@ -1601,6 +1601,52 @@
           }
         }
       }
+    },
+    "/api/v1/demo/users": {
+      "get": {
+        "tags": [
+          "demo"
+        ],
+        "summary": "Demo Users",
+        "description": "The seeded demo users that exist and are active on this instance, in switcher order.\n\nNo authentication: the role switcher needs the list before anyone is \"logged in\".",
+        "operationId": "demo_users_api_v1_demo_users_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DemoUserView"
+                  },
+                  "type": "array",
+                  "title": "Response Demo Users Api V1 Demo Users Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (or not visible to the caller). error_code: `NOT_FOUND`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error. error_code: `INTERNAL_SERVER_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1830,6 +1876,52 @@
           "apartments"
         ],
         "title": "DashboardResponse"
+      },
+      "DemoUserView": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "User Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "building_role": {
+            "$ref": "#/components/schemas/BuildingRole"
+          },
+          "apartment_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Apartment Number"
+          },
+          "relation_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RelationType"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "label",
+          "building_role",
+          "apartment_number",
+          "relation_type"
+        ],
+        "title": "DemoUserView"
       },
       "DisplayMode": {
         "type": "string",

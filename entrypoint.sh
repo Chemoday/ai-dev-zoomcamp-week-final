@@ -3,6 +3,8 @@
 set -e
 
 python -m src.core.migrations
+# Demo building into an empty database, only when SEED_DEMO_DATA=true (src/core/seed.py).
+python -m src.core.seed
 
 exec uvicorn src.main:app \
     --host 0.0.0.0 \
