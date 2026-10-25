@@ -4,6 +4,16 @@ import os
 # set before src.core.config builds the cached settings on import.
 os.environ.setdefault("DEMO_MODE_ENABLED", "true")
 
+# Metric readers can only be attached when the global meter provider is created, and importing
+# src.main creates an app (and the provider) right away. So register the test reader first.
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader  # noqa: I001
+
+from src.core.config import get_settings
+from src.core.telemetry import configure_metrics
+
+SESSION_METRIC_READER = InMemoryMetricReader()
+configure_metrics(get_settings(), extra_readers=[SESSION_METRIC_READER])
+
 import asyncio
 import io
 import json
@@ -21,7 +31,11 @@ from src.core.config import get_settings
 from src.core.database import build_engine, get_db_session, transaction
 from src.core.event_bus import DomainEvent, event_bus
 from src.core.migrations import alembic_config
-from src.core.telemetry import PIIScrubbingSpanExporter, configure_logging, configure_tracing
+from src.core.telemetry import (
+    PIIScrubbingSpanExporter,
+    configure_logging,
+    configure_tracing,
+)
 from src.main import create_app
 
 # --- Database (integration tests) --------------------------------------------------------------
@@ -128,6 +142,12 @@ def _session_span_exporter() -> InMemorySpanExporter:
     exporter = InMemorySpanExporter()
     provider.add_span_processor(SimpleSpanProcessor(PIIScrubbingSpanExporter(exporter)))
     return exporter
+
+
+@pytest.fixture(scope="session")
+def metric_reader() -> InMemoryMetricReader:
+    """Collects the metrics of every app created in the session."""
+    return SESSION_METRIC_READER
 
 
 @pytest.fixture
