@@ -106,17 +106,16 @@ Each task is atomic, self-contained, and designed to be executed sequentially by
 
 ---
 
-### Task 7: Seed Data, Docker Compose & CI/CD Pipeline
+### Task 7: Seed Data & Demo Building
 - **Tracking Issue:** [#8](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/8)
-- **Files to Create:** `src/core/seed.py`, `.github/workflows/ci.yml`
+- **Files to Create:** `src/core/seed.py`
 - **Requirements:**
   - Auto-seed a realistic demo building (`"KÜ Sõpruse 12"`) on first startup: 2 entrances, 6 apartments, Basement Master Meters, 3 historical periods (`2026-07`, `2026-08`, `2026-09`), and 1 open period (`2026-10`).
-  - Configure GitHub Actions workflow running `pytest` and linting on every Pull Request.
+  - _The CI workflow originally planned here moved to Task 9, which runs right after Task 1 so every later task goes through CI._
 - **Acceptance Criteria & Tests:**
   - [ ] A fresh `docker compose up --build` seeds the demo building exactly once; restarting does not duplicate data.
   - [ ] Seeded users exist for every role in the demo role switcher (Chairman, Accountant, Owner Apt 14, Owner Apt 1, Tenant).
   - [ ] Historical periods are `LOCKED` with readings; `2026-10` is `OPEN_FOR_RESIDENTS`.
-  - [ ] The CI workflow runs `ruff` and `pytest` (with a PostgreSQL service) on every pull request and fails the check when a test fails.
 
 ---
 
@@ -135,24 +134,30 @@ Each task is atomic, self-contained, and designed to be executed sequentially by
 
 ---
 
-### Task 9: Deployment to VPS, CD Pipeline (dev → manual prod) & Rollback
+### Task 9: CI Pipeline, Deployment to VPS, CD (dev → manual prod) & Rollback
 - **Tracking Issue:** [#12](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/12)
-- **Target:** `deploy/`, `.github/workflows/`, `docs/DEPLOYMENT.md`
+- **Execution order:** runs right after Task 1, so every later task goes through CI and lands on dev automatically.
+- **Target:** `.github/workflows/`, `deploy/`, `docs/DEPLOYMENT.md`
 - **Files to Create:**
-  - `deploy/docker-compose.deploy.yml`, `deploy/Caddyfile`, `deploy/deploy.sh`
-  - `.github/workflows/deploy.yml`, `docs/DEPLOYMENT.md`
+  - `.github/workflows/ci.yml`, `.github/workflows/deploy.yml`
+  - `deploy/docker-compose.deploy.yml`, `deploy/deploy.sh`, `deploy/ssh-gate.sh`, `deploy/bootstrap.sh`, `deploy/edge/` (Caddy)
+  - `src/core/migrations.py`, `docs/DEPLOYMENT.md`
 - **Requirements:**
+  - **CI:** `ruff` and `pytest` (with a PostgreSQL service) run on every pull request and every push to `main`.
   - Target host: a self-hosted Linux VPS with Docker and a single public IP, shared with unrelated containers.
   - HTTPS without a purchased domain: Caddy with automatic Let's Encrypt certificates on `sslip.io` hostnames. Prod is `<ip-with-dashes>.sslip.io`, dev is `dev.<ip-with-dashes>.sslip.io`.
+  - Caddy serves HTTPS on `HTTPS_PORT` (target `443`). While the VPS's Outline VPN still holds `443`, it temporarily runs on `8443`; switching is one env var. Certificates are issued over port `80` (HTTP-01) in both cases.
   - Two isolated environments on the same host (`dev`, `prod`): separate Compose projects, databases, volumes and env files.
-  - Only Caddy binds host ports (`80`, `443`). All other services stay on internal Docker networks, so containers already running on the VPS are not affected.
+  - Only Caddy binds host ports (`80` and `HTTPS_PORT`). All other services stay on internal Docker networks, so containers already running on the VPS are not affected.
+  - The CI deploy key can only run the deploy gate (SSH forced command), never an arbitrary shell.
   - Images are built once in CI, tagged with the commit SHA and pushed to GHCR. The server only pulls images by tag and never builds.
   - **CD to dev:** every push to `main` that passes CI deploys that SHA to `dev` automatically over SSH.
   - **Manual prod:** a `workflow_dispatch` run promotes a chosen, already-deployed-to-dev tag to `prod`, gated by the GitHub Environment `production`.
   - **Rollback:** `deploy.sh` records the previously deployed tag. If `/health/ready` fails after `up`, it automatically restores the previous tag. A manual rollback is the same workflow run with an older tag.
-  - Migrations stay backward compatible (expand/contract), so the previous image still runs after a rollback.
+  - Migrations stay backward compatible (expand/contract), so the previous image still runs after a rollback. The startup migration step (`src/core/migrations.py`) skips with a warning instead of crashing when the database schema is newer than the image being started.
   - Secrets (SSH key, database passwords) live only in GitHub Environment secrets and server-side env files, never in the repository.
 - **Acceptance Criteria & Tests:**
+  - [ ] CI runs `ruff` and `pytest` (with a PostgreSQL service) on every pull request and fails the check when a test fails.
   - [ ] Merging a PR into `main` deploys that commit to dev automatically; `https://dev.<ip-with-dashes>.sslip.io/health` returns `200` with `X-Trace-Id`.
   - [ ] Prod is deployed only through the manual workflow and serves `https://<ip-with-dashes>.sslip.io`.
   - [ ] Both URLs serve valid HTTPS certificates.
