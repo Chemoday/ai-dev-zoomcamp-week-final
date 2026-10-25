@@ -145,7 +145,7 @@ All tables use `UUID` primary keys (`uuid4`), UTC timestamps (`TIMESTAMPTZ`), an
 | :--- | :--- | :--- | :--- |
 | `id` | `UUID` | `PK` | Post ID |
 | `building_id` | `UUID` | `FK(property_buildings.id), INDEX` | Building ID |
-| `author_user_id` | `UUID` | `FK(core_users.id), NOT NULL` | Internal author ID (masked before API output, never returned) |
+| `author_user_id` | `UUID` | `FK(core_users.id), NOT NULL, INDEX` | Internal author ID (masked before API output, never returned) |
 | `author_apartment_id`| `UUID` | `NULLABLE` | Context apartment for privacy badge resolution (`NULL` = no apartment context, e.g. a board post) |
 | `post_type` | `VARCHAR(32)` | `NOT NULL, INDEX` | Enum: `EMERGENCY`, `OFFICIAL_NOTICE`, `FORUM_TOPIC` |
 | `category` | `VARCHAR(50)` | `NOT NULL, DEFAULT 'GENERAL'` | Enum: `GENERAL`, `WATER_SHUTOFF`, `MAINTENANCE`, `MARKETPLACE` |
@@ -166,7 +166,7 @@ All tables use `UUID` primary keys (`uuid4`), UTC timestamps (`TIMESTAMPTZ`), an
 | `id` | `UUID` | `PK` | Comment ID |
 | `post_id` | `UUID` | `NOT NULL, INDEX` | Parent post (composite FK with `building_id`, see below) |
 | `building_id` | `UUID` | `FK(property_buildings.id), NOT NULL` | The post's building; ties the comment and its author apartment to it |
-| `author_user_id` | `UUID` | `FK(core_users.id), NOT NULL` | Internal user ID (never returned) |
+| `author_user_id` | `UUID` | `FK(core_users.id), NOT NULL, INDEX` | Internal user ID (never returned) |
 | `author_apartment_id`| `UUID` | `NULLABLE` | Context apartment |
 | `body` | `TEXT` | `NOT NULL` | Comment text (the API caps it at 4000 characters) |
 | `created_at` | `TIMESTAMPTZ` | `NOT NULL` | Timestamp |
@@ -183,7 +183,7 @@ All tables use `UUID` primary keys (`uuid4`), UTC timestamps (`TIMESTAMPTZ`), an
 
 **Integrity constraints of `comm_*` tables** (enforced by PostgreSQL, covered by `tests/core/test_migrations.py`):
 - Every enum column (`post_type`, `category`, `target_scope`) has a named `CHECK (… IN (…))`.
-- `ck_comm_posts_target_consistent`: `ALL_BUILDING` has neither entrance nor apartment list; `ENTRANCE` has an entrance and no list; `APARTMENT_LIST` has a non-empty JSON array and no entrance. `target_entrance > 0`.
+- `ck_comm_posts_target_consistent`: `ALL_BUILDING` has neither entrance nor apartment list; `ENTRANCE` has an entrance and no list; `APARTMENT_LIST` has a non-empty JSON array of canonical lowercase UUID strings (checked with `jsonb_path_exists`) and no entrance. The list is tested with an explicit `IS NOT NULL`, because a CHECK whose result is `NULL` counts as passed. `target_entrance > 0`. Covered by `tests/communication/test_models.py`.
 - `ck_comm_posts_forum_whole_building`: a `FORUM_TOPIC` is always `ALL_BUILDING`.
 - `ck_comm_posts_only_emergency_inactive`: only an `EMERGENCY` can have `is_active = FALSE`.
 - Titles and bodies are never blank (`btrim(...) <> ''`).

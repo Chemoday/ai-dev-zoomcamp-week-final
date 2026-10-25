@@ -273,7 +273,7 @@ Anyone else gets `403 FORBIDDEN`. Comments use the commenter's first apartment u
 - Payloads never contain an author's user id, name, email or phone. `is_mine` tells the caller which posts and comments are their own. The frontend renders a badge as `"<display_label> • <role_badge>"`, e.g. `"Apt. 14 • OWNER"`.
 
 ### Free text
-`title` (1..255 characters), post `body` (1..10000) and comment `body` (1..4000) use the safe-text types: they are trimmed, must not be blank, and reject control characters such as NUL (`422 VALIDATION_ERROR`). Tab, LF and CR are allowed.
+`title` (1..255 characters), post `body` (1..10000) and comment `body` (1..4000) use the safe-text types: they are trimmed first, then must not be blank and must fit the limit, and they reject control characters such as NUL (`422 VALIDATION_ERROR`). Tab, LF and CR are allowed.
 
 ### Post object (`PostView`)
 ```json
@@ -338,12 +338,12 @@ Creates a post. Response `201 Created` with the post object.
 - **Target rules** (`422 INVALID_TARGET`, with a `message` that names the problem):
   - `ALL_BUILDING` takes neither `target_entrance` nor `target_apartment_ids`;
   - `ENTRANCE` needs `target_entrance`, and the building must have an apartment in that entrance;
-  - `APARTMENT_LIST` needs 1..500 apartment ids (duplicates are dropped), all in the caller's building; unknown ones are listed in `unknown_apartment_ids`;
+  - `APARTMENT_LIST` needs 1..500 different apartment ids (duplicates are dropped before counting), all in the caller's building; unknown ones are listed in `unknown_apartment_ids`. An empty list counts as not given;
   - a `FORUM_TOPIC` must be `ALL_BUILDING`.
 - Creating an `EMERGENCY` emits `EmergencyAlertPublished` after the request commits.
 
-### `GET /api/v1/communication/posts/{post_id}`
-The post object plus `comments`, oldest first: `[{"id", "post_id", "body", "author_badge", "is_mine", "created_at"}]`. A post not visible to the caller is `404 POST_NOT_FOUND`.
+### `GET /api/v1/communication/posts/{post_id}?comments_limit=200&comments_offset=0`
+The post object plus one page of `comments`, oldest first: `[{"id", "post_id", "body", "author_badge", "is_mine", "created_at"}]`. `comments_limit` 1..500 (default 200), `comments_offset` 0..100000; `comments_count` is always the total. A post not visible to the caller is `404 POST_NOT_FOUND`.
 
 ### `DELETE /api/v1/communication/posts/{post_id}`
 (Requires role: `CHAIRMAN`)
