@@ -89,20 +89,20 @@ class DemoBuilding:
 
 
 async def create_demo_building(session: AsyncSession) -> DemoBuilding:
-    """Apt 14 (entrance 2) owned by Иван Петров, Apt 2 (entrance 1) rented, plus a chairman."""
+    """Apt 14 (entrance 2) owned by Ivan Petrov, Apt 2 (entrance 1) rented, plus a chairman."""
     building = await create_building(session)
     apt_14 = await create_apartment(session, building, "14", entrance=2, floor=4)
     apt_2 = await create_apartment(session, building, "2", entrance=1, floor=1)
     owner_14 = await create_user(
         session,
         building,
-        "Иван Петров",
+        "Ivan Petrov",
         email=f"ivan.petrov.{uuid.uuid4().hex[:8]}@example.com",
         phone="+372 5555 1234",
     )
-    tenant_2 = await create_user(session, building, "Мари Тамм", email=None, phone="+372 5111 2222")
+    tenant_2 = await create_user(session, building, "Mari Tamm", email=None, phone="+372 5111 2222")
     chairman = await create_user(
-        session, building, "Олег Сидоров", role=BuildingRole.CHAIRMAN, phone="+372 5000 0001"
+        session, building, "Oleg Sidorov", role=BuildingRole.CHAIRMAN, phone="+372 5000 0001"
     )
     return DemoBuilding(
         building=building,

@@ -3,12 +3,19 @@
 Rules: docs/ROADMAP_MVP.md, section C "Two-Step Anomaly Confirmation".
 """
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
 
-METER_PRECISION = Decimal("0.001")  # NUMERIC(12, 3)
+from src.modules.meters.schemas import (
+    METER_PRECISION,
+    PeriodStatus,
+    ReadingSource,
+    SubmissionStatus,
+    canonical_meter_value,
+)
+
 ANOMALY_AVERAGE_FACTOR = Decimal(3)
 ROLLING_WINDOW = 3  # "3-month average": the last three period deltas
 
@@ -37,17 +44,6 @@ class ReadingCheck:
         return {ReadingCheckStatus.WARN_STEP_1: 1, ReadingCheckStatus.WARN_STEP_2: 2}.get(
             self.status
         )
-
-
-def canonical_meter_value(value: Decimal) -> Decimal:
-    """NUMERIC(12, 3) canonical form: exactly 3 decimals and never -0.
-
-    Raises ValueError instead of rounding: losing a digit of a meter value is never silent.
-    """
-    quantized = value.quantize(METER_PRECISION)
-    if quantized != value:
-        raise ValueError(f"{value} has more than 3 decimal places")
-    return quantized.copy_abs() if quantized.is_zero() else quantized
 
 
 def _require_decimal(name: str, value: object) -> Decimal:
@@ -116,3 +112,47 @@ def calculate_rolling_average_delta(
         return default_delta
     average = sum(usable, start=Decimal(0)) / len(usable)
     return canonical_meter_value(average.quantize(METER_PRECISION, rounding=ROUND_HALF_UP))
+
+
+# --- Period state machine ------------------------------------------------------------------------
+
+PERIOD_TRANSITIONS: dict[PeriodStatus, frozenset[PeriodStatus]] = {
+    PeriodStatus.OPEN_FOR_RESIDENTS: frozenset({PeriodStatus.REVIEW_BY_BOARD}),
+    PeriodStatus.REVIEW_BY_BOARD: frozenset({PeriodStatus.OPEN_FOR_RESIDENTS, PeriodStatus.LOCKED}),
+    # Reopen before invoices are sent; never straight back to residents.
+    PeriodStatus.LOCKED: frozenset({PeriodStatus.REVIEW_BY_BOARD}),
+}
+
+
+def can_transition_period(current: PeriodStatus, target: PeriodStatus) -> bool:
+    return target in PERIOD_TRANSITIONS[PeriodStatus(current)]
+
+
+# --- Matrix statuses -----------------------------------------------------------------------------
+
+# Most urgent first: what the chairman must look at before an apartment counts as done.
+_URGENCY = (
+    SubmissionStatus.MISSING,
+    SubmissionStatus.ANOMALY_CONFIRMED,
+    SubmissionStatus.AUTO_ESTIMATED,
+    SubmissionStatus.SUBMITTED,
+)
+
+
+def meter_submission_status(
+    source: ReadingSource | None, is_anomaly_confirmed: bool
+) -> SubmissionStatus:
+    """Status of one meter in a period; source None means there is no reading."""
+    if source is None:
+        return SubmissionStatus.MISSING
+    if is_anomaly_confirmed:
+        return SubmissionStatus.ANOMALY_CONFIRMED
+    if source == ReadingSource.AUTO_ESTIMATED:
+        return SubmissionStatus.AUTO_ESTIMATED
+    return SubmissionStatus.SUBMITTED
+
+
+def apartment_submission_status(meter_statuses: Iterable[SubmissionStatus]) -> SubmissionStatus:
+    """The most urgent status among the apartment's meters."""
+    statuses = set(meter_statuses)
+    return next((status for status in _URGENCY if status in statuses), SubmissionStatus.MISSING)

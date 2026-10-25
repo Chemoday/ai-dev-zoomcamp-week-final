@@ -20,7 +20,7 @@ If request confirmation_level == 0: Return HTTP 409 Conflict (code: ANOMALY_CONF
 If request confirmation_level == 1: Return HTTP 409 Conflict (code: ANOMALY_CONFIRMATION_STEP_2 — triggers Popup #2: "Please double-check digits; this goes directly to billing!").
 If request confirmation_level >= 2: Save reading with is_anomaly_confirmed = True.
 The 3-month average (`calculate_rolling_average_delta`):
-- **Window:** the meter's last 3 period deltas (chronological). Negative deltas inside that window (correction artefacts) are dropped, and the rest are averaged. The window never reaches further back.
+- **Window:** the meter's last 3 *qualifying* readings (see "What counts as history"), chronological. Estimates and confirmed anomalies are skipped, so the window can reach further back than 3 calendar months. Negative deltas inside the window (correction artefacts) are dropped, and the rest are averaged.
 - **What counts as history:** only `RESIDENT`, `ADMIN_OVERRIDE` and `IOT_WEBHOOK` readings with `is_anomaly_confirmed = FALSE`. Estimates of estimates would drift, and one confirmed leak month (e.g. 1130 m³) would otherwise switch off the 3× rule for three months.
 - **Default without history:** the caller passes it explicitly:
   - `0` for anomaly detection, so only the meter limit applies, and the 409 payload shows `average_delta: "0.000"`;

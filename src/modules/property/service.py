@@ -11,6 +11,7 @@ from src.core.exceptions import DomainError
 from src.modules.property.models import Apartment, ApartmentMembership, User
 from src.modules.property.policies import format_author_badge, most_private_display_mode
 from src.modules.property.schemas import (
+    ApartmentDTO,
     ApartmentMembershipDTO,
     AuthorBadgeDTO,
     BuildingRole,
@@ -23,9 +24,7 @@ from src.modules.property.schemas import (
 )
 
 # Shown when a post or comment outlives its author's account.
-UNKNOWN_AUTHOR_BADGE = AuthorBadgeDTO(
-    display_label="Неизвестный автор", role_badge=RoleBadge.RESIDENT
-)
+UNKNOWN_AUTHOR_BADGE = AuthorBadgeDTO(display_label="Unknown author", role_badge=RoleBadge.RESIDENT)
 
 type AuthorKey = tuple[uuid.UUID, uuid.UUID | None]
 
@@ -106,6 +105,20 @@ class PropertyService:
         return PrivacyUpdateResponse(
             membership_id=membership.id, privacy_display_mode=mode, preview_badge=badge
         )
+
+    # --- Building structure for other modules --------------------------------------------------
+
+    async def list_apartments(self, building_id: uuid.UUID) -> list[ApartmentDTO]:
+        """All apartments of a building, by entrance and natural apartment number."""
+        apartments = await self.session.scalars(
+            select(Apartment)
+            .where(Apartment.building_id == building_id)
+            .order_by(*_APARTMENT_ORDER)
+        )
+        return [
+            ApartmentDTO(id=a.id, number=a.number, entrance=a.entrance, floor=a.floor)
+            for a in apartments
+        ]
 
     # --- Privacy masker for other modules -------------------------------------------------------
 

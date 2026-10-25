@@ -40,7 +40,7 @@ def as_user(user_id: uuid.UUID) -> dict[str, str]:
 def assert_no_raw_pii(raw_json: str, demo: DemoBuilding) -> None:
     """No name (not even a part or the initials), email or phone, and no such fields at all."""
     owner = demo.owner_14
-    for secret in (owner.full_name, *owner.full_name.split(), "И. П.", owner.email, owner.phone):
+    for secret in (owner.full_name, *owner.full_name.split(), "I. P.", owner.email, owner.phone):
         assert secret not in raw_json, secret
     for key in ('"full_name"', '"email"', '"phone"'):
         assert key not in raw_json
@@ -85,7 +85,7 @@ async def test_me_returns_role_memberships_permissions_and_masked_preview(
         "can_view_bills": True,
         "can_vote": True,
         "privacy_display_mode": "APARTMENT_ONLY",
-        "preview_badge": {"display_label": "Кв. 14", "role_badge": "OWNER"},
+        "preview_badge": {"display_label": "Apt. 14", "role_badge": "OWNER"},
     }
 
 
@@ -125,7 +125,7 @@ async def test_privacy_update_returns_preview_and_persists(
     assert response.json() == {
         "membership_id": str(demo.owner_14_membership.id),
         "privacy_display_mode": "INITIALS",
-        "preview_badge": {"display_label": "И. П. (Кв. 14)", "role_badge": "OWNER"},
+        "preview_badge": {"display_label": "I. P. (Apt. 14)", "role_badge": "OWNER"},
     }
     stored = await db_session.scalar(
         select(ApartmentMembership.privacy_display_mode).where(
@@ -135,7 +135,7 @@ async def test_privacy_update_returns_preview_and_persists(
     assert stored == DisplayMode.INITIALS
     me = (await api_client.get("/api/v1/property/me", headers=as_user(demo.owner_14.id))).json()
     assert me["privacy_display_mode"] == "INITIALS"
-    assert me["memberships"][0]["preview_badge"]["display_label"] == "И. П. (Кв. 14)"
+    assert me["memberships"][0]["preview_badge"]["display_label"] == "I. P. (Apt. 14)"
 
 
 async def test_privacy_update_to_full_name(api_client: AsyncClient, demo: DemoBuilding) -> None:
@@ -145,7 +145,7 @@ async def test_privacy_update_to_full_name(api_client: AsyncClient, demo: DemoBu
         headers=as_user(demo.owner_14.id),
     )
 
-    assert response.json()["preview_badge"]["display_label"] == "Иван Петров (Кв. 14)"
+    assert response.json()["preview_badge"]["display_label"] == "Ivan Petrov (Apt. 14)"
 
 
 async def test_privacy_update_back_to_apartment_only_has_no_raw_pii(
@@ -160,7 +160,7 @@ async def test_privacy_update_back_to_apartment_only_has_no_raw_pii(
     )
 
     assert response.status_code == 200
-    assert response.json()["preview_badge"]["display_label"] == "Кв. 14"
+    assert response.json()["preview_badge"]["display_label"] == "Apt. 14"
     assert_no_raw_pii(response.text, demo)
 
 
@@ -230,7 +230,7 @@ async def test_unknown_demo_user_returns_401(api_client: AsyncClient, header_val
 async def test_deactivated_user_cannot_authenticate(
     api_client: AsyncClient, db_session: AsyncSession, demo: DemoBuilding
 ) -> None:
-    former = await create_user(db_session, demo.building, "Бывший Жилец", is_active=False)
+    former = await create_user(db_session, demo.building, "Former Resident", is_active=False)
 
     response = await api_client.get("/api/v1/property/me", headers=as_user(former.id))
 
@@ -359,12 +359,12 @@ async def test_masked_author_badges_follow_each_membership_mode(
         ]
     )
 
-    assert badges[(demo.owner_14.id, demo.apt_14.id)].display_label == "Кв. 14"
-    assert badges[(demo.owner_14.id, second_apartment.id)].display_label == "Иван Петров (Кв. 15)"
+    assert badges[(demo.owner_14.id, demo.apt_14.id)].display_label == "Apt. 14"
+    assert badges[(demo.owner_14.id, second_apartment.id)].display_label == "Ivan Petrov (Apt. 15)"
     assert badges[(demo.tenant_2.id, demo.apt_2.id)].role_badge == RoleBadge.RESIDENT
-    assert badges[(demo.chairman.id, None)].display_label == "Председатель"
+    assert badges[(demo.chairman.id, None)].display_label == "Chairman"
     assert badges[(demo.chairman.id, None)].role_badge == RoleBadge.BOARD
-    assert badges[(demo.tenant_2.id, demo.apt_14.id)].display_label == "Кв. 14"
+    assert badges[(demo.tenant_2.id, demo.apt_14.id)].display_label == "Apt. 14"
     assert badges[(ghost, None)] == UNKNOWN_AUTHOR_BADGE
 
 
@@ -375,7 +375,7 @@ async def test_masked_author_badge_single_lookup(
         demo.owner_14.id, demo.apt_14.id
     )
 
-    assert badge.display_label == "Кв. 14"
+    assert badge.display_label == "Apt. 14"
     assert badge.role_badge == RoleBadge.OWNER
 
 
@@ -401,7 +401,7 @@ async def test_name_consent_in_one_apartment_does_not_leak_to_posts_without_apar
     badge = await service.get_masked_author_badge(demo.owner_14.id, None)
     current_user = await service.get_current_user(demo.owner_14.id)
 
-    assert badge.display_label == "Житель"
+    assert badge.display_label == "Resident"
     assert current_user.privacy_display_mode == DisplayMode.APARTMENT_ONLY
 
 
@@ -419,7 +419,7 @@ async def test_memberships_in_another_building_are_ignored(
     badge = await service.get_masked_author_badge(demo.owner_14.id, foreign_apartment.id)
 
     assert [m.apartment_number for m in current_user.memberships] == ["14"]
-    assert badge.display_label == "Кв. 7"  # treated like a non-member: no name
+    assert badge.display_label == "Apt. 7"  # treated like a non-member: no name
 
 
 async def test_memberships_are_ordered_naturally(

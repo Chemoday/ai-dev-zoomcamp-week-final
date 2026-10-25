@@ -1,7 +1,7 @@
 # Product Vision: Open-Source Apartment Association Ecosystem
 
 ## 1. Executive Summary
-An open-source, lightweight, self-hosted platform for apartment associations, condominiums, and HOAs (e.g., Korteriühistu in Estonia, Taloyhtiö in Finland, WEG in Germany, ОСМД/ТСЖ).
+An open-source, lightweight, self-hosted platform for apartment associations, condominiums, and HOAs (e.g., Korteriühistu in Estonia, Taloyhtiö in Finland, WEG in Germany, OSMD/TSZh).
 
 The platform replaces archaic, overpriced proprietary tools (like Korto.ee) and chaotic messenger chats with a unified ecosystem for utility meter tracking, emergency alerts, community discussions, and legally compliant governance.
 
