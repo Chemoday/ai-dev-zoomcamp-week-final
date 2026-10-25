@@ -5,7 +5,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from src.core.database import DbSession
-from src.core.exceptions import DomainError
+from src.core.exceptions import DomainError, error_responses
 
 router = APIRouter(tags=["health"])
 
@@ -16,7 +16,7 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@router.get("/health/ready")
+@router.get("/health/ready", responses=error_responses({503: ["DATABASE_UNAVAILABLE"]}))
 async def readiness(session: DbSession) -> dict[str, str]:
     """Readiness: the database is reachable."""
     try:

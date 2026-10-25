@@ -4,6 +4,7 @@ import uuid
 
 from fastapi import APIRouter, Depends
 
+from src.core.exceptions import AUTH_ERRORS, error_responses
 from src.core.security import get_current_user
 from src.modules.property.schemas import (
     CurrentUserDTO,
@@ -13,7 +14,11 @@ from src.modules.property.schemas import (
 )
 from src.modules.property.service import PropertyService, get_property_service
 
-router = APIRouter(prefix="/api/v1/property", tags=["property"])
+router = APIRouter(
+    prefix="/api/v1/property",
+    tags=["property"],
+    responses=error_responses({401: AUTH_ERRORS, 500: ["INTERNAL_SERVER_ERROR"]}),
+)
 
 
 @router.get("/me", response_model=MeResponse)
@@ -24,7 +29,11 @@ async def get_me(
     return await service.get_me(current_user)
 
 
-@router.patch("/memberships/{membership_id}/privacy", response_model=PrivacyUpdateResponse)
+@router.patch(
+    "/memberships/{membership_id}/privacy",
+    response_model=PrivacyUpdateResponse,
+    responses=error_responses({404: ["MEMBERSHIP_NOT_FOUND"], 422: ["VALIDATION_ERROR"]}),
+)
 async def update_privacy(
     membership_id: uuid.UUID,
     body: PrivacyUpdateRequest,
