@@ -1,0 +1,3168 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Apartment Association Platform",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Health",
+        "description": "Liveness: the process is up and serving requests (no external dependencies checked).",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object",
+                  "title": "Response Health Health Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Readiness",
+        "description": "Readiness: the database is reachable.",
+        "operationId": "readiness_health_ready_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object",
+                  "title": "Response Readiness Health Ready Get"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable. error_code: `DATABASE_UNAVAILABLE`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/property/me": {
+      "get": {
+        "tags": [
+          "property"
+        ],
+        "summary": "Get Me",
+        "operationId": "get_me_api_v1_property_me_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated. error_code: `NOT_AUTHENTICATED`, `INVALID_TOKEN`, `UNKNOWN_USER`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error. error_code: `INTERNAL_SERVER_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/v1/property/memberships/{membership_id}/privacy": {
+      "patch": {
+        "tags": [
+          "property"
+        ],
+        "summary": "Update Privacy",
+        "operationId": "update_privacy_api_v1_property_memberships__membership_id__privacy_patch",
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "membership_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Membership Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrivacyUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrivacyUpdateResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated. error_code: `NOT_AUTHENTICATED`, `INVALID_TOKEN`, `UNKNOWN_USER`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error. error_code: `INTERNAL_SERVER_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (or not visible to the caller). error_code: `MEMBERSHIP_NOT_FOUND`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input. error_code: `VALIDATION_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/meters/my-dashboard": {
+      "get": {
+        "tags": [
+          "meters"
+        ],
+        "summary": "My Dashboard",
+        "operationId": "my_dashboard_api_v1_meters_my_dashboard_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "period_code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Period Code"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated. error_code: `NOT_AUTHENTICATED`, `INVALID_TOKEN`, `UNKNOWN_USER`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error. error_code: `INTERNAL_SERVER_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (or not visible to the caller). error_code: `PERIOD_NOT_FOUND`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input. error_code: `VALIDATION_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/meters/readings": {
+      "post": {
+        "tags": [
+          "meters"
+        ],
+        "summary": "Submit Reading",
+        "operationId": "submit_reading_api_v1_meters_readings_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReadingSubmitRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadingResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated. error_code: `NOT_AUTHENTICATED`, `INVALID_TOKEN`, `UNKNOWN_USER`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error. error_code: `INTERNAL_SERVER_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden. error_code: `FORBIDDEN`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (or not visible to the caller). error_code: `METER_NOT_FOUND`, `PERIOD_NOT_FOUND`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict with the current state. error_code: `ANOMALY_CONFIRMATION_STEP_1`, `ANOMALY_CONFIRMATION_STEP_2`, `PERIOD_CLOSED`, `PERIOD_LOCKED`, `READING_SET_BY_BOARD`, `LATER_READING_EXISTS`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input. error_code: `VALIDATION_ERROR`, `READING_BELOW_PREVIOUS`, `REASON_REQUIRED`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/v1/meters/readings/{reading_id}/history": {
+      "get": {
+        "tags": [
+          "meters"
+        ],
+        "summary": "Reading History",
+        "operationId": "reading_history_api_v1_meters_readings__reading_id__history_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "reading_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Reading Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadingHistoryResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated. error_code: `NOT_AUTHENTICATED`, `INVALID_TOKEN`, `UNKNOWN_USER`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error. error_code: `INTERNAL_SERVER_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (or not visible to the caller). error_code: `READING_NOT_FOUND`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input. error_code: `VALIDATION_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/meters/periods/{period_code}/matrix": {
+      "get": {
+        "tags": [
+          "meters"
+        ],
+        "summary": "Period Matrix",
+        "operationId": "period_matrix_api_v1_meters_periods__period_code__matrix_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "period_code",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+              "examples": [
+                "2026-10"
+              ],
+              "title": "Period Code"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MatrixResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated. error_code: `NOT_AUTHENTICATED`, `INVALID_TOKEN`, `UNKNOWN_USER`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error. error_code: `INTERNAL_SERVER_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden. error_code: `FORBIDDEN`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (or not visible to the caller). error_code: `PERIOD_NOT_FOUND`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input. error_code: `VALIDATION_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/meters/periods/{period_code}/estimate-missing": {
+      "post": {
+        "tags": [
+          "meters"
+        ],
+        "summary": "Estimate Missing",
+        "operationId": "estimate_missing_api_v1_meters_periods__period_code__estimate_missing_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "period_code",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+              "examples": [
+                "2026-10"
+              ],
+              "title": "Period Code"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EstimateResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated. error_code: `NOT_AUTHENTICATED`, `INVALID_TOKEN`, `UNKNOWN_USER`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error. error_code: `INTERNAL_SERVER_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden. error_code: `FORBIDDEN`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (or not visible to the caller). error_code: `PERIOD_NOT_FOUND`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict with the current state. error_code: `PERIOD_NOT_IN_REVIEW`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input. error_code: `VALIDATION_ERROR`, `ESTIMATE_OUT_OF_RANGE`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/meters/periods/{period_code}/status": {
+      "patch": {
+        "tags": [
+          "meters"
+        ],
+        "summary": "Change Period Status",
+        "operationId": "change_period_status_api_v1_meters_periods__period_code__status_patch",
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "period_code",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+              "examples": [
+                "2026-10"
+              ],
+              "title": "Period Code"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PeriodStatusUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PeriodStatusUpdateResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated. error_code: `NOT_AUTHENTICATED`, `INVALID_TOKEN`, `UNKNOWN_USER`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error. error_code: `INTERNAL_SERVER_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden. error_code: `FORBIDDEN`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (or not visible to the caller). error_code: `PERIOD_NOT_FOUND`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict with the current state. error_code: `INVALID_PERIOD_TRANSITION`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input. error_code: `VALIDATION_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/meters/periods/{period_code}/export-csv": {
+      "get": {
+        "tags": [
+          "meters"
+        ],
+        "summary": "Export Csv",
+        "operationId": "export_csv_api_v1_meters_periods__period_code__export_csv_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "period_code",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+              "examples": [
+                "2026-10"
+              ],
+              "title": "Period Code"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "CSV file of the period's readings (attachment).",
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated. error_code: `NOT_AUTHENTICATED`, `INVALID_TOKEN`, `UNKNOWN_USER`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error. error_code: `INTERNAL_SERVER_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden. error_code: `FORBIDDEN`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (or not visible to the caller). error_code: `PERIOD_NOT_FOUND`, `EXPORTER_NOT_ENABLED`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input. error_code: `VALIDATION_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/communication/emergencies/active": {
+      "get": {
+        "tags": [
+          "communication"
+        ],
+        "summary": "Active Emergencies",
+        "operationId": "active_emergencies_api_v1_communication_emergencies_active_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/EmergencyView"
+                  },
+                  "type": "array",
+                  "title": "Response Active Emergencies Api V1 Communication Emergencies Active Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated. error_code: `NOT_AUTHENTICATED`, `INVALID_TOKEN`, `UNKNOWN_USER`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error. error_code: `INTERNAL_SERVER_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/v1/communication/emergencies/{post_id}/acknowledge": {
+      "post": {
+        "tags": [
+          "communication"
+        ],
+        "summary": "Acknowledge Emergency",
+        "operationId": "acknowledge_emergency_api_v1_communication_emergencies__post_id__acknowledge_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "post_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Post Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcknowledgeResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated. error_code: `NOT_AUTHENTICATED`, `INVALID_TOKEN`, `UNKNOWN_USER`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error. error_code: `INTERNAL_SERVER_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (or not visible to the caller). error_code: `POST_NOT_FOUND`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input. error_code: `VALIDATION_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/communication/emergencies/{post_id}/resolve": {
+      "post": {
+        "tags": [
+          "communication"
+        ],
+        "summary": "Resolve Emergency",
+        "operationId": "resolve_emergency_api_v1_communication_emergencies__post_id__resolve_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "post_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Post Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolveResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated. error_code: `NOT_AUTHENTICATED`, `INVALID_TOKEN`, `UNKNOWN_USER`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error. error_code: `INTERNAL_SERVER_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden. error_code: `FORBIDDEN`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (or not visible to the caller). error_code: `POST_NOT_FOUND`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input. error_code: `VALIDATION_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/communication/posts": {
+      "get": {
+        "tags": [
+          "communication"
+        ],
+        "summary": "List Posts",
+        "operationId": "list_posts_api_v1_communication_posts_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "post_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/PostType"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Post Type"
+            }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/PostCategory"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Category"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100000,
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PostView"
+                  },
+                  "title": "Response List Posts Api V1 Communication Posts Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated. error_code: `NOT_AUTHENTICATED`, `INVALID_TOKEN`, `UNKNOWN_USER`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error. error_code: `INTERNAL_SERVER_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input. error_code: `VALIDATION_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "communication"
+        ],
+        "summary": "Create Post",
+        "operationId": "create_post_api_v1_communication_posts_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PostCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PostView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated. error_code: `NOT_AUTHENTICATED`, `INVALID_TOKEN`, `UNKNOWN_USER`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error. error_code: `INTERNAL_SERVER_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden. error_code: `FORBIDDEN`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input. error_code: `VALIDATION_ERROR`, `INVALID_TARGET`, `INVALID_AUTHOR_APARTMENT`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/communication/posts/{post_id}": {
+      "get": {
+        "tags": [
+          "communication"
+        ],
+        "summary": "Get Post",
+        "operationId": "get_post_api_v1_communication_posts__post_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "post_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Post Id"
+            }
+          },
+          {
+            "name": "comments_limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 200,
+              "title": "Comments Limit"
+            }
+          },
+          {
+            "name": "comments_offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100000,
+              "minimum": 0,
+              "default": 0,
+              "title": "Comments Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PostDetail"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated. error_code: `NOT_AUTHENTICATED`, `INVALID_TOKEN`, `UNKNOWN_USER`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error. error_code: `INTERNAL_SERVER_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (or not visible to the caller). error_code: `POST_NOT_FOUND`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input. error_code: `VALIDATION_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "communication"
+        ],
+        "summary": "Delete Post",
+        "operationId": "delete_post_api_v1_communication_posts__post_id__delete",
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "post_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Post Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Not authenticated. error_code: `NOT_AUTHENTICATED`, `INVALID_TOKEN`, `UNKNOWN_USER`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error. error_code: `INTERNAL_SERVER_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden. error_code: `FORBIDDEN`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (or not visible to the caller). error_code: `POST_NOT_FOUND`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict with the current state. error_code: `POST_NOT_DELETABLE`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input. error_code: `VALIDATION_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/communication/posts/{post_id}/comments": {
+      "post": {
+        "tags": [
+          "communication"
+        ],
+        "summary": "Add Comment",
+        "operationId": "add_comment_api_v1_communication_posts__post_id__comments_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "post_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Post Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommentCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommentView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated. error_code: `NOT_AUTHENTICATED`, `INVALID_TOKEN`, `UNKNOWN_USER`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error. error_code: `INTERNAL_SERVER_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (or not visible to the caller). error_code: `POST_NOT_FOUND`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict with the current state. error_code: `COMMENTS_DISABLED`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input. error_code: `VALIDATION_ERROR`, `INVALID_AUTHOR_APARTMENT`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AcknowledgeResponse": {
+        "properties": {
+          "post_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Post Id"
+          },
+          "acknowledged_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Acknowledged At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "post_id",
+          "acknowledged_at"
+        ],
+        "title": "AcknowledgeResponse"
+      },
+      "AuthorBadgeDTO": {
+        "properties": {
+          "display_label": {
+            "type": "string",
+            "title": "Display Label"
+          },
+          "role_badge": {
+            "$ref": "#/components/schemas/RoleBadge"
+          }
+        },
+        "type": "object",
+        "required": [
+          "display_label",
+          "role_badge"
+        ],
+        "title": "AuthorBadgeDTO"
+      },
+      "BuildingRole": {
+        "type": "string",
+        "enum": [
+          "CHAIRMAN",
+          "BOARD",
+          "ACCOUNTANT",
+          "USER"
+        ],
+        "title": "BuildingRole"
+      },
+      "CommentCreateRequest": {
+        "properties": {
+          "body": {
+            "type": "string",
+            "maxLength": 4000,
+            "title": "Body"
+          },
+          "author_apartment_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author Apartment Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "body"
+        ],
+        "title": "CommentCreateRequest",
+        "description": "Body of POST /api/v1/communication/posts/{post_id}/comments."
+      },
+      "CommentView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "post_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Post Id"
+          },
+          "body": {
+            "type": "string",
+            "title": "Body"
+          },
+          "author_badge": {
+            "$ref": "#/components/schemas/AuthorBadgeDTO"
+          },
+          "is_mine": {
+            "type": "boolean",
+            "title": "Is Mine"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "post_id",
+          "body",
+          "author_badge",
+          "is_mine",
+          "created_at"
+        ],
+        "title": "CommentView"
+      },
+      "DashboardApartment": {
+        "properties": {
+          "apartment_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Apartment Id"
+          },
+          "apartment_number": {
+            "type": "string",
+            "title": "Apartment Number"
+          },
+          "can_submit_readings": {
+            "type": "boolean",
+            "title": "Can Submit Readings"
+          },
+          "meters": {
+            "items": {
+              "$ref": "#/components/schemas/DashboardMeter"
+            },
+            "type": "array",
+            "title": "Meters"
+          }
+        },
+        "type": "object",
+        "required": [
+          "apartment_id",
+          "apartment_number",
+          "can_submit_readings",
+          "meters"
+        ],
+        "title": "DashboardApartment"
+      },
+      "DashboardMeter": {
+        "properties": {
+          "meter_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Meter Id"
+          },
+          "resource_type": {
+            "$ref": "#/components/schemas/ResourceType"
+          },
+          "serial_number": {
+            "type": "string",
+            "title": "Serial Number"
+          },
+          "location_label": {
+            "type": "string",
+            "title": "Location Label"
+          },
+          "unit": {
+            "$ref": "#/components/schemas/MeterUnit"
+          },
+          "previous_value": {
+            "type": "string",
+            "pattern": "^-?[0-9]+\\.[0-9]{3}$",
+            "title": "Previous Value",
+            "examples": [
+              "1254.000"
+            ]
+          },
+          "reading": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReadingSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "meter_id",
+          "resource_type",
+          "serial_number",
+          "location_label",
+          "unit",
+          "previous_value",
+          "reading"
+        ],
+        "title": "DashboardMeter"
+      },
+      "DashboardResponse": {
+        "properties": {
+          "period": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PeriodDTO"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "apartments": {
+            "items": {
+              "$ref": "#/components/schemas/DashboardApartment"
+            },
+            "type": "array",
+            "title": "Apartments"
+          }
+        },
+        "type": "object",
+        "required": [
+          "period",
+          "apartments"
+        ],
+        "title": "DashboardResponse"
+      },
+      "DisplayMode": {
+        "type": "string",
+        "enum": [
+          "APARTMENT_ONLY",
+          "INITIALS",
+          "FULL_NAME"
+        ],
+        "title": "DisplayMode"
+      },
+      "EmergencyView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "post_type": {
+            "$ref": "#/components/schemas/PostType"
+          },
+          "category": {
+            "$ref": "#/components/schemas/PostCategory"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "body": {
+            "type": "string",
+            "title": "Body"
+          },
+          "author_badge": {
+            "$ref": "#/components/schemas/AuthorBadgeDTO"
+          },
+          "is_mine": {
+            "type": "boolean",
+            "title": "Is Mine"
+          },
+          "target_scope": {
+            "$ref": "#/components/schemas/TargetScope"
+          },
+          "target_entrance": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Entrance"
+          },
+          "target_apartment_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Apartment Ids"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          },
+          "comments_enabled": {
+            "type": "boolean",
+            "title": "Comments Enabled"
+          },
+          "comments_count": {
+            "type": "integer",
+            "title": "Comments Count"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "acknowledged_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acknowledged At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "post_type",
+          "category",
+          "title",
+          "body",
+          "author_badge",
+          "is_mine",
+          "target_scope",
+          "target_entrance",
+          "target_apartment_ids",
+          "is_active",
+          "comments_enabled",
+          "comments_count",
+          "created_at",
+          "acknowledged_at"
+        ],
+        "title": "EmergencyView",
+        "description": "An active emergency for the banner; acknowledged_at is the caller's own acknowledgement."
+      },
+      "ErrorResponse": {
+        "properties": {
+          "error_code": {
+            "type": "string",
+            "title": "Error Code"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "errors": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ValidationErrorItem"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Errors"
+          },
+          "trace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trace Id"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "error_code",
+          "message"
+        ],
+        "title": "ErrorResponse",
+        "description": "Body of every error response. The frontend picks its text by error_code.\n\nSome errors add fields of their own (e.g. `required_confirmation_level`,\n`allowed_statuses`, `unknown_apartment_ids`); docs/API.md lists them per endpoint."
+      },
+      "EstimateResponse": {
+        "properties": {
+          "period_code": {
+            "type": "string",
+            "title": "Period Code"
+          },
+          "estimated_count": {
+            "type": "integer",
+            "title": "Estimated Count"
+          },
+          "estimated": {
+            "items": {
+              "$ref": "#/components/schemas/EstimatedReading"
+            },
+            "type": "array",
+            "title": "Estimated"
+          }
+        },
+        "type": "object",
+        "required": [
+          "period_code",
+          "estimated_count",
+          "estimated"
+        ],
+        "title": "EstimateResponse"
+      },
+      "EstimatedReading": {
+        "properties": {
+          "reading_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Reading Id"
+          },
+          "meter_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Meter Id"
+          },
+          "apartment_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Apartment Id"
+          },
+          "value": {
+            "type": "string",
+            "pattern": "^-?[0-9]+\\.[0-9]{3}$",
+            "title": "Value",
+            "examples": [
+              "1254.000"
+            ]
+          },
+          "consumption_delta": {
+            "type": "string",
+            "pattern": "^-?[0-9]+\\.[0-9]{3}$",
+            "title": "Consumption Delta",
+            "examples": [
+              "1254.000"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "reading_id",
+          "meter_id",
+          "apartment_id",
+          "value",
+          "consumption_delta"
+        ],
+        "title": "EstimatedReading"
+      },
+      "HistoryEntry": {
+        "properties": {
+          "changed_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Changed At"
+          },
+          "old_value": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^-?[0-9]+\\.[0-9]{3}$",
+                "examples": [
+                  "1254.000"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Old Value"
+          },
+          "new_value": {
+            "type": "string",
+            "pattern": "^-?[0-9]+\\.[0-9]{3}$",
+            "title": "New Value",
+            "examples": [
+              "1254.000"
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/ReadingSource"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "changed_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AuthorBadgeDTO"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "changed_at",
+          "old_value",
+          "new_value",
+          "source",
+          "reason",
+          "changed_by"
+        ],
+        "title": "HistoryEntry"
+      },
+      "MasterMeterRow": {
+        "properties": {
+          "meter_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Meter Id"
+          },
+          "resource_type": {
+            "$ref": "#/components/schemas/ResourceType"
+          },
+          "location_label": {
+            "type": "string",
+            "title": "Location Label"
+          },
+          "unit": {
+            "$ref": "#/components/schemas/MeterUnit"
+          },
+          "previous_value": {
+            "type": "string",
+            "pattern": "^-?[0-9]+\\.[0-9]{3}$",
+            "title": "Previous Value",
+            "examples": [
+              "1254.000"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/SubmissionStatus"
+          },
+          "reading": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReadingSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "meter_id",
+          "resource_type",
+          "location_label",
+          "unit",
+          "previous_value",
+          "status",
+          "reading"
+        ],
+        "title": "MasterMeterRow",
+        "description": "A Building Master Meter in the matrix: its id is what the board submits against."
+      },
+      "MatrixApartment": {
+        "properties": {
+          "apartment_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Apartment Id"
+          },
+          "apartment_number": {
+            "type": "string",
+            "title": "Apartment Number"
+          },
+          "entrance": {
+            "type": "integer",
+            "title": "Entrance"
+          },
+          "floor": {
+            "type": "integer",
+            "title": "Floor"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SubmissionStatus"
+          },
+          "meters": {
+            "items": {
+              "$ref": "#/components/schemas/MatrixMeter"
+            },
+            "type": "array",
+            "title": "Meters"
+          }
+        },
+        "type": "object",
+        "required": [
+          "apartment_id",
+          "apartment_number",
+          "entrance",
+          "floor",
+          "status",
+          "meters"
+        ],
+        "title": "MatrixApartment"
+      },
+      "MatrixMeter": {
+        "properties": {
+          "meter_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Meter Id"
+          },
+          "resource_type": {
+            "$ref": "#/components/schemas/ResourceType"
+          },
+          "location_label": {
+            "type": "string",
+            "title": "Location Label"
+          },
+          "unit": {
+            "$ref": "#/components/schemas/MeterUnit"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SubmissionStatus"
+          },
+          "reading": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReadingSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "meter_id",
+          "resource_type",
+          "location_label",
+          "unit",
+          "status",
+          "reading"
+        ],
+        "title": "MatrixMeter"
+      },
+      "MatrixResponse": {
+        "properties": {
+          "period": {
+            "$ref": "#/components/schemas/PeriodDTO"
+          },
+          "balances": {
+            "items": {
+              "$ref": "#/components/schemas/ResourceBalance"
+            },
+            "type": "array",
+            "title": "Balances"
+          },
+          "master_meters": {
+            "items": {
+              "$ref": "#/components/schemas/MasterMeterRow"
+            },
+            "type": "array",
+            "title": "Master Meters"
+          },
+          "apartments": {
+            "items": {
+              "$ref": "#/components/schemas/MatrixApartment"
+            },
+            "type": "array",
+            "title": "Apartments"
+          }
+        },
+        "type": "object",
+        "required": [
+          "period",
+          "balances",
+          "master_meters",
+          "apartments"
+        ],
+        "title": "MatrixResponse"
+      },
+      "MeResponse": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "User Id"
+          },
+          "building_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Building Id"
+          },
+          "building_role": {
+            "$ref": "#/components/schemas/BuildingRole"
+          },
+          "privacy_display_mode": {
+            "$ref": "#/components/schemas/DisplayMode"
+          },
+          "memberships": {
+            "items": {
+              "$ref": "#/components/schemas/MembershipView"
+            },
+            "type": "array",
+            "title": "Memberships"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "building_id",
+          "building_role",
+          "privacy_display_mode",
+          "memberships"
+        ],
+        "title": "MeResponse"
+      },
+      "MembershipView": {
+        "properties": {
+          "membership_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Membership Id"
+          },
+          "apartment_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Apartment Id"
+          },
+          "apartment_number": {
+            "type": "string",
+            "title": "Apartment Number"
+          },
+          "entrance": {
+            "type": "integer",
+            "title": "Entrance"
+          },
+          "floor": {
+            "type": "integer",
+            "title": "Floor"
+          },
+          "relation_type": {
+            "$ref": "#/components/schemas/RelationType"
+          },
+          "can_submit_readings": {
+            "type": "boolean",
+            "title": "Can Submit Readings"
+          },
+          "can_view_bills": {
+            "type": "boolean",
+            "title": "Can View Bills"
+          },
+          "can_vote": {
+            "type": "boolean",
+            "title": "Can Vote"
+          },
+          "privacy_display_mode": {
+            "$ref": "#/components/schemas/DisplayMode"
+          },
+          "preview_badge": {
+            "$ref": "#/components/schemas/AuthorBadgeDTO"
+          }
+        },
+        "type": "object",
+        "required": [
+          "membership_id",
+          "apartment_id",
+          "apartment_number",
+          "entrance",
+          "floor",
+          "relation_type",
+          "can_submit_readings",
+          "can_view_bills",
+          "can_vote",
+          "privacy_display_mode",
+          "preview_badge"
+        ],
+        "title": "MembershipView"
+      },
+      "MeterUnit": {
+        "type": "string",
+        "enum": [
+          "m3",
+          "kWh",
+          "MWh"
+        ],
+        "title": "MeterUnit"
+      },
+      "PeriodDTO": {
+        "properties": {
+          "period_code": {
+            "type": "string",
+            "title": "Period Code"
+          },
+          "status": {
+            "$ref": "#/components/schemas/PeriodStatus"
+          },
+          "due_date": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Due Date"
+          }
+        },
+        "type": "object",
+        "required": [
+          "period_code",
+          "status",
+          "due_date"
+        ],
+        "title": "PeriodDTO"
+      },
+      "PeriodStatus": {
+        "type": "string",
+        "enum": [
+          "OPEN_FOR_RESIDENTS",
+          "REVIEW_BY_BOARD",
+          "LOCKED"
+        ],
+        "title": "PeriodStatus"
+      },
+      "PeriodStatusUpdateRequest": {
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/PeriodStatus"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "PeriodStatusUpdateRequest"
+      },
+      "PeriodStatusUpdateResponse": {
+        "properties": {
+          "period_code": {
+            "type": "string",
+            "title": "Period Code"
+          },
+          "previous_status": {
+            "$ref": "#/components/schemas/PeriodStatus"
+          },
+          "status": {
+            "$ref": "#/components/schemas/PeriodStatus"
+          }
+        },
+        "type": "object",
+        "required": [
+          "period_code",
+          "previous_status",
+          "status"
+        ],
+        "title": "PeriodStatusUpdateResponse"
+      },
+      "PostCategory": {
+        "type": "string",
+        "enum": [
+          "GENERAL",
+          "WATER_SHUTOFF",
+          "MAINTENANCE",
+          "MARKETPLACE"
+        ],
+        "title": "PostCategory"
+      },
+      "PostCreateRequest": {
+        "properties": {
+          "post_type": {
+            "$ref": "#/components/schemas/PostType"
+          },
+          "category": {
+            "$ref": "#/components/schemas/PostCategory",
+            "default": "GENERAL"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 255,
+            "title": "Title"
+          },
+          "body": {
+            "type": "string",
+            "maxLength": 10000,
+            "title": "Body"
+          },
+          "target_scope": {
+            "$ref": "#/components/schemas/TargetScope",
+            "default": "ALL_BUILDING"
+          },
+          "target_entrance": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 1000.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Entrance"
+          },
+          "target_apartment_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Apartment Ids"
+          },
+          "comments_enabled": {
+            "type": "boolean",
+            "title": "Comments Enabled",
+            "default": true
+          },
+          "author_apartment_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author Apartment Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "post_type",
+          "title",
+          "body"
+        ],
+        "title": "PostCreateRequest",
+        "description": "Body of POST /api/v1/communication/posts."
+      },
+      "PostDetail": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "post_type": {
+            "$ref": "#/components/schemas/PostType"
+          },
+          "category": {
+            "$ref": "#/components/schemas/PostCategory"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "body": {
+            "type": "string",
+            "title": "Body"
+          },
+          "author_badge": {
+            "$ref": "#/components/schemas/AuthorBadgeDTO"
+          },
+          "is_mine": {
+            "type": "boolean",
+            "title": "Is Mine"
+          },
+          "target_scope": {
+            "$ref": "#/components/schemas/TargetScope"
+          },
+          "target_entrance": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Entrance"
+          },
+          "target_apartment_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Apartment Ids"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          },
+          "comments_enabled": {
+            "type": "boolean",
+            "title": "Comments Enabled"
+          },
+          "comments_count": {
+            "type": "integer",
+            "title": "Comments Count"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "comments": {
+            "items": {
+              "$ref": "#/components/schemas/CommentView"
+            },
+            "type": "array",
+            "title": "Comments"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "post_type",
+          "category",
+          "title",
+          "body",
+          "author_badge",
+          "is_mine",
+          "target_scope",
+          "target_entrance",
+          "target_apartment_ids",
+          "is_active",
+          "comments_enabled",
+          "comments_count",
+          "created_at",
+          "comments"
+        ],
+        "title": "PostDetail"
+      },
+      "PostType": {
+        "type": "string",
+        "enum": [
+          "EMERGENCY",
+          "OFFICIAL_NOTICE",
+          "FORUM_TOPIC"
+        ],
+        "title": "PostType"
+      },
+      "PostView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "post_type": {
+            "$ref": "#/components/schemas/PostType"
+          },
+          "category": {
+            "$ref": "#/components/schemas/PostCategory"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "body": {
+            "type": "string",
+            "title": "Body"
+          },
+          "author_badge": {
+            "$ref": "#/components/schemas/AuthorBadgeDTO"
+          },
+          "is_mine": {
+            "type": "boolean",
+            "title": "Is Mine"
+          },
+          "target_scope": {
+            "$ref": "#/components/schemas/TargetScope"
+          },
+          "target_entrance": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Entrance"
+          },
+          "target_apartment_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Apartment Ids"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          },
+          "comments_enabled": {
+            "type": "boolean",
+            "title": "Comments Enabled"
+          },
+          "comments_count": {
+            "type": "integer",
+            "title": "Comments Count"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "post_type",
+          "category",
+          "title",
+          "body",
+          "author_badge",
+          "is_mine",
+          "target_scope",
+          "target_entrance",
+          "target_apartment_ids",
+          "is_active",
+          "comments_enabled",
+          "comments_count",
+          "created_at"
+        ],
+        "title": "PostView"
+      },
+      "PrivacyUpdateRequest": {
+        "properties": {
+          "privacy_display_mode": {
+            "$ref": "#/components/schemas/DisplayMode"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "privacy_display_mode"
+        ],
+        "title": "PrivacyUpdateRequest"
+      },
+      "PrivacyUpdateResponse": {
+        "properties": {
+          "membership_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Membership Id"
+          },
+          "privacy_display_mode": {
+            "$ref": "#/components/schemas/DisplayMode"
+          },
+          "preview_badge": {
+            "$ref": "#/components/schemas/AuthorBadgeDTO"
+          }
+        },
+        "type": "object",
+        "required": [
+          "membership_id",
+          "privacy_display_mode",
+          "preview_badge"
+        ],
+        "title": "PrivacyUpdateResponse"
+      },
+      "ReadingHistoryResponse": {
+        "properties": {
+          "reading_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Reading Id"
+          },
+          "meter_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Meter Id"
+          },
+          "period_code": {
+            "type": "string",
+            "title": "Period Code"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/HistoryEntry"
+            },
+            "type": "array",
+            "title": "Entries"
+          }
+        },
+        "type": "object",
+        "required": [
+          "reading_id",
+          "meter_id",
+          "period_code",
+          "entries"
+        ],
+        "title": "ReadingHistoryResponse"
+      },
+      "ReadingResponse": {
+        "properties": {
+          "reading_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Reading Id"
+          },
+          "meter_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Meter Id"
+          },
+          "period_code": {
+            "type": "string",
+            "title": "Period Code"
+          },
+          "value": {
+            "type": "string",
+            "pattern": "^-?[0-9]+\\.[0-9]{3}$",
+            "title": "Value",
+            "examples": [
+              "1254.000"
+            ]
+          },
+          "consumption_delta": {
+            "type": "string",
+            "pattern": "^-?[0-9]+\\.[0-9]{3}$",
+            "title": "Consumption Delta",
+            "examples": [
+              "1254.000"
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/ReadingSource"
+          },
+          "is_anomaly_confirmed": {
+            "type": "boolean",
+            "title": "Is Anomaly Confirmed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "reading_id",
+          "meter_id",
+          "period_code",
+          "value",
+          "consumption_delta",
+          "source",
+          "is_anomaly_confirmed"
+        ],
+        "title": "ReadingResponse"
+      },
+      "ReadingSource": {
+        "type": "string",
+        "enum": [
+          "RESIDENT",
+          "ADMIN_OVERRIDE",
+          "AUTO_ESTIMATED",
+          "IOT_WEBHOOK"
+        ],
+        "title": "ReadingSource"
+      },
+      "ReadingSubmitRequest": {
+        "properties": {
+          "meter_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Meter Id"
+          },
+          "period_code": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Period Code",
+            "examples": [
+              "2026-10"
+            ]
+          },
+          "value": {
+            "type": "string",
+            "pattern": "^[0-9]{1,9}(\\.[0-9]{1,3})?$",
+            "title": "Value",
+            "examples": [
+              "1254.100"
+            ]
+          },
+          "confirmation_level": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Confirmation Level",
+            "default": 0
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "meter_id",
+          "period_code",
+          "value"
+        ],
+        "title": "ReadingSubmitRequest",
+        "description": "Body of POST /api/v1/meters/readings (the 2-step anomaly flow uses confirmation_level)."
+      },
+      "ReadingSummary": {
+        "properties": {
+          "reading_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Reading Id"
+          },
+          "value": {
+            "type": "string",
+            "pattern": "^-?[0-9]+\\.[0-9]{3}$",
+            "title": "Value",
+            "examples": [
+              "1254.000"
+            ]
+          },
+          "consumption_delta": {
+            "type": "string",
+            "pattern": "^-?[0-9]+\\.[0-9]{3}$",
+            "title": "Consumption Delta",
+            "examples": [
+              "1254.000"
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/ReadingSource"
+          },
+          "is_anomaly_confirmed": {
+            "type": "boolean",
+            "title": "Is Anomaly Confirmed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "reading_id",
+          "value",
+          "consumption_delta",
+          "source",
+          "is_anomaly_confirmed"
+        ],
+        "title": "ReadingSummary"
+      },
+      "RelationType": {
+        "type": "string",
+        "enum": [
+          "OWNER",
+          "TENANT",
+          "RESIDENT"
+        ],
+        "title": "RelationType"
+      },
+      "ResolveResponse": {
+        "properties": {
+          "post_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Post Id"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          }
+        },
+        "type": "object",
+        "required": [
+          "post_id",
+          "is_active"
+        ],
+        "title": "ResolveResponse"
+      },
+      "ResourceBalance": {
+        "properties": {
+          "resource_type": {
+            "$ref": "#/components/schemas/ResourceType"
+          },
+          "unit": {
+            "$ref": "#/components/schemas/MeterUnit"
+          },
+          "master_total": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^-?[0-9]+\\.[0-9]{3}$",
+                "examples": [
+                  "1254.000"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Master Total"
+          },
+          "apartments_sum": {
+            "type": "string",
+            "pattern": "^-?[0-9]+\\.[0-9]{3}$",
+            "title": "Apartments Sum",
+            "examples": [
+              "1254.000"
+            ]
+          },
+          "unallocated_loss": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^-?[0-9]+\\.[0-9]{3}$",
+                "examples": [
+                  "1254.000"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unallocated Loss"
+          }
+        },
+        "type": "object",
+        "required": [
+          "resource_type",
+          "unit",
+          "master_total",
+          "apartments_sum",
+          "unallocated_loss"
+        ],
+        "title": "ResourceBalance"
+      },
+      "ResourceType": {
+        "type": "string",
+        "enum": [
+          "COLD_WATER",
+          "HOT_WATER",
+          "ELECTRICITY",
+          "HEAT",
+          "GAS"
+        ],
+        "title": "ResourceType"
+      },
+      "RoleBadge": {
+        "type": "string",
+        "enum": [
+          "OWNER",
+          "RESIDENT",
+          "BOARD",
+          "ACCOUNTANT"
+        ],
+        "title": "RoleBadge"
+      },
+      "SubmissionStatus": {
+        "type": "string",
+        "enum": [
+          "SUBMITTED",
+          "MISSING",
+          "AUTO_ESTIMATED",
+          "ANOMALY_CONFIRMED"
+        ],
+        "title": "SubmissionStatus",
+        "description": "Per meter and per apartment in the chairman matrix."
+      },
+      "TargetScope": {
+        "type": "string",
+        "enum": [
+          "ALL_BUILDING",
+          "ENTRANCE",
+          "APARTMENT_LIST"
+        ],
+        "title": "TargetScope"
+      },
+      "ValidationErrorItem": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Loc"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "message",
+          "type"
+        ],
+        "title": "ValidationErrorItem"
+      }
+    },
+    "securitySchemes": {
+      "HTTPBearer": {
+        "type": "http",
+        "description": "JWT access token (sub = user id).",
+        "scheme": "bearer"
+      },
+      "APIKeyHeader": {
+        "type": "apiKey",
+        "description": "Demo mode only: act as any seeded user by id.",
+        "in": "header",
+        "name": "X-Demo-User-Id"
+      }
+    }
+  }
+}
