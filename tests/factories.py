@@ -1,0 +1,115 @@
+"""Test data builders. Tests may use models directly; application modules may not."""
+
+import uuid
+from dataclasses import dataclass
+from decimal import Decimal
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.modules.property.models import Apartment, ApartmentMembership, Building, User
+from src.modules.property.schemas import BuildingRole, DisplayMode, RelationType
+
+
+async def create_building(session: AsyncSession, name: str = "KÜ Sõpruse 12") -> Building:
+    building = Building(name=name, address="Sõpruse pst 12, Tallinn")
+    session.add(building)
+    await session.flush()
+    return building
+
+
+async def create_apartment(
+    session: AsyncSession, building: Building, number: str, entrance: int = 1, floor: int = 1
+) -> Apartment:
+    apartment = Apartment(
+        building_id=building.id,
+        number=number,
+        entrance=entrance,
+        floor=floor,
+        area_m2=Decimal("54.30"),
+    )
+    session.add(apartment)
+    await session.flush()
+    return apartment
+
+
+async def create_user(
+    session: AsyncSession,
+    building: Building,
+    full_name: str,
+    role: BuildingRole = BuildingRole.USER,
+    email: str | None = None,
+    phone: str | None = None,
+    is_active: bool = True,
+) -> User:
+    user = User(
+        building_id=building.id,
+        full_name=full_name,
+        building_role=role,
+        email=email,
+        phone=phone,
+        is_active=is_active,
+    )
+    session.add(user)
+    await session.flush()
+    return user
+
+
+async def create_membership(
+    session: AsyncSession,
+    user: User,
+    apartment: Apartment,
+    relation: RelationType = RelationType.OWNER,
+    mode: DisplayMode = DisplayMode.APARTMENT_ONLY,
+) -> ApartmentMembership:
+    membership = ApartmentMembership(
+        apartment_id=apartment.id,
+        user_id=user.id,
+        relation_type=relation,
+        can_vote=relation == RelationType.OWNER,
+        privacy_display_mode=mode,
+    )
+    session.add(membership)
+    await session.flush()
+    return membership
+
+
+@dataclass
+class DemoBuilding:
+    building: Building
+    apt_14: Apartment
+    apt_2: Apartment
+    owner_14: User
+    owner_14_membership: ApartmentMembership
+    tenant_2: User
+    tenant_2_membership: ApartmentMembership
+    chairman: User
+
+
+async def create_demo_building(session: AsyncSession) -> DemoBuilding:
+    """Apt 14 (entrance 2) owned by Иван Петров, Apt 2 (entrance 1) rented, plus a chairman."""
+    building = await create_building(session)
+    apt_14 = await create_apartment(session, building, "14", entrance=2, floor=4)
+    apt_2 = await create_apartment(session, building, "2", entrance=1, floor=1)
+    owner_14 = await create_user(
+        session,
+        building,
+        "Иван Петров",
+        email=f"ivan.petrov.{uuid.uuid4().hex[:8]}@example.com",
+        phone="+372 5555 1234",
+    )
+    tenant_2 = await create_user(session, building, "Мари Тамм", email=None, phone="+372 5111 2222")
+    chairman = await create_user(
+        session, building, "Олег Сидоров", role=BuildingRole.CHAIRMAN, phone="+372 5000 0001"
+    )
+    return DemoBuilding(
+        building=building,
+        apt_14=apt_14,
+        apt_2=apt_2,
+        owner_14=owner_14,
+        owner_14_membership=await create_membership(session, owner_14, apt_14),
+        tenant_2=tenant_2,
+        tenant_2_membership=await create_membership(
+            session, tenant_2, apt_2, relation=RelationType.TENANT
+        ),
+        chairman=chairman,
+    )

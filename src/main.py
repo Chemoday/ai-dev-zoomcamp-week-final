@@ -7,9 +7,10 @@ from fastapi import FastAPI
 
 from src.core.config import Settings, get_settings
 from src.core.database import engine
-from src.core.exceptions import DomainError, domain_error_handler
+from src.core.exceptions import register_exception_handlers
 from src.core.health import router as health_router
 from src.core.telemetry import configure_logging, setup_telemetry, shutdown_tracing
+from src.modules.property.router import router as property_router
 
 
 @asynccontextmanager
@@ -24,8 +25,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     configure_logging(level=settings.LOG_LEVEL, json_logs=settings.LOG_JSON)
 
     app = FastAPI(title=settings.APP_NAME, version=settings.APP_VERSION, lifespan=lifespan)
-    app.add_exception_handler(DomainError, domain_error_handler)
+    register_exception_handlers(app)
     app.include_router(health_router)
+    app.include_router(property_router)
 
     setup_telemetry(app, settings)
     return app

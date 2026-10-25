@@ -2,15 +2,73 @@
 
 All responses include `X-Trace-Id` header populated by OpenTelemetry middleware for observability correlation.
 
+## 0. Authentication & Error Format
+
+Every `/api/v1` endpoint requires an authenticated user:
+- `Authorization: Bearer <jwt>`: HS256 token with `sub = <user uuid>` and `exp`. It is accepted only when `JWT_SECRET_KEY` is configured.
+- `X-Demo-User-Id: <user uuid>`: accepted only when `DEMO_MODE_ENABLED=true` (local Docker, tests and the public demo). If both headers are sent, the Bearer token wins.
+
+All errors share one JSON shape, `{"error_code": "...", "message": "...", ...extra}`:
+
+| Status | `error_code` | When |
+| :--- | :--- | :--- |
+| 401 | `NOT_AUTHENTICATED` / `INVALID_TOKEN` / `UNKNOWN_USER` | No credentials, a bad or expired token, or an unknown or inactive user (sent with `WWW-Authenticate: Bearer`) |
+| 403 | `FORBIDDEN` | Authenticated, but the building role is not allowed |
+| 404 | `NOT_FOUND` / `MEMBERSHIP_NOT_FOUND` | Unknown route, or a resource that does not exist or is not yours |
+| 405 | `METHOD_NOT_ALLOWED` | The route exists but not for this HTTP method |
+| 422 | `VALIDATION_ERROR` | Request body or parameters are invalid; details are in `errors` |
+| 500 | `INTERNAL_SERVER_ERROR` | Unhandled error; the body carries `trace_id` |
+| other | `HTTP_<status>` | Any other framework-level HTTP error |
+
+### Author badge rules (`property.policies.format_author_badge`)
+| `privacy_display_mode` | With apartment | Without apartment context |
+| :--- | :--- | :--- |
+| `APARTMENT_ONLY` (default) | `Кв. 14` | Role label: `Председатель` / `Правление` / `Бухгалтер` / `Житель` |
+| `INITIALS` | `И. П. (Кв. 14)` | `И. П.` |
+| `FULL_NAME` | `Иван Петров (Кв. 14)` | `Иван Петров` |
+
+- **With an apartment**, the mode is that membership's mode. If the author is no longer a member of that apartment, `APARTMENT_ONLY` is used, because nobody consented to show the name there.
+- **Without an apartment context** (e.g. a board notice), the mode is the *most private* of the author's memberships, so consenting to be named in one apartment never reveals the name anywhere else. A user with no membership (e.g. an external accountant) always shows the role label.
+
+`role_badge`: `BOARD` for `CHAIRMAN` / `BOARD` building roles (this takes precedence, so neighbours know they are talking to the board), `ACCOUNTANT` for accountants, otherwise `OWNER` for owners and `RESIDENT` for tenants and residents.
+
 ---
 
 ## 1. Profile & Privacy Settings (`property`)
 
 ### `GET /api/v1/property/me`
 Returns the current user's role, apartments, permissions, and active privacy display mode.
+The payload never contains the raw `full_name`, `email` or `phone`, not even the user's own. Names appear only inside a `preview_badge`, and only to the degree the chosen display mode reveals them.
+
+**Response 200 OK:**
+```json
+{
+  "user_id": "uuid",
+  "building_id": "uuid",
+  "building_role": "USER",
+  "privacy_display_mode": "APARTMENT_ONLY",
+  "memberships": [
+    {
+      "membership_id": "uuid",
+      "apartment_id": "uuid",
+      "apartment_number": "14",
+      "entrance": 2,
+      "floor": 4,
+      "relation_type": "OWNER",
+      "can_submit_readings": true,
+      "can_view_bills": true,
+      "can_vote": true,
+      "privacy_display_mode": "APARTMENT_ONLY",
+      "preview_badge": { "display_label": "Кв. 14", "role_badge": "OWNER" }
+    }
+  ]
+}
+```
+Memberships are ordered by entrance, then apartment number in natural order (`2`, `10`, `14`, `14A`). The top-level `privacy_display_mode` is the most private mode across the memberships (`APARTMENT_ONLY` when there are none); it is the mode used when the user acts without an apartment context. Only memberships of apartments in the user's own building are returned.
 
 ### `PATCH /api/v1/property/memberships/{membership_id}/privacy`
 Updates how the user is displayed to neighbors in the micro-forum.
+Only the user of that membership may change it. A membership that belongs to someone else returns `404 MEMBERSHIP_NOT_FOUND`, the same as an unknown one, so membership IDs cannot be probed.
 **Request:**
 ```json
 {

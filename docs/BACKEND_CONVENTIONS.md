@@ -52,6 +52,8 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
 B. Transaction Rule
 Services use await self.session.flush() to obtain generated IDs or validate constraints within a transaction.
 The outer get_db_session dependency automatically commits on request success or rolls back on exception.
+ALWAYS inject the session through the `DbSession` alias from `src/core/database.py` (`Annotated[AsyncSession, Depends(get_db_session, scope="function")]`), never with a bare `Depends(get_db_session)`. FastAPI's default "request" scope ends a yield-dependency only AFTER the response is sent, so the commit would run after the client already received a 2xx: a failed commit would look successful, and an immediate follow-up request could read stale data. `scope="function"` commits (or rolls back) before the response. This is covered by `tests/core/test_database.py`.
+The engine is created by `build_engine()` with `hide_parameters=True`, so database error texts (which reach logs and spans) never contain bound values such as names or emails.
 C. SQLAlchemy 2.0 Typed Models Pattern
 NEVER use legacy Column(...). Always use Mapped[...] and mapped_column(...).
 code
@@ -146,7 +148,7 @@ Python
 # src/modules/communication/service.py
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from src.core.database import get_db_session
+from src.core.database import DbSession
 from src.core.event_bus import EventBus, get_event_bus
 from src.modules.property.service import PropertyService, get_property_service
 
@@ -165,7 +167,7 @@ class CommunicationService:
 
 
 def get_communication_service(
-    session: AsyncSession = Depends(get_db_session),
+    session: DbSession,  # from src.core.database: commits before the response is sent
     property_service: PropertyService = Depends(get_property_service),
     event_bus: EventBus = Depends(get_event_bus),
 ) -> CommunicationService:
@@ -173,7 +175,7 @@ def get_communication_service(
 5. Authentication & Demo Role Switching (src/core/security.py)
 To make both automated integration testing and UI role-switching effortless in Phase 1 while keeping the architecture production-ready:
 Support Authorization: Bearer <jwt_token> for standard login.
-When settings.DEMO_MODE_ENABLED == True (default in local Docker & tests), ALSO allow header X-Demo-User-Id: <uuid> to impersonate any seeded user (Chairman, Accountant, Owner Apt 14, Owner Apt 1, Tenant).
+When settings.DEMO_MODE_ENABLED == True (off by default in code; enabled explicitly in local Docker, the test suite and the public demo deployment), ALSO allow header X-Demo-User-Id: <uuid> to impersonate any seeded user (Chairman, Accountant, Owner Apt 14, Owner Apt 1, Tenant).
 Provide get_current_user(session, ...) returning a CurrentUserDTO containing:
 id: UUID, building_id: UUID, building_role: BuildingRole, privacy_display_mode: DisplayMode
 memberships: list[ApartmentMembershipDTO] (containing apartment_id, entrance, relation_type, can_submit_readings, can_view_bills, can_vote).

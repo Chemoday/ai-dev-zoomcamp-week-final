@@ -1,11 +1,10 @@
 """Liveness and readiness probes."""
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.database import get_db_session
+from src.core.database import DbSession
 from src.core.exceptions import DomainError
 
 router = APIRouter(tags=["health"])
@@ -18,7 +17,7 @@ async def health() -> dict[str, str]:
 
 
 @router.get("/health/ready")
-async def readiness(session: AsyncSession = Depends(get_db_session)) -> dict[str, str]:
+async def readiness(session: DbSession) -> dict[str, str]:
     """Readiness: the database is reachable."""
     try:
         await session.execute(text("SELECT 1"))
