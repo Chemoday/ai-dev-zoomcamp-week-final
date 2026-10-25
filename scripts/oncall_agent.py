@@ -314,7 +314,9 @@ def respond(incident: Incident, runner: Runner = run, base: str = "main") -> int
         _log("pytest_red_no_pull_request", summary=summary)
         return 1
 
-    branch = f"oncall/{incident.trace_id[:12]}"
+    # One branch per run, so a re-run of the same incident never collides with an earlier push.
+    run_id = os.environ.get("GITHUB_RUN_ID")
+    branch = f"oncall/{incident.trace_id[:12]}" + (f"-{run_id}" if run_id else "")
     title = (
         f"fix: on-call fix for {incident.error_type or 'a 5xx'} (trace {incident.trace_id[:12]})"
     )
