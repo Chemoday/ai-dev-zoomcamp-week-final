@@ -369,3 +369,34 @@ Published on the event bus **after** the request's transaction commits (never fo
 - `EmergencyAlertResolved`: `post_id`, `building_id`, `resolved_by_user_id`.
 
 Further moderation (authors deleting their own posts, hiding single comments, reports, a moderation log) is in the Phase 2 backlog, docs/ROADMAP_MVP.md.
+
+## 5. Demo mode (`demo`)
+
+### `GET /api/v1/demo/users`
+The users of the demo role switcher. **No authentication**, because the switcher needs the list before anyone acts as a user. Only while `DEMO_MODE_ENABLED=true`; otherwise `404 NOT_FOUND`, like an unknown route.
+```json
+[
+  { "user_id": "uuid", "label": "Owner Apt 14", "building_role": "USER", "apartment_number": "14", "relation_type": "OWNER" }
+]
+```
+- Send `user_id` as `X-Demo-User-Id` to act as that user.
+- Lists only the seeded demo users that exist and are active (an empty list on an instance without demo data). No names, emails or phones.
+- The ids are fixed (the same on every instance), but clients should read them from this endpoint.
+
+### Demo building "KÜ Sõpruse 12"
+Seeded at startup by `src/core/seed.py` when `SEED_DEMO_DATA=true` (local Docker and the public demo), and only into an **empty** database: an instance that already has a building is never touched, and a restart changes nothing.
+
+| Label | Role | Apartment | Privacy mode | Shown in the forum as |
+| :--- | :--- | :--- | :--- | :--- |
+| Chairman | `CHAIRMAN` | none | | `Chairman` (`BOARD`) |
+| Board member (Apt 15) | `BOARD` | 15, owner | `FULL_NAME` | `Peeter Saar (Apt. 15)` (`BOARD`) |
+| Accountant | `ACCOUNTANT` | none | | `Accountant` (`ACCOUNTANT`) |
+| Owner Apt 14 | `USER` | 14, owner | `APARTMENT_ONLY` | `Apt. 14` (`OWNER`) |
+| Owner Apt 1 | `USER` | 1, owner | `FULL_NAME` | `Kati Mets (Apt. 1)` (`OWNER`) |
+| Tenant Apt 2 | `USER` | 2, tenant | `INITIALS` | `M. T. (Apt. 2)` (`RESIDENT`) |
+
+- **Building:** entrance 1 has apartments 1, 2, 3; entrance 2 has 13, 14, 15. Apartments 3 and 13 have no app users. Every apartment has a cold and a hot water meter; the basement has a cold and a hot water master meter.
+- **History:** `2026-07`, `2026-08`, `2026-09` are `LOCKED` with readings for every meter. Readings of apartments without app users were entered by the chairman (`ADMIN_OVERRIDE`); Apt 13 in `2026-08` is `AUTO_ESTIMATED`. The master meters show a small loss over the apartments. Apt 14's cold water reading of `2026-09` was corrected once, so its history has two entries.
+- **October (`2026-10`, `OPEN_FOR_RESIDENTS`):** Apt 1 submitted both meters and Apt 2 its cold water. Apt 15's hot water is a confirmed anomaly (31 m³, a leaking tap). **Apt 14 has submitted nothing**, so the demo can start there; a normal value is its previous value plus about 4.8 m³ (cold) or 2.2 m³ (hot). A delta above 3 × its 3-month average (about 14.4 m³ cold, 6.5 m³ hot) or above the meter limit (25 / 15 m³) triggers the two popups.
+- **Communication:** an active `EMERGENCY` (hot water off) targeted at entrance 2, so Apt 14 sees the banner and Apt 2 does not; an `OFFICIAL_NOTICE` without comments; two forum topics with comments from several residents.
+- Seeding publishes no domain events, so no notifications are sent.

@@ -61,6 +61,14 @@ manual       ──► Deploy (prod, <sha>) ──► smoke test via the public 
 - The short-lived `GITHUB_TOKEN` used to pull the image goes over stdin into a throwaway Docker
   config and is never written to the server.
 
+## Demo data
+
+Both environments run with `DEMO_MODE_ENABLED=true` and `SEED_DEMO_DATA=true`
+(`deploy/docker-compose.deploy.yml`). At startup, after the migrations, `entrypoint.sh` runs
+`python -m src.core.seed`: it seeds the demo building into an **empty** database once and does
+nothing on every later start, or when the database already has a building. To start the demo
+over on dev, the dev database has to be emptied; prod is never reset by a deploy.
+
 ## Rollback
 
 - **Automatic.** `deploy.sh` starts the new release with `docker compose up --wait`. The backend
