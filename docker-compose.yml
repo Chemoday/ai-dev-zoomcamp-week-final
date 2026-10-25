@@ -54,6 +54,9 @@ services:
     image: grafana/otel-lgtm:0.8.1
     ports:
       - "${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      # User-impact alert rule + webhook to the on-call agent (ops/alert-rules.yaml).
+      - ./ops/alert-rules.yaml:/otel-lgtm/grafana/conf/provisioning/alerting/alert-rules.yaml:ro
 
 volumes:
   pgdata:

@@ -1,0 +1,77 @@
+# Grafana alerting provisioning (mounted into grafana/otel-lgtm by docker-compose.yml).
+#
+# User-impact alert: POST /api/v1/meters/readings answered 5xx. The rule reads the backend's
+# "http_request" log lines in Loki (one per request, PII-scrubbed JSON) and counts them per
+# trace_id, so every failing request becomes its own alert instance that carries its trace_id.
+# The contact point posts the alert to the on-call agent (scripts/oncall_agent.py serve), which
+# fetches the correlated error log by that trace_id and hands everything to the responder.
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: oncall-agent
+    receivers:
+      - uid: oncall-agent-webhook
+        type: webhook
+        disableResolveMessage: true
+        settings:
+          url: http://oncall-agent:8088/alerts
+          httpMethod: POST
+
+policies:
+  - orgId: 1
+    receiver: oncall-agent
+    group_by: ["alertname", "trace_id"]
+    group_wait: 5s
+    group_interval: 1m
+    repeat_interval: 12h
+
+groups:
+  - orgId: 1
+    name: user-impact
+    folder: Apartment platform
+    interval: 10s
+    rules:
+      - uid: meters-readings-5xx
+        title: Meter reading submission fails (5xx)
+        condition: C
+        data:
+          - refId: A
+            queryType: instant
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: loki
+            model:
+              refId: A
+              queryType: instant
+              expr: >-
+                sum by (trace_id) (count_over_time({service_name="apartment-platform-backend"}
+                | json | event="http_request" | method="POST"
+                | path="/api/v1/meters/readings" | status_code >= 500 [5m]))
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+        for: 0s
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: page
+          endpoint: POST /api/v1/meters/readings
+        annotations:
+          summary: "POST /api/v1/meters/readings returned 5xx (trace_id {{ $labels.trace_id }})"
+          runbook: docs/OBSERVABILITY.md
