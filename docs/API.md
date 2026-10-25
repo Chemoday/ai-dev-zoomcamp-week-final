@@ -16,10 +16,10 @@ All errors share one JSON shape, `{"error_code": "...", "message": "...", ...ext
 | :--- | :--- | :--- |
 | 401 | `NOT_AUTHENTICATED` / `INVALID_TOKEN` / `UNKNOWN_USER` | No credentials, a bad or expired token, or an unknown or inactive user (sent with `WWW-Authenticate: Bearer`) |
 | 403 | `FORBIDDEN` | Authenticated, but the building role or a membership flag (e.g. `can_submit_readings`) does not allow it |
-| 404 | `NOT_FOUND`, `MEMBERSHIP_NOT_FOUND`, `METER_NOT_FOUND`, `PERIOD_NOT_FOUND`, `READING_NOT_FOUND`, `EXPORTER_NOT_ENABLED` | Unknown route, a resource that does not exist or is not visible to you, or a disabled plugin |
-| 409 | `ANOMALY_CONFIRMATION_STEP_1/2`, `PERIOD_CLOSED`, `PERIOD_LOCKED`, `PERIOD_NOT_IN_REVIEW`, `INVALID_PERIOD_TRANSITION`, `READING_SET_BY_BOARD`, `LATER_READING_EXISTS` | The request is valid, but conflicts with the current state |
+| 404 | `NOT_FOUND`, `MEMBERSHIP_NOT_FOUND`, `METER_NOT_FOUND`, `PERIOD_NOT_FOUND`, `READING_NOT_FOUND`, `POST_NOT_FOUND`, `EXPORTER_NOT_ENABLED` | Unknown route, a resource that does not exist or is not visible to you, or a disabled plugin |
+| 409 | `ANOMALY_CONFIRMATION_STEP_1/2`, `PERIOD_CLOSED`, `PERIOD_LOCKED`, `PERIOD_NOT_IN_REVIEW`, `INVALID_PERIOD_TRANSITION`, `READING_SET_BY_BOARD`, `LATER_READING_EXISTS`, `COMMENTS_DISABLED` | The request is valid, but conflicts with the current state |
 | 405 | `METHOD_NOT_ALLOWED` | The route exists but not for this HTTP method |
-| 422 | `VALIDATION_ERROR`, `READING_BELOW_PREVIOUS`, `REASON_REQUIRED`, `ESTIMATE_OUT_OF_RANGE` | Invalid input; for `VALIDATION_ERROR` the details are in `errors`. Free-text fields reject control characters, e.g. NUL |
+| 422 | `VALIDATION_ERROR`, `READING_BELOW_PREVIOUS`, `REASON_REQUIRED`, `ESTIMATE_OUT_OF_RANGE`, `INVALID_TARGET`, `INVALID_AUTHOR_APARTMENT` | Invalid input; for `VALIDATION_ERROR` the details are in `errors`. Free-text fields reject control characters, e.g. NUL |
 | 500 | `INTERNAL_SERVER_ERROR` | Unhandled error; the body carries `trace_id` |
 | other | `HTTP_<status>` | Any other framework-level HTTP error |
 
@@ -171,7 +171,7 @@ JSON
   "message": "Please double-check the digits; this goes directly to billing!"
 }
 200 OK (Normal delta OR confirmation_level >= 2):
-Saves reading, appends row to meters_reading_logs, emits MeterReadingSubmitted event.
+Saves reading, appends row to meters_reading_logs, emits MeterReadingSubmitted once the request has committed.
 code
 JSON
 {
@@ -249,26 +249,109 @@ Executes plugins/common/csv_export and streams a CSV file of the period's readin
 - Master meters have an empty apartment, and `MASTER` in `apartment_number`.
 - Text cells that would start a spreadsheet formula are prefixed with `'` (CSV-injection guard). That covers `= + - @`, also after leading whitespace or line breaks and in full-width forms (NFKC), and a leading tab, CR or LF. No names.
 - If the CSV plugin is not enabled (`ENABLED_PLUGINS`), the response is `404 EXPORTER_NOT_ENABLED`.
-4. Emergency Alerts & Community Forum (communication)
-GET /api/v1/communication/emergencies/active
-Returns active EMERGENCY posts matching the current user's building, entrance, or apartment ID.
-GET /api/v1/communication/posts?post_type=FORUM_TOPIC
-Returns feed of posts. Author details are strictly masked by backend privacy policy:
-code
-JSON
-[
-  {
-    "id": "uuid",
-    "post_type": "FORUM_TOPIC",
-    "category": "GENERAL",
-    "title": "Let's install a bike rack in the yard",
-    "body": "Neighbours, what do you think?",
-    "author_badge": {
-      "display_label": "Apt. 14",
-      "role_badge": "OWNER"
-    },
-    "comments_count": 3,
-    "created_at": "2026-10-25T10:00:00Z"
-  }
-]
-POST /api/v1/communication/posts
+## 4. Emergency Alerts & Community Forum (`communication`)
+
+### Who sees which post
+- Every post belongs to one building. Users of another building never see it: `404 POST_NOT_FOUND`.
+- **Targeting** (`target_scope`): `ALL_BUILDING` reaches everyone in the building; `ENTRANCE` reaches users with an apartment in `target_entrance`; `APARTMENT_LIST` reaches members of the apartments in `target_apartment_ids`. A user with several apartments sees the posts targeted at any of them.
+- `CHAIRMAN` and `BOARD` see every post of the building, including alerts targeted elsewhere (they publish and resolve them). `ACCOUNTANT` and `USER` see only what targets them, so an accountant without an apartment sees only `ALL_BUILDING` posts.
+- A post that exists but does not target you returns the same `404 POST_NOT_FOUND` as an unknown one, so ids cannot be probed.
+- Forum topics are always `ALL_BUILDING`. Targeting is meant for `EMERGENCY` and `OFFICIAL_NOTICE`.
+
+### Who may publish
+| `post_type` | Who | Badge context when `author_apartment_id` is omitted |
+| :--- | :--- | :--- |
+| `EMERGENCY` | `CHAIRMAN`, `BOARD` | none: the board speaks as the board (`Chairman` / `Board`) |
+| `OFFICIAL_NOTICE` | `CHAIRMAN`, `BOARD` | none |
+| `FORUM_TOPIC` | everyone in the building | the author's first apartment (entrance, then natural number order) |
+
+Anyone else gets `403 FORBIDDEN`. Comments use the commenter's first apartment unless `author_apartment_id` says otherwise.
+
+### Author badges
+- Authors are resolved on every read through `PropertyService.get_masked_author_badges` (one batched call per page), following the badge rules in section 0. So a later change of the privacy mode also changes the badge of old posts.
+- `author_apartment_id` (optional on posts and comments) must be one of the caller's own apartments, else `422 INVALID_AUTHOR_APARTMENT`. It only chooses which membership's privacy mode applies.
+- Payloads never contain an author's user id, name, email or phone. `is_mine` tells the caller which posts and comments are their own. The frontend renders a badge as `"<display_label> • <role_badge>"`, e.g. `"Apt. 14 • OWNER"`.
+
+### Free text
+`title` (1..255 characters), post `body` (1..10000) and comment `body` (1..4000) use the safe-text types: they are trimmed, must not be blank, and reject control characters such as NUL (`422 VALIDATION_ERROR`). Tab, LF and CR are allowed.
+
+### Post object (`PostView`)
+```json
+{
+  "id": "uuid",
+  "post_type": "FORUM_TOPIC",
+  "category": "GENERAL",
+  "title": "Let's install a bike rack in the yard",
+  "body": "Neighbours, what do you think?",
+  "author_badge": { "display_label": "Apt. 14", "role_badge": "OWNER" },
+  "is_mine": false,
+  "target_scope": "ALL_BUILDING",
+  "target_entrance": null,
+  "target_apartment_ids": null,
+  "is_active": true,
+  "comments_enabled": true,
+  "comments_count": 3,
+  "created_at": "2026-10-25T10:00:00Z"
+}
+```
+- `post_type`: `EMERGENCY` | `OFFICIAL_NOTICE` | `FORUM_TOPIC`. `category`: `GENERAL` | `WATER_SHUTOFF` | `MAINTENANCE` | `MARKETPLACE`.
+- `is_active` is `false` only for a resolved emergency; every other post is always active.
+
+### `GET /api/v1/communication/emergencies/active`
+Active `EMERGENCY` posts that target the caller (see "Who sees which post"), newest first. Each item is a post object plus `acknowledged_at`: when the caller acknowledged it, or `null`. The UI shows the sticky banner for items with `acknowledged_at: null`.
+
+### `POST /api/v1/communication/emergencies/{post_id}/acknowledge`
+Records that the caller saw the alert ("Acknowledge" hides the banner for that user only).
+- Idempotent: acknowledging again keeps and returns the first time. Works on resolved alerts too.
+- Only for an emergency visible to the caller; anything else is `404 POST_NOT_FOUND`.
+- Response: `{"post_id": "uuid", "acknowledged_at": "2026-10-25T10:05:00Z"}`.
+
+### `POST /api/v1/communication/emergencies/{post_id}/resolve`
+(Requires role: `CHAIRMAN` or `BOARD`)
+Ends an emergency: `is_active` becomes `false`, so the banner disappears for everyone. The post stays readable in the feed.
+- Idempotent: resolving again returns the same response. Only the call that actually ends it emits `EmergencyAlertResolved`.
+- Not an emergency of the caller's building: `404 POST_NOT_FOUND`.
+- Response: `{"post_id": "uuid", "is_active": false}`.
+
+### `GET /api/v1/communication/posts?post_type=FORUM_TOPIC&category=GENERAL&limit=50&offset=0`
+The feed: posts visible to the caller, newest first (`created_at`, then `id`), as a list of post objects.
+- `post_type` and `category` are optional filters; without `post_type` the feed contains every type, including resolved emergencies.
+- `limit` 1..100 (default 50), `offset` 0..100000 (default 0).
+
+### `POST /api/v1/communication/posts`
+Creates a post. Response `201 Created` with the post object.
+**Request:**
+```json
+{
+  "post_type": "EMERGENCY",
+  "category": "WATER_SHUTOFF",
+  "title": "Cold water off until 18:00",
+  "body": "A riser in entrance 2 is being replaced.",
+  "target_scope": "ENTRANCE",
+  "target_entrance": 2,
+  "target_apartment_ids": null,
+  "comments_enabled": true,
+  "author_apartment_id": null
+}
+```
+- Defaults: `category` `GENERAL`, `target_scope` `ALL_BUILDING`, `comments_enabled` `true`. Unknown fields are rejected.
+- **Target rules** (`422 INVALID_TARGET`, with a `message` that names the problem):
+  - `ALL_BUILDING` takes neither `target_entrance` nor `target_apartment_ids`;
+  - `ENTRANCE` needs `target_entrance`, and the building must have an apartment in that entrance;
+  - `APARTMENT_LIST` needs 1..500 apartment ids (duplicates are dropped), all in the caller's building; unknown ones are listed in `unknown_apartment_ids`;
+  - a `FORUM_TOPIC` must be `ALL_BUILDING`.
+- Creating an `EMERGENCY` emits `EmergencyAlertPublished` after the request commits.
+
+### `GET /api/v1/communication/posts/{post_id}`
+The post object plus `comments`, oldest first: `[{"id", "post_id", "body", "author_badge", "is_mine", "created_at"}]`. A post not visible to the caller is `404 POST_NOT_FOUND`.
+
+### `POST /api/v1/communication/posts/{post_id}/comments`
+Request: `{"body": "Good idea!", "author_apartment_id": null}`. Response `201 Created` with the comment object.
+- The post must be visible to the caller (`404 POST_NOT_FOUND`) and have `comments_enabled` (`409 COMMENTS_DISABLED`).
+
+### Domain events
+Published on the event bus **after** the request's transaction commits (never for a rolled-back change). Payloads carry ids, codes and the target only, no titles, bodies or names; a notifier reads the text through `CommunicationService`.
+- `EmergencyAlertPublished`: `post_id`, `building_id`, `category`, `target_scope`, `target_entrance`, `target_apartment_ids`, `published_by_user_id`.
+- `EmergencyAlertResolved`: `post_id`, `building_id`, `resolved_by_user_id`.
+
+Moderation (deleting or hiding forum posts) is not part of the MVP.

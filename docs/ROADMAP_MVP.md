@@ -33,6 +33,7 @@ EMERGENCY: Sticky red banner in UI + immediate EventBus trigger. Supports geogra
 OFFICIAL_NOTICE: Board announcements with optional comments.
 FORUM_TOPIC: Resident micro-forum categorized by topics.
 Author attribution is resolved dynamically via PropertyService.get_masked_author_badge(user_id, apartment_id) respecting the user's privacy_display_mode.
+Targeting: residents see a targeted post only if one of their apartments is in the target (its entrance for ENTRANCE, the apartment itself for APARTMENT_LIST); the chairman and the board see all posts of the building. "Acknowledge" hides the banner for that user only; the board resolves an emergency to end it for everyone. Full rules: docs/API.md, section 4.
 
 
 

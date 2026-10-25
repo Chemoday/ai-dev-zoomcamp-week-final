@@ -145,16 +145,16 @@ All tables use `UUID` primary keys (`uuid4`), UTC timestamps (`TIMESTAMPTZ`), an
 | :--- | :--- | :--- | :--- |
 | `id` | `UUID` | `PK` | Post ID |
 | `building_id` | `UUID` | `FK(property_buildings.id), INDEX` | Building ID |
-| `author_user_id` | `UUID` | `FK(core_users.id)` | Internal author ID (masked before API output) |
-| `author_apartment_id`| `UUID` | `FK(property_apartments.id), NULLABLE`| Context apartment for privacy badge resolution |
+| `author_user_id` | `UUID` | `FK(core_users.id), NOT NULL` | Internal author ID (masked before API output, never returned) |
+| `author_apartment_id`| `UUID` | `NULLABLE` | Context apartment for privacy badge resolution (`NULL` = no apartment context, e.g. a board post) |
 | `post_type` | `VARCHAR(32)` | `NOT NULL, INDEX` | Enum: `EMERGENCY`, `OFFICIAL_NOTICE`, `FORUM_TOPIC` |
-| `category` | `VARCHAR(50)` | `NOT NULL, DEFAULT 'GENERAL'` | `'WATER_SHUTOFF'`, `'MAINTENANCE'`, `'GENERAL'`, `'MARKETPLACE'` |
+| `category` | `VARCHAR(50)` | `NOT NULL, DEFAULT 'GENERAL'` | Enum: `GENERAL`, `WATER_SHUTOFF`, `MAINTENANCE`, `MARKETPLACE` |
 | `title` | `VARCHAR(255)` | `NOT NULL` | Headline |
-| `body` | `TEXT` | `NOT NULL` | Content |
+| `body` | `TEXT` | `NOT NULL` | Content (the API caps it at 10000 characters) |
 | `target_scope` | `VARCHAR(32)` | `NOT NULL, DEFAULT 'ALL_BUILDING'`| Enum: `ALL_BUILDING`, `ENTRANCE`, `APARTMENT_LIST` |
 | `target_entrance` | `INTEGER` | `NULLABLE` | Populated if `target_scope == 'ENTRANCE'` |
-| `target_apartment_ids`| `JSONB` | `NULLABLE` | List of apartment UUIDs if `target_scope == 'APARTMENT_LIST'` |
-| `is_active` | `BOOLEAN` | `NOT NULL, DEFAULT TRUE` | For `EMERGENCY`: `TRUE` while emergency banner is active |
+| `target_apartment_ids`| `JSONB` | `NULLABLE` | Non-empty array of apartment UUID strings if `target_scope == 'APARTMENT_LIST'` (SQL `NULL` otherwise, never JSON `null`) |
+| `is_active` | `BOOLEAN` | `NOT NULL, DEFAULT TRUE` | For `EMERGENCY`: `TRUE` while the banner is active, `FALSE` once resolved. Always `TRUE` for other types |
 | `comments_enabled` | `BOOLEAN` | `NOT NULL, DEFAULT TRUE` | Board can disable comments on official notices |
 | `created_at` | `TIMESTAMPTZ` | `NOT NULL, INDEX` | Creation timestamp |
 
@@ -162,8 +162,28 @@ All tables use `UUID` primary keys (`uuid4`), UTC timestamps (`TIMESTAMPTZ`), an
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
 | `id` | `UUID` | `PK` | Comment ID |
-| `post_id` | `UUID` | `FK(comm_posts.id), INDEX` | Parent post |
-| `author_user_id` | `UUID` | `FK(core_users.id)` | Internal user ID |
-| `author_apartment_id`| `UUID` | `FK(property_apartments.id), NULLABLE`| Context apartment |
-| `body` | `TEXT` | `NOT NULL` | Comment text |
+| `post_id` | `UUID` | `NOT NULL, INDEX` | Parent post (composite FK with `building_id`, see below) |
+| `building_id` | `UUID` | `FK(property_buildings.id), NOT NULL` | The post's building; ties the comment and its author apartment to it |
+| `author_user_id` | `UUID` | `FK(core_users.id), NOT NULL` | Internal user ID (never returned) |
+| `author_apartment_id`| `UUID` | `NULLABLE` | Context apartment |
+| `body` | `TEXT` | `NOT NULL` | Comment text (the API caps it at 4000 characters) |
 | `created_at` | `TIMESTAMPTZ` | `NOT NULL` | Timestamp |
+
+### Table: `comm_emergency_acks`
+*(Who pressed "Acknowledge" on an emergency banner; the banner stays hidden for that user)*
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PK` | Acknowledgement ID |
+| `post_id` | `UUID` | `FK(comm_posts.id), NOT NULL` | The emergency post |
+| `user_id` | `UUID` | `FK(core_users.id), NOT NULL, INDEX` | The user who acknowledged |
+| `acknowledged_at` | `TIMESTAMPTZ` | `NOT NULL` | First acknowledgement (repeats keep it) |
+| `UNIQUE` | `(post_id, user_id)` | | One acknowledgement per user and post |
+
+**Integrity constraints of `comm_*` tables** (enforced by PostgreSQL, covered by `tests/core/test_migrations.py`):
+- Every enum column (`post_type`, `category`, `target_scope`) has a named `CHECK (… IN (…))`.
+- `ck_comm_posts_target_consistent`: `ALL_BUILDING` has neither entrance nor apartment list; `ENTRANCE` has an entrance and no list; `APARTMENT_LIST` has a non-empty JSON array and no entrance. `target_entrance > 0`.
+- `ck_comm_posts_forum_whole_building`: a `FORUM_TOPIC` is always `ALL_BUILDING`.
+- `ck_comm_posts_only_emergency_inactive`: only an `EMERGENCY` can have `is_active = FALSE`.
+- Titles and bodies are never blank (`btrim(...) <> ''`).
+- **One building per row chain.** `comm_posts` is `UNIQUE (id, building_id)`. Composite foreign keys guarantee that a comment is in its post's building, `(post_id, building_id)` → `comm_posts`, and that the author's context apartment of a post or comment is in that building, `(author_apartment_id, building_id)` → `property_apartments`. A `NULL` apartment is not checked.
+- Not enforced by the database: that a targeted apartment id exists (JSONB has no foreign keys) and that the author belongs to the building. The service checks both on insert.
