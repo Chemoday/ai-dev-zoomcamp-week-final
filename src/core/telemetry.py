@@ -1,7 +1,9 @@
-"""OpenTelemetry tracing, structured JSON logging with trace correlation, and PII scrubbing.
+"""OpenTelemetry traces, metrics and logs, structured JSON logging with trace correlation,
+and PII scrubbing.
 
-Every log line and every exported span passes through the PII scrubber, so names, emails,
-phones, national ID codes, credentials and tokens never leave the process in telemetry.
+Every log line, every exported span and every exported log record passes through the PII
+scrubber, so names, emails, phones, national ID codes, credentials and tokens never leave the
+process in telemetry. Metrics carry only route templates, methods and status codes.
 """
 
 import json
@@ -14,8 +16,12 @@ from typing import Any, TextIO
 
 import structlog
 from fastapi import FastAPI
-from opentelemetry import trace
+from opentelemetry import metrics, trace
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler, LogRecordProcessor
+from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import MetricReader, PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import SERVICE_NAME, SERVICE_VERSION, Resource
 from opentelemetry.sdk.trace import Event, ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter, SpanExportResult
@@ -56,6 +62,8 @@ _PHONE_RE = re.compile(r"\+\d{1,3}[\s-]?\d[\d\s-]{5,}\d")
 _EE_ID_CODE_RE = re.compile(r"\b[1-6]\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{4}\b")
 
 _tracer_provider: TracerProvider | None = None
+_meter_provider: MeterProvider | None = None
+_log_export_handler: logging.Handler | None = None
 
 
 # --- PII scrubbing -----------------------------------------------------------------------------
@@ -147,35 +155,116 @@ def current_trace_id() -> str | None:
     return format(span_context.trace_id, "032x")
 
 
-def configure_tracing(settings: Settings) -> TracerProvider:
-    """Create and register the global tracer provider once per process."""
-    global _tracer_provider
-    if _tracer_provider is not None:
-        return _tracer_provider
-
-    resource = Resource.create(
+def _resource(settings: Settings) -> Resource:
+    return Resource.create(
         {
             SERVICE_NAME: settings.OTEL_SERVICE_NAME,
             SERVICE_VERSION: settings.APP_VERSION,
             "deployment.environment": settings.ENVIRONMENT,
         }
     )
-    provider = TracerProvider(resource=resource)
+
+
+def _otlp_endpoint(settings: Settings, signal: str) -> str:
+    return f"{settings.OTEL_EXPORTER_OTLP_ENDPOINT.rstrip('/')}/v1/{signal}"
+
+
+def configure_tracing(settings: Settings) -> TracerProvider:
+    """Create and register the global tracer provider once per process."""
+    global _tracer_provider
+    if _tracer_provider is not None:
+        return _tracer_provider
+
+    provider = TracerProvider(resource=_resource(settings))
     if settings.OTEL_EXPORTER_OTLP_ENDPOINT:
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 
-        endpoint = f"{settings.OTEL_EXPORTER_OTLP_ENDPOINT.rstrip('/')}/v1/traces"
-        provider.add_span_processor(
-            BatchSpanProcessor(PIIScrubbingSpanExporter(OTLPSpanExporter(endpoint=endpoint)))
-        )
+        exporter = OTLPSpanExporter(endpoint=_otlp_endpoint(settings, "traces"))
+        provider.add_span_processor(BatchSpanProcessor(PIIScrubbingSpanExporter(exporter)))
     trace.set_tracer_provider(provider)
     _tracer_provider = provider
     return provider
 
 
+def configure_metrics(
+    settings: Settings, extra_readers: Sequence[MetricReader] = ()
+) -> MeterProvider:
+    """Create and register the global meter provider once per process (tests add a reader).
+
+    The FastAPI instrumentation records http.server.* metrics with the route template, method
+    and status code only: no ids, query strings or user data.
+    """
+    global _meter_provider
+    if _meter_provider is not None:
+        return _meter_provider
+
+    readers = list(extra_readers)
+    if settings.OTEL_EXPORTER_OTLP_ENDPOINT:
+        from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+
+        exporter = OTLPMetricExporter(endpoint=_otlp_endpoint(settings, "metrics"))
+        readers.append(PeriodicExportingMetricReader(exporter, export_interval_millis=10_000))
+    provider = MeterProvider(resource=_resource(settings), metric_readers=readers)
+    metrics.set_meter_provider(provider)
+    _meter_provider = provider
+    return provider
+
+
+class PIIScrubbingLogHandler(LoggingHandler):
+    """Exports log records over OTLP, with the trace context of the current span.
+
+    The body is the already scrubbed JSON line (the same formatter as stdout). Record attributes
+    are reduced to the logger name and code location: the stock handler would also export the
+    raw exception text and any extra fields, unscrubbed.
+    """
+
+    @staticmethod
+    def _get_attributes(record: logging.LogRecord) -> dict[str, Any]:
+        return {
+            "logger.name": record.name,
+            "code.file.path": record.pathname,
+            "code.function.name": record.funcName,
+            "code.line.number": record.lineno,
+        }
+
+
+def build_log_export_handler(
+    settings: Settings, processor: LogRecordProcessor | None = None
+) -> PIIScrubbingLogHandler | None:
+    """An OTLP log handler (None without an endpoint, unless a processor is given)."""
+    if processor is None:
+        if not settings.OTEL_EXPORTER_OTLP_ENDPOINT:
+            return None
+        from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
+
+        processor = BatchLogRecordProcessor(
+            OTLPLogExporter(endpoint=_otlp_endpoint(settings, "logs"))
+        )
+    provider = LoggerProvider(resource=_resource(settings))
+    provider.add_log_record_processor(processor)
+    handler = PIIScrubbingLogHandler(logger_provider=provider)
+    handler.setFormatter(_formatter(json_logs=True))
+    return handler
+
+
+def configure_log_export(settings: Settings) -> None:
+    """Attach the OTLP log handler to the root logger once per process."""
+    global _log_export_handler
+    if _log_export_handler is None:
+        _log_export_handler = build_log_export_handler(settings)
+    root_logger = logging.getLogger()
+    if _log_export_handler is not None and _log_export_handler not in root_logger.handlers:
+        root_logger.addHandler(_log_export_handler)
+
+
 def shutdown_tracing() -> None:
+    """Flush every signal on shutdown (traces, metrics, logs)."""
     if _tracer_provider is not None:
         _tracer_provider.force_flush()
+    if _meter_provider is not None:
+        _meter_provider.force_flush()
+    if _log_export_handler is not None:
+        _log_export_handler.flush()
 
 
 # --- Structured logging ------------------------------------------------------------------------
@@ -197,33 +286,22 @@ def scrub_pii_processor(
     return scrub_pii(event_dict)
 
 
-def configure_logging(
-    level: str = "INFO", json_logs: bool = True, stream: TextIO | None = None
-) -> None:
-    """Route structlog and stdlib logging (uvicorn, sqlalchemy) through one JSON pipeline."""
-    shared_processors: list[structlog.typing.Processor] = [
-        structlog.contextvars.merge_contextvars,
-        structlog.stdlib.add_log_level,
-        structlog.stdlib.add_logger_name,
-        structlog.processors.TimeStamper(fmt="iso", utc=True, key="timestamp"),
-        add_otel_trace_context,
-    ]
+_SHARED_PROCESSORS: list[structlog.typing.Processor] = [
+    structlog.contextvars.merge_contextvars,
+    structlog.stdlib.add_log_level,
+    structlog.stdlib.add_logger_name,
+    structlog.processors.TimeStamper(fmt="iso", utc=True, key="timestamp"),
+    add_otel_trace_context,
+]
+
+
+def _formatter(json_logs: bool) -> logging.Formatter:
+    """The one log pipeline: trace context, formatted tracebacks, PII scrubbing, rendering."""
     renderer: structlog.typing.Processor = (
         structlog.processors.JSONRenderer() if json_logs else structlog.dev.ConsoleRenderer()
     )
-
-    structlog.configure(
-        processors=[
-            *shared_processors,
-            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
-        ],
-        logger_factory=structlog.stdlib.LoggerFactory(),
-        wrapper_class=structlog.stdlib.BoundLogger,
-        cache_logger_on_first_use=True,
-    )
-
-    formatter = structlog.stdlib.ProcessorFormatter(
-        foreign_pre_chain=shared_processors,
+    return structlog.stdlib.ProcessorFormatter(
+        foreign_pre_chain=_SHARED_PROCESSORS,
         processors=[
             structlog.stdlib.ProcessorFormatter.remove_processors_meta,
             structlog.processors.format_exc_info,
@@ -231,8 +309,24 @@ def configure_logging(
             renderer,
         ],
     )
+
+
+def configure_logging(
+    level: str = "INFO", json_logs: bool = True, stream: TextIO | None = None
+) -> None:
+    """Route structlog and stdlib logging (uvicorn, sqlalchemy) through one JSON pipeline."""
+    structlog.configure(
+        processors=[
+            *_SHARED_PROCESSORS,
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+        ],
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        wrapper_class=structlog.stdlib.BoundLogger,
+        cache_logger_on_first_use=True,
+    )
+
     handler = logging.StreamHandler(stream or sys.stdout)
-    handler.setFormatter(formatter)
+    handler.setFormatter(_formatter(json_logs))
 
     root_logger = logging.getLogger()
     root_logger.handlers = [handler]
@@ -333,8 +427,13 @@ class RequestTelemetryMiddleware:
 
 
 def setup_telemetry(app: FastAPI, settings: Settings) -> None:
-    """Wire tracing into the app. The OTel middleware must wrap RequestTelemetryMiddleware so
-    the server span is already active when the trace id is read, hence the call order."""
-    provider = configure_tracing(settings)
+    """Wire traces, metrics and log export into the app. The OTel middleware must wrap
+    RequestTelemetryMiddleware so the server span is already active when the trace id is read,
+    hence the call order. Exporting is on only when OTEL_EXPORTER_OTLP_ENDPOINT is set."""
+    tracer_provider = configure_tracing(settings)
+    meter_provider = configure_metrics(settings)
+    configure_log_export(settings)
     app.add_middleware(RequestTelemetryMiddleware)
-    FastAPIInstrumentor.instrument_app(app, tracer_provider=provider)
+    FastAPIInstrumentor.instrument_app(
+        app, tracer_provider=tracer_provider, meter_provider=meter_provider
+    )

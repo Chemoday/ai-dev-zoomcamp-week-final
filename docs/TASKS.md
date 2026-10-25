@@ -130,10 +130,18 @@ Each task is atomic, self-contained, and designed to be executed sequentially by
   - Configure OpenTelemetry export (Grafana Cloud or local Jaeger/Loki/Prometheus in `docker-compose.yml`).
   - Define alert rule on `POST /api/v1/meters/readings` error rate (`HTTP 5xx > 0` or latency spike).
   - Build `scripts/oncall_agent.py`: receives alert webhook payload with `trace_id`, queries correlated error log, identifies offending file/line, runs LLM fix + `pytest`, and opens a GitHub Pull Request.
+- **Subtasks (work strictly in order; each ends with a commit on `feat/task-8-observability` and a ticked box here, so a new session resumes at the first open box):**
+  - [x] **8.1 Plan.** This list; draft PR "Closes #9" opened.
+  - [x] **8.2 App exports metrics and logs over OTLP.** `src/core/telemetry.py`: a `MeterProvider` (FastAPI HTTP server metrics) and a `LoggerProvider` bridged from stdlib logging, both enabled by `OTEL_EXPORTER_OTLP_ENDPOINT`; exported log records pass the same PII scrubber as spans and JSON logs. Test: exported spans, logs and metric attributes contain no names, emails, phones or tokens.
+  - [x] **8.3 Local stack.** `docker-compose.yml`: `otel-collector` (contrib image, `ops/otel-collector-config.yaml`: OTLP in, redaction processor as a second PII guard, OTLP out) and `grafana/otel-lgtm` (Grafana + Tempo + Loki + Prometheus, UI on `localhost:3000`). Backend sends to the collector. Manual check: one `POST /api/v1/meters/readings` is visible as a trace, metrics and logs with the same `trace_id`. The VPS deploy stays unchanged (shared host, low memory).
+  - [x] **8.4 Alert rule.** `ops/alert-rules.yaml` (Grafana alerting provisioning): a Loki rule on 5xx log lines of `POST /api/v1/meters/readings`, grouped by `trace_id`, so the firing alert carries the `trace_id` and the error log; contact point = webhook to the on-call receiver. Add a fault switch for the demo only if a real failing input is not available.
+  - [x] **8.5 On-call agent.** `scripts/oncall_agent.py`: `serve` (webhook receiver; forwards the alert as a GitHub `repository_dispatch` when `GITHUB_TOKEN` is set) and `respond` (reads the payload, extracts `trace_id`, error type and the offending file/line from the traceback, asks Claude for a regression test and a patch, runs `pytest`, opens a PR referencing the alert). Unit tests for payload parsing and traceback extraction, no network.
+  - [x] **8.6 Workflow.** `.github/workflows/oncall-responder.yml`: `repository_dispatch` (`oncall-alert`) and `workflow_dispatch` with a sample payload; runs `respond` with the `ANTHROPIC_API_KEY` secret (the project owner adds it). The PR must reference the alert and pass CI.
+  - [ ] **8.7 End-to-end demo and docs.** `docs/OBSERVABILITY.md`: how to open the dashboards, follow one `trace_id` across trace, logs and metrics, trigger the alert, and what the agent did (link to its PR). Tick the acceptance criteria below, mark the PR ready for review.
 - **Acceptance Criteria & Tests:**
-  - [ ] `docker compose up` also starts the collector and the trace/log/metric backends; one `POST /api/v1/meters/readings` request is viewable in the UI as a trace, metrics and logs sharing the same `trace_id`.
-  - [ ] Exported telemetry contains no PII or credentials (covered by a test).
-  - [ ] The alert fires when `POST /api/v1/meters/readings` returns 5xx and delivers a webhook payload containing the `trace_id`.
+  - [x] `docker compose up` also starts the collector and the trace/log/metric backends; one `POST /api/v1/meters/readings` request is viewable in the UI as a trace, metrics and logs sharing the same `trace_id`.
+  - [x] Exported telemetry contains no PII or credentials (covered by a test).
+  - [x] The alert fires when `POST /api/v1/meters/readings` returns 5xx and delivers a webhook payload containing the `trace_id`.
   - [ ] The on-call agent, triggered by that webhook, finds the correlated error log, adds a regression test, gets `pytest` green and opens a pull request that references the alert.
 
 ---

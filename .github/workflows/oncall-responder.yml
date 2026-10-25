@@ -1,0 +1,111 @@
+# On-call responder (Task 8): turns a user-impact alert into a fix pull request.
+# Triggered by `scripts/oncall_agent.py serve` (repository_dispatch "oncall-alert") or by hand
+# with an incident JSON. Needs one Claude credential as a secret (added by the project owner):
+# ANTHROPIC_API_KEY (API key) or CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`).
+# PRs opened with the default GITHUB_TOKEN do not trigger CI; set ONCALL_PR_TOKEN (a PAT) so the
+# fix PR runs CI like any other.
+#
+# DEMO ONLY (course demonstration): the responder only ever works on a `demo/*` branch. It checks
+# that branch out, pushes its fix to a new `oncall/*` branch and opens the PR into the demo branch.
+# `main` and every other branch are refused, so it can never change the main code. To remove the
+# feature, delete this file.
+name: On-call responder
+
+on:
+  repository_dispatch:
+    types: [oncall-alert]
+  workflow_dispatch:
+    inputs:
+      incident:
+        description: Incident JSON as written by `oncall_agent.py serve` (incidents/<trace_id>.json)
+        required: true
+      base:
+        description: Demo branch to fix and target (must start with demo/)
+        required: false
+        default: demo/oncall-incident
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: oncall-${{ github.event.client_payload.incident.trace_id || github.run_id }}
+
+jobs:
+  respond:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: app
+          POSTGRES_DB: app
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U app -d app"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgresql+asyncpg://app:app@localhost:5432/app
+      BASE_BRANCH: ${{ github.event.inputs.base || github.event.client_payload.base || 'demo/oncall-incident' }}
+    steps:
+      - name: Demo branches only
+        run: |
+          case "$BASE_BRANCH" in
+            demo/*) echo "Responding on $BASE_BRANCH" ;;
+            *) echo "::error::Demo only: refusing to work on '$BASE_BRANCH' (needs demo/*)."; exit 1 ;;
+          esac
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BASE_BRANCH }}
+          token: ${{ secrets.ONCALL_PR_TOKEN || github.token }}
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Check the Claude credential
+        env:
+          HAS_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+        run: |
+          if [ "$HAS_KEY" != "true" ]; then
+            echo "::error::Set the ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN repository secret."
+            exit 1
+          fi
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code@2.0.14
+
+      - name: Write the incident file
+        env:
+          INCIDENT_INPUT: ${{ github.event.inputs.incident }}
+        run: |
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            cp "$GITHUB_EVENT_PATH" "$RUNNER_TEMP/incident.json"
+          else
+            printf '%s' "$INCIDENT_INPUT" > "$RUNNER_TEMP/incident.json"
+          fi
+
+      - name: Respond (regression test, fix, pytest, pull request)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          GH_TOKEN: ${{ secrets.ONCALL_PR_TOKEN || github.token }}
+        run: |
+          git config user.name "oncall-agent"
+          git config user.email "oncall-agent@users.noreply.github.com"
+          uv run python scripts/oncall_agent.py respond \
+            --incident "$RUNNER_TEMP/incident.json" --base "$BASE_BRANCH"

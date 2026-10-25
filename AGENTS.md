@@ -12,6 +12,7 @@ All AI coding, testing, and on-call agents operating in this repository MUST fol
 - [Implementation Task Backlog](docs/TASKS.md)
 - [Product Backlog: known problems after the MVP](docs/BACKLOG.md)
 - [Deployment, CD & Rollback](docs/DEPLOYMENT.md)
+- [Observability, Alerting & On-Call Agent](docs/OBSERVABILITY.md)
 
 ## 2. Agent Team Roles
 1. **System Architect Agent:** Maintains `docs/*.md`. Any schema or API change must be documented before implementation.

@@ -1,0 +1,50 @@
+# OpenTelemetry Collector for the local stack (docker-compose.yml).
+# The backend sends traces, metrics and logs here over OTLP/HTTP; the collector forwards them to
+# grafana/otel-lgtm (Tempo, Prometheus, Loki, Grafana on http://localhost:3000).
+#
+# PII: the backend already scrubs every span, log line and log record (src/core/telemetry.py).
+# The transform processor is a second guard that masks emails and phone numbers in span
+# attributes and log bodies, in case a future code path forgets to scrub.
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 256
+  transform/pii:
+    error_mode: ignore
+    trace_statements:
+      - context: span
+        statements:
+          - replace_all_patterns(attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+[.][A-Za-z]{2,}", "[REDACTED]")
+          - replace_all_patterns(attributes, "value", "[+][0-9]{1,3}[ -]?[0-9][0-9 -]{5,}[0-9]", "[REDACTED]")
+    log_statements:
+      - context: log
+        statements:
+          - replace_pattern(body, "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+[.][A-Za-z]{2,}", "[REDACTED]")
+          - replace_pattern(body, "[+][0-9]{1,3}[ -]?[0-9][0-9 -]{5,}[0-9]", "[REDACTED]")
+  batch: {}
+
+exporters:
+  otlphttp/lgtm:
+    endpoint: http://lgtm:4318
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, transform/pii, batch]
+      exporters: [otlphttp/lgtm]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlphttp/lgtm]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, transform/pii, batch]
+      exporters: [otlphttp/lgtm]
