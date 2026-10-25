@@ -91,3 +91,79 @@ cannot be deleted.
 - Should a deleted topic show a placeholder ("Removed by the board") instead of vanishing, so the
   conversation history stays understandable?
 - How long is the retention period, and does it differ for reported content?
+
+---
+
+## B-3. Database backups and durable storage
+
+- **Status:** open, not part of the MVP. Target: before the first real association uses the
+  platform.
+- **Raised:** 2026-10-25.
+
+### Problem
+There are **no backups at all**. [VISION.md](VISION.md) promises "trivial single-file database
+backups", but nothing creates them, and a restore has never been tried.
+
+Where the data lives today:
+- PostgreSQL data is in a named Docker volume, not in the image or the container. Removing the
+  image or the container, `docker compose down` and every redeploy keep the data.
+- On the VPS each environment has its own volume (`aap-dev_pgdata`, `aap-prod_pgdata`), its own
+  internal network and its own password, see [DEPLOYMENT.md](DEPLOYMENT.md).
+- The data is lost by `docker compose down -v`, `docker volume rm` or
+  `docker system prune --volumes`. The VPS is shared with unrelated services, so a routine
+  clean-up of Docker on that host can wipe both environments, with no way back.
+- Locally the volume is named after the checkout directory (`<dir>_pgdata`); `down -v` deletes it.
+
+### Idea for a solution (to be discussed)
+1. **Data in a host directory per environment:** bind-mount `/opt/aap/<env>/pgdata` instead of a
+   named volume. The environment name in the path keeps dev and prod apart, `docker ... prune`
+   never touches it, and host-level backups see it. The existing volumes are moved once (about a
+   minute of database downtime per environment).
+2. **Nightly `pg_dump -Fc`** per environment into `/opt/aap/<env>/backups`, keeping 7 days, run
+   on the host (cron or a systemd timer) so it works even when the app container is broken.
+3. **Restore procedure** in DEPLOYMENT.md, plus an automated restore check: load the newest dump
+   into a scratch database and run a sanity query. A backup that was never restored does not count.
+4. **Off-server copy** (later): the dumps also leave the VPS, e.g. to object storage, encrypted.
+5. **Locally** keep the named volume and document that `docker compose down -v` deletes the data.
+
+### Open questions
+- How many days or versions to keep, and is a copy outside the VPS needed from the start?
+- Should backups be a feature of the product (the chairman downloads one) or only operations?
+- Point-in-time recovery (WAL archiving) or are nightly dumps enough for an association?
+
+---
+
+## B-4. A database must belong to exactly one environment
+
+- **Status:** open, not part of the MVP. Related to B-3 (restores and moved data directories are
+  exactly when this goes wrong).
+- **Raised:** 2026-10-25.
+
+### Problem
+Nothing checks that the database the service connects to was created for this environment. If
+by mistake the wrong data is attached, the service starts on it as if nothing happened. Examples:
+- a prod backup is restored into the dev database (or the other way round);
+- a data directory or volume is copied or mounted for the wrong environment;
+- a wrong `DATABASE_URL` in an env file points one environment, or one association's instance,
+  at another one's database.
+
+The consequences are silent: dev experiments change real residents' readings, demo-mode users
+(`X-Demo-User-Id`) suddenly act on real data, or notifications go out to the wrong people.
+
+What protects us today is only the topology: on the VPS dev and prod run in separate Compose
+projects with separate networks and passwords, so a dev backend cannot reach the prod database.
+There is no check inside the data itself.
+
+### Idea for a solution (to be discussed)
+1. On the first start the database records which environment and instance it was created for,
+   e.g. a one-row table `core_instance (instance_id, environment, created_at)`.
+2. On every start the service compares it with its own configuration (`ENVIRONMENT` plus an
+   `INSTANCE_ID` from the server's env file). On a mismatch it refuses to start with a clear log
+   line; `/health/ready` fails, so `deploy.sh` rolls back automatically.
+3. Deliberately moving data (e.g. copying prod into dev for debugging) is an explicit command that
+   rewrites the marker, ideally after anonymising the copy.
+
+### Open questions
+- Is `ENVIRONMENT` enough, or does each instance need its own id (several associations on one
+  host, see B-1)?
+- Should a prod copy in dev be anonymised automatically?
