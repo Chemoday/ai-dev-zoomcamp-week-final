@@ -1,7 +1,12 @@
+import os
+
+# Demo impersonation is off by default; the suite authenticates with X-Demo-User-Id. This must be
+# set before src.core.config builds the cached settings on import.
+os.environ.setdefault("DEMO_MODE_ENABLED", "true")
+
 import asyncio
 import io
 import json
-import os
 from collections.abc import AsyncIterator, Iterator
 
 import pytest
@@ -10,10 +15,10 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from src.core.config import get_settings
-from src.core.database import get_db_session
+from src.core.database import build_engine, get_db_session
 from src.core.migrations import alembic_config
 from src.core.telemetry import PIIScrubbingSpanExporter, configure_logging, configure_tracing
 from src.main import create_app
@@ -41,7 +46,7 @@ async def db_engine(database_url: str) -> AsyncIterator[AsyncEngine]:
     """Engine for a database migrated with the real Alembic migrations (tested on every run)."""
     # Alembic's env.py calls asyncio.run(), so it runs outside this event loop.
     await asyncio.to_thread(command.upgrade, alembic_config(database_url), "head")
-    engine = create_async_engine(database_url)
+    engine = build_engine(database_url)  # same engine options as the app
     yield engine
     await engine.dispose()
 
@@ -71,18 +76,24 @@ async def db_session(db_engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
 def db_app(app: FastAPI, db_session: AsyncSession) -> Iterator[FastAPI]:
     """The app with get_db_session bound to the test transaction (same commit/rollback rules).
 
-    Each request starts by committing (releasing the SAVEPOINT of) the test's own setup data, so a
-    failing request rolls back only its own changes, as it would with a real per-request session.
+    Each request behaves like a fresh per-request session:
+    - the test's setup data is committed first (its SAVEPOINT released), so a failing request rolls
+      back only its own changes;
+    - the identity map is emptied before and after, so the request reads the database instead of
+      objects the test holds in memory (test-held objects stay readable, detached).
     """
 
     async def override_db_session() -> AsyncIterator[AsyncSession]:
         await db_session.commit()
+        db_session.expunge_all()
         try:
             yield db_session
             await db_session.commit()
         except Exception:
             await db_session.rollback()
             raise
+        finally:
+            db_session.expunge_all()
 
     app.dependency_overrides[get_db_session] = override_db_session
     yield app

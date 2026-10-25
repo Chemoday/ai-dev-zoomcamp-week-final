@@ -22,12 +22,14 @@ class DomainError(Exception):
         error_code: str,
         message: str,
         extra: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
     ):
         super().__init__(message)
         self.status_code = status_code
         self.error_code = error_code
         self.message = message
         self.extra = extra or {}
+        self.headers = headers
 
 
 async def domain_error_handler(request: Request, exc: DomainError) -> JSONResponse:
@@ -36,7 +38,7 @@ async def domain_error_handler(request: Request, exc: DomainError) -> JSONRespon
         "message": exc.message,
         **exc.extra,
     }
-    return JSONResponse(status_code=exc.status_code, content=payload)
+    return JSONResponse(status_code=exc.status_code, content=payload, headers=exc.headers)
 
 
 async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:

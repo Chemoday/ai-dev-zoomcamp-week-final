@@ -27,7 +27,12 @@ demo_user_header = APIKeyHeader(
 
 
 def _unauthorized(error_code: str, message: str) -> DomainError:
-    return DomainError(status_code=401, error_code=error_code, message=message)
+    return DomainError(
+        status_code=401,
+        error_code=error_code,
+        message=message,
+        headers={"WWW-Authenticate": "Bearer"},  # RFC 6750
+    )
 
 
 def create_access_token(
@@ -36,7 +41,11 @@ def create_access_token(
     if not settings.JWT_SECRET_KEY:
         raise RuntimeError("JWT_SECRET_KEY is not configured")
     now = datetime.now(UTC)
-    ttl = expires_in or timedelta(minutes=settings.JWT_ACCESS_TOKEN_TTL_MINUTES)
+    ttl = (
+        expires_in
+        if expires_in is not None
+        else timedelta(minutes=settings.JWT_ACCESS_TOKEN_TTL_MINUTES)
+    )
     claims = {"sub": str(user_id), "iat": now, "exp": now + ttl, "typ": "access"}
     return jwt.encode(claims, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
