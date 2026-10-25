@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     # Allows the X-Demo-User-Id header to impersonate any user. Off unless enabled explicitly:
     # docker-compose.yml, the test suite and the public demo deployment turn it on.
     DEMO_MODE_ENABLED: bool = False
+    # Seed the demo building "KÜ Sõpruse 12" into an EMPTY database at startup (src/core/seed.py).
+    # Off unless enabled explicitly: a real association must never get fictitious residents.
+    SEED_DEMO_DATA: bool = False
 
     # Bearer tokens are rejected while no secret is configured (safe default: no forgeable key).
     JWT_SECRET_KEY: str = ""
