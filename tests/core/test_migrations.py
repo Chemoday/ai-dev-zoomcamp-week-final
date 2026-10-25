@@ -1,10 +1,7 @@
 import asyncio
-import uuid
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 
 from alembic import command
-from sqlalchemy import make_url, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from src.core.migrations import (
@@ -14,6 +11,7 @@ from src.core.migrations import (
     run_startup_migrations,
 )
 from src.core.models_registry import Base
+from tests.db_utils import scratch_database
 
 
 def test_fresh_database_is_upgraded() -> None:
@@ -76,22 +74,6 @@ _INDEXES_SQL = """
 SELECT tablename, indexname, indexdef FROM pg_indexes
 WHERE schemaname = 'public' AND tablename <> 'alembic_version'
 """
-
-
-@asynccontextmanager
-async def scratch_database(database_url: str) -> AsyncIterator[str]:
-    """A throwaway database on the same server, dropped afterwards."""
-    url = make_url(database_url)
-    name = f"scratch_{uuid.uuid4().hex[:12]}"
-    admin = create_async_engine(url, isolation_level="AUTOCOMMIT")
-    async with admin.connect() as connection:
-        await connection.execute(text(f'CREATE DATABASE "{name}"'))
-    try:
-        yield url.set(database=name).render_as_string(hide_password=False)
-    finally:
-        async with admin.connect() as connection:
-            await connection.execute(text(f'DROP DATABASE "{name}" WITH (FORCE)'))
-        await admin.dispose()
 
 
 async def _schema_fingerprint(database_url: str) -> dict[str, set[tuple[str, ...]]]:

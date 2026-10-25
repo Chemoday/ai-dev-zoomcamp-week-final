@@ -3,6 +3,8 @@
 import csv
 import io
 import uuid
+from dataclasses import fields
+from decimal import Decimal
 
 import pytest
 from httpx import AsyncClient, Response
@@ -12,9 +14,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.event_bus import event_bus
 from src.core.security import DEMO_USER_HEADER
 from src.modules.meters.events import MeterReadingSubmitted, ReadingPeriodStatusChanged
-from src.modules.meters.models import MeterReading, MeterReadingLog
-from src.modules.meters.schemas import ReadingSource
+from src.modules.meters.models import MeterDevice, MeterReading, MeterReadingLog, ReadingPeriod
+from src.modules.meters.schemas import MeterUnit, PeriodStatus, ReadingSource, ResourceType
 from src.modules.property.models import ApartmentMembership
+from tests.factories import (
+    create_apartment,
+    create_building,
+    create_membership,
+    create_meter,
+    create_period,
+    create_reading,
+    create_user,
+)
 from tests.meters.conftest import MetersWorld
 
 API = "/api/v1/meters"
@@ -194,11 +205,21 @@ async def test_identical_resubmission_is_a_no_op(
     api_client: AsyncClient, db_session: AsyncSession, world: MetersWorld
 ) -> None:
     first = await submit(api_client, world.owner_14, world.meter_14, "119.000")
-    again = await submit(api_client, world.owner_14, world.meter_14, "119.000")
+    received: list[MeterReadingSubmitted] = []
+
+    async def handler(event: MeterReadingSubmitted) -> None:
+        received.append(event)
+
+    event_bus.subscribe(MeterReadingSubmitted, handler)
+    try:
+        again = await submit(api_client, world.owner_14, world.meter_14, "119.000")
+    finally:
+        event_bus.unsubscribe(MeterReadingSubmitted, handler)
 
     assert again.status_code == 200
     assert again.json() == first.json()
     assert await log_count(db_session, first.json()["reading_id"]) == 1
+    assert received == [], "a no-op publishes nothing"
 
 
 # --- Who may submit what, when ------------------------------------------------------------------
@@ -283,21 +304,26 @@ async def test_chairman_submits_master_meter_without_a_reason(
     assert response.json()["consumption_delta"] == "15.000"
 
 
+@pytest.mark.parametrize("role", ["chairman", "accountant"])
 async def test_locked_period_rejects_even_the_board(
-    api_client: AsyncClient, world: MetersWorld
+    api_client: AsyncClient, world: MetersWorld, role: str
 ) -> None:
     response = await submit(
-        api_client, world.chairman, world.meter_14, "116.000", period="2026-09", reason="fix"
+        api_client, getattr(world, role), world.meter_14, "116.000", period="2026-09", reason="fix"
     )
 
     assert response.status_code == 409
     assert response.json()["error_code"] == "PERIOD_LOCKED"
 
 
-async def test_board_members_cannot_submit(api_client: AsyncClient, world: MetersWorld) -> None:
+async def test_board_members_see_meters_but_cannot_submit(
+    api_client: AsyncClient, world: MetersWorld
+) -> None:
+    # 403, not 404: the board sees this meter in the matrix, so hiding it would be a lie.
     response = await submit(api_client, world.board, world.master, "1045.000")
 
-    assert response.status_code == 404
+    assert response.status_code == 403
+    assert response.json()["error_code"] == "FORBIDDEN"
 
 
 async def test_unknown_period_is_404(api_client: AsyncClient, world: MetersWorld) -> None:
@@ -325,7 +351,7 @@ async def test_submission_publishes_an_event_without_personal_data(
     assert event.meter_id == world.meter_14.id
     assert event.source == ReadingSource.RESIDENT
     assert str(event.consumption_delta) == "5.000"
-    assert "Ivan" not in repr(event)
+    assert not {"full_name", "email", "phone"} & {f.name for f in fields(event)}
 
 
 # --- Period status ------------------------------------------------------------------------------
@@ -625,3 +651,344 @@ async def test_invalid_period_codes_in_paths_are_validation_errors(
 
     assert response.status_code == 422
     assert response.json()["error_code"] == "VALIDATION_ERROR"
+
+
+# --- Regressions from the independent review ----------------------------------------------------
+
+
+async def test_control_characters_in_reason_are_a_validation_error_not_a_500(
+    api_client: AsyncClient, world: MetersWorld
+) -> None:
+    response = await submit(
+        api_client, world.owner_14, world.meter_14, "120.000", reason="abc\u0000def"
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error_code"] == "VALIDATION_ERROR"
+
+
+async def test_matrix_exposes_master_meters_so_the_board_can_submit_them(
+    api_client: AsyncClient, world: MetersWorld
+) -> None:
+    body = (
+        await api_client.get(f"{API}/periods/2026-10/matrix", headers=as_user(world.chairman))
+    ).json()
+
+    (master,) = body["master_meters"]
+    assert master["meter_id"] == str(world.master.id)
+    assert master["previous_value"] == "1030.000"
+    assert master["status"] == "MISSING" and master["reading"] is None
+
+    saved = await api_client.post(
+        f"{API}/readings",
+        json={"meter_id": master["meter_id"], "period_code": "2026-10", "value": "1045.000"},
+        headers=as_user(world.accountant),
+    )
+    assert saved.status_code == 200
+
+
+async def test_same_value_from_a_different_source_is_recorded(
+    api_client: AsyncClient, db_session: AsyncSession, world: MetersWorld
+) -> None:
+    # Apt 5 has no history, so it is estimated at its previous value 10.000.
+    await set_status(api_client, world.chairman, "REVIEW_BY_BOARD")
+    await api_client.post(
+        f"{API}/periods/2026-10/estimate-missing", headers=as_user(world.chairman)
+    )
+
+    confirmed = await submit(
+        api_client, world.chairman, world.meter_5, "10.000", reason="Photo confirms 10.000"
+    )
+
+    assert confirmed.status_code == 200
+    assert confirmed.json()["source"] == "ADMIN_OVERRIDE"
+    reasons = list(
+        await db_session.scalars(
+            select(MeterReadingLog.reason)
+            .where(MeterReadingLog.reading_id == uuid.UUID(confirmed.json()["reading_id"]))
+            .order_by(MeterReadingLog.changed_at)
+        )
+    )
+    assert reasons == ["3-month avg estimate", "Photo confirms 10.000"]
+
+
+async def test_residents_cannot_overwrite_a_board_correction(
+    api_client: AsyncClient, world: MetersWorld
+) -> None:
+    await submit(api_client, world.owner_14, world.meter_14, "120.000")
+    await set_status(api_client, world.chairman, "REVIEW_BY_BOARD")
+    await submit(api_client, world.chairman, world.meter_14, "121.000", reason="Photo")
+    await set_status(api_client, world.chairman, "OPEN_FOR_RESIDENTS")
+
+    response = await submit(api_client, world.owner_14, world.meter_14, "125.000")
+
+    assert response.status_code == 409
+    assert response.json()["error_code"] == "READING_SET_BY_BOARD"
+
+
+async def test_residents_may_replace_an_estimate_after_reopening(
+    api_client: AsyncClient, world: MetersWorld
+) -> None:
+    await set_status(api_client, world.chairman, "REVIEW_BY_BOARD")
+    await api_client.post(
+        f"{API}/periods/2026-10/estimate-missing", headers=as_user(world.chairman)
+    )
+    await set_status(api_client, world.chairman, "OPEN_FOR_RESIDENTS")
+
+    response = await submit(api_client, world.owner_5, world.meter_5, "10.000")
+
+    assert response.status_code == 200
+    assert response.json()["source"] == "RESIDENT"
+
+
+async def test_an_earlier_period_cannot_change_once_a_later_one_has_a_reading(
+    api_client: AsyncClient, db_session: AsyncSession, world: MetersWorld
+) -> None:
+    await submit(api_client, world.owner_14, world.meter_14, "120.000")
+    await db_session.execute(
+        update(ReadingPeriod)
+        .where(ReadingPeriod.id == world.periods["2026-09"].id)
+        .values(status=PeriodStatus.REVIEW_BY_BOARD)
+    )
+
+    response = await submit(
+        api_client, world.chairman, world.meter_14, "121.000", period="2026-09", reason="Typo"
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error_code"] == "LATER_READING_EXISTS"
+
+
+async def test_whitespace_reason_counts_as_missing(
+    api_client: AsyncClient, world: MetersWorld
+) -> None:
+    await submit(api_client, world.owner_14, world.meter_14, "120.000")
+    await set_status(api_client, world.chairman, "REVIEW_BY_BOARD")
+
+    response = await submit(api_client, world.chairman, world.meter_14, "121.000", reason="   ")
+
+    assert response.status_code == 422
+    assert response.json()["error_code"] == "REASON_REQUIRED"
+
+
+async def test_staff_who_live_in_the_building_submit_as_residents_while_open(
+    api_client: AsyncClient, db_session: AsyncSession, world: MetersWorld
+) -> None:
+    apartment_id = world.meter_14.apartment_id
+    await db_session.execute(
+        ApartmentMembership.__table__.insert().values(
+            id=uuid.uuid4(),
+            apartment_id=apartment_id,
+            user_id=world.chairman.id,
+            relation_type="OWNER",
+        )
+    )
+
+    open_period = await submit(api_client, world.chairman, world.meter_14, "120.000")
+    await set_status(api_client, world.chairman, "REVIEW_BY_BOARD")
+    in_review = await submit(api_client, world.chairman, world.meter_14, "121.000", reason="Fix")
+
+    assert open_period.json()["source"] == "RESIDENT"
+    assert in_review.json()["source"] == "ADMIN_OVERRIDE"
+
+
+async def test_board_entry_for_an_apartment_in_an_open_period(
+    api_client: AsyncClient, world: MetersWorld
+) -> None:
+    response = await submit(api_client, world.accountant, world.meter_2, "62.000")
+
+    assert response.status_code == 200
+    assert response.json()["source"] == "ADMIN_OVERRIDE"
+
+
+async def test_replaced_meters_accept_only_board_corrections_of_existing_readings(
+    api_client: AsyncClient, db_session: AsyncSession, world: MetersWorld
+) -> None:
+    await submit(api_client, world.owner_14, world.meter_14, "120.000")
+    await db_session.execute(
+        update(MeterDevice).where(MeterDevice.id == world.meter_14.id).values(is_active=False)
+    )
+
+    resident = await submit(api_client, world.owner_14, world.meter_14, "121.000")
+    await set_status(api_client, world.chairman, "REVIEW_BY_BOARD")
+    board = await submit(api_client, world.chairman, world.meter_14, "121.000", reason="Final")
+    no_reading = await submit(
+        api_client, world.chairman, world.meter_14, "116.000", period="2026-09"
+    )
+
+    assert resident.status_code == 404
+    assert board.status_code == 200
+    assert no_reading.status_code in (404, 409)  # Sept is LOCKED anyway
+
+
+async def test_estimate_writes_audit_rows_without_a_submitter(
+    api_client: AsyncClient, db_session: AsyncSession, world: MetersWorld
+) -> None:
+    await set_status(api_client, world.chairman, "REVIEW_BY_BOARD")
+    estimate = await api_client.post(
+        f"{API}/periods/2026-10/estimate-missing", headers=as_user(world.accountant)
+    )
+    reading_id = uuid.UUID(estimate.json()["estimated"][0]["reading_id"])
+
+    stored = await db_session.get(MeterReading, reading_id)
+    history = await api_client.get(
+        f"{API}/readings/{reading_id}/history", headers=as_user(world.chairman)
+    )
+
+    assert stored.source == ReadingSource.AUTO_ESTIMATED
+    assert stored.submitted_by_user_id is None
+    (entry,) = history.json()["entries"]
+    assert entry["reason"] == "3-month avg estimate"
+    assert entry["changed_by"] == {"display_label": "Accountant", "role_badge": "ACCOUNTANT"}
+
+
+async def test_estimate_that_would_overflow_numeric_is_a_clear_error(
+    api_client: AsyncClient, db_session: AsyncSession, world: MetersWorld
+) -> None:
+    await db_session.execute(
+        update(MeterReading)
+        .where(
+            MeterReading.meter_id == world.meter_2.id,
+            MeterReading.period_id == world.periods["2026-09"].id,
+        )
+        .values(value=Decimal("999999998.000"), previous_value=Decimal("999999990.000"),
+                consumption_delta=Decimal("8.000"))
+    )  # fmt: skip
+    await set_status(api_client, world.chairman, "REVIEW_BY_BOARD")
+
+    response = await api_client.post(
+        f"{API}/periods/2026-10/estimate-missing", headers=as_user(world.chairman)
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error_code"] == "ESTIMATE_OUT_OF_RANGE"
+    assert response.json()["meter_id"] == str(world.meter_2.id)
+
+
+async def test_average_window_takes_the_last_three_qualifying_readings(
+    api_client: AsyncClient, db_session: AsyncSession, world: MetersWorld
+) -> None:
+    # June delta 1 (qualifies), July 4, Aug 5, Sept turned into an estimate (skipped):
+    # the window reaches back to June: mean(1, 4, 5) = 3.333.
+    june = await create_period(db_session, world.building, "2026-06", PeriodStatus.LOCKED)
+    await create_reading(db_session, world.meter_14, june, Decimal("100.000"), Decimal("99.000"))
+    await db_session.execute(
+        update(MeterReading)
+        .where(
+            MeterReading.meter_id == world.meter_14.id,
+            MeterReading.period_id == world.periods["2026-09"].id,
+        )
+        .values(source=ReadingSource.AUTO_ESTIMATED)
+    )
+
+    response = await submit(api_client, world.owner_14, world.meter_14, "1245.000")
+
+    assert response.json()["average_delta"] == "3.333"
+
+
+async def test_submission_span_records_the_outcome_of_every_exit(
+    api_client: AsyncClient, span_exporter, world: MetersWorld
+) -> None:
+    await submit(api_client, world.owner_14, world.meter_14, "120.000")
+    await submit(api_client, world.owner_14, world.meter_14, "120.000")
+    await submit(api_client, world.tenant_2, world.meter_14, "120.000")
+    await submit(api_client, world.owner_14, world.meter_14, "1245.000")
+
+    outcomes = [
+        span.attributes["meters.outcome"]
+        for span in span_exporter.get_finished_spans()
+        if span.name == "meters.submit_reading"
+    ]
+    assert outcomes == ["created", "unchanged", "METER_NOT_FOUND", "ANOMALY_CONFIRMATION_STEP_1"]
+
+
+async def test_matrix_balances_several_masters_resource_types_and_units(
+    api_client: AsyncClient, db_session: AsyncSession, world: MetersWorld
+) -> None:
+    october = world.periods["2026-10"]
+    second_master = await create_meter(db_session, world.building, None)
+    hot_master = await create_meter(db_session, world.building, None, ResourceType.HOT_WATER)
+    heat_kwh = await create_meter(db_session, world.building, None, ResourceType.HEAT)
+    heat_mwh = await create_meter(db_session, world.building, None, ResourceType.HEAT)
+    for meter, unit in ((heat_kwh, MeterUnit.KWH), (heat_mwh, MeterUnit.MWH)):
+        await db_session.execute(
+            update(MeterDevice).where(MeterDevice.id == meter.id).values(unit=unit)
+        )
+    for meter, value in (
+        (world.master, "1040.000"), (second_master, "7.000"), (hot_master, "3.000"),
+        (heat_kwh, "100.000"), (heat_mwh, "1.000"),
+    ):  # fmt: skip
+        previous = Decimal("1030.000") if meter is world.master else Decimal("0.000")
+        await create_reading(db_session, meter, october, Decimal(value), previous)
+    await create_reading(
+        db_session, world.meter_14, october, Decimal("120.000"), Decimal("115.000")
+    )
+
+    balances = (
+        await api_client.get(f"{API}/periods/2026-10/matrix", headers=as_user(world.chairman))
+    ).json()["balances"]
+
+    summary = {
+        (b["resource_type"], b["unit"]): (b["master_total"], b["unallocated_loss"])
+        for b in balances
+    }
+    assert summary == {
+        ("COLD_WATER", "m3"): ("17.000", "12.000"),  # two masters 10 + 7, apartments 5
+        ("HOT_WATER", "m3"): ("3.000", "3.000"),
+        ("HEAT", "kWh"): ("100.000", "100.000"),
+        ("HEAT", "MWh"): ("1.000", "1.000"),  # never summed with kWh
+    }
+
+
+async def test_master_meter_history_is_hidden_from_residents(
+    api_client: AsyncClient, world: MetersWorld
+) -> None:
+    saved = await submit(api_client, world.chairman, world.master, "1045.000")
+    url = f"{API}/readings/{saved.json()['reading_id']}/history"
+
+    assert (await api_client.get(url, headers=as_user(world.owner_14))).status_code == 404
+    assert (await api_client.get(url, headers=as_user(world.board))).status_code == 200
+
+
+async def test_dashboard_without_any_period(
+    api_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    building = await create_building(db_session, name="KÜ Uus 1")
+    apartment = await create_apartment(db_session, building, "1")
+    owner = await create_user(db_session, building, "New Owner")
+    await create_membership(db_session, owner, apartment)
+    await create_meter(db_session, building, apartment, initial_value=Decimal("5.000"))
+
+    body = (await api_client.get(f"{API}/my-dashboard", headers=as_user(owner))).json()
+
+    assert body["period"] is None
+    assert body["apartments"][0]["meters"][0]["previous_value"] == "5.000"
+
+
+async def test_dashboard_defaults_to_the_open_period_not_a_pre_created_one(
+    api_client: AsyncClient, db_session: AsyncSession, world: MetersWorld
+) -> None:
+    december = await create_period(db_session, world.building, "2026-12", PeriodStatus.LOCKED)
+    assert december.period_code > "2026-10"
+
+    body = (await api_client.get(f"{API}/my-dashboard", headers=as_user(world.owner_14))).json()
+
+    assert body["period"]["period_code"] == "2026-10"
+
+
+async def test_export_without_the_csv_plugin_is_a_clear_404(
+    api_client: AsyncClient, db_app, world: MetersWorld
+) -> None:
+    from src.plugins.registry import PluginRegistry
+
+    original = db_app.state.plugin_registry
+    db_app.state.plugin_registry = PluginRegistry()
+    try:
+        response = await api_client.get(
+            f"{API}/periods/2026-10/export-csv", headers=as_user(world.chairman)
+        )
+    finally:
+        db_app.state.plugin_registry = original
+
+    assert response.status_code == 404
+    assert response.json()["error_code"] == "EXPORTER_NOT_ENABLED"

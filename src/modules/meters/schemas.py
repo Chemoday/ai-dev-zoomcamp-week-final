@@ -14,6 +14,7 @@ from typing import Annotated, Any
 
 from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field, StrictInt
 
+from src.core.validation import optional_safe_text
 from src.modules.property.schemas import AuthorBadgeDTO
 
 
@@ -59,6 +60,7 @@ _METER_VALUE_TEXT = re.compile(r"[0-9]{1,9}(\.[0-9]{1,3})?")
 
 
 METER_PRECISION = Decimal("0.001")  # NUMERIC(12, 3)
+METER_VALUE_MAX = Decimal("999999999.999")
 
 
 def canonical_meter_value(value: Decimal) -> Decimal:
@@ -79,6 +81,8 @@ def _parse_meter_value(value: Any) -> Any:
         raise ValueError('meter values are plain decimals with up to 3 places, e.g. "1254.100"')
     return value
 
+
+ReasonText = optional_safe_text(max_length=500)
 
 # NUMERIC(12, 3): 0 .. 999 999 999.999, always returned with exactly 3 decimals ("1254.000").
 MeterValue = Annotated[
@@ -103,7 +107,8 @@ class ReadingSubmitRequest(BaseModel):
     # docs/API.md: 0 -> popup #1, 1 -> popup #2, >= 2 -> save as a confirmed anomaly.
     # Strict: true, "2" and 1.0 are not confirmation levels.
     confirmation_level: StrictInt = Field(default=0, ge=0, le=100)
-    reason: str | None = Field(default=None, max_length=500)
+    # No control characters (a NUL byte would be a 500 from PostgreSQL); blank means None.
+    reason: ReasonText = None
 
 
 # --- Response DTOs (docs/API.md, sections 2 and 3) -----------------------------------------------
@@ -174,6 +179,18 @@ class MatrixApartment(BaseModel):
     meters: list[MatrixMeter]
 
 
+class MasterMeterRow(BaseModel):
+    """A Building Master Meter in the matrix: its id is what the board submits against."""
+
+    meter_id: uuid.UUID
+    resource_type: ResourceType
+    location_label: str
+    unit: MeterUnit
+    previous_value: Decimal
+    status: SubmissionStatus
+    reading: ReadingSummary | None
+
+
 class ResourceBalance(BaseModel):
     resource_type: ResourceType
     unit: MeterUnit
@@ -185,6 +202,7 @@ class ResourceBalance(BaseModel):
 class MatrixResponse(BaseModel):
     period: PeriodDTO
     balances: list[ResourceBalance]
+    master_meters: list[MasterMeterRow]
     apartments: list[MatrixApartment]
 
 

@@ -27,12 +27,14 @@ from src.modules.meters.policies import (
     validate_reading_delta,
 )
 from src.modules.meters.schemas import (
+    METER_VALUE_MAX,
     DashboardApartment,
     DashboardMeter,
     DashboardResponse,
     EstimatedReading,
     EstimateResponse,
     HistoryEntry,
+    MasterMeterRow,
     MatrixApartment,
     MatrixMeter,
     MatrixResponse,
@@ -95,48 +97,94 @@ class MetersService:
     async def submit_reading(
         self, user: CurrentUserDTO, request: ReadingSubmitRequest
     ) -> ReadingResponse:
-        # Row lock on the meter: concurrent submissions for one meter run one after another, so
-        # the unique (meter, period) row is never inserted twice and the audit log stays ordered.
-        meter = await self.session.scalar(
-            select(MeterDevice)
-            .where(
-                MeterDevice.id == request.meter_id,
-                MeterDevice.building_id == user.building_id,
-                MeterDevice.is_active.is_(True),
+        """POST /readings. Every exit sets meters.outcome on a dedicated span (Task 8)."""
+        with tracer.start_as_current_span(
+            "meters.submit_reading", record_exception=False, set_status_on_exception=False
+        ) as span:
+            span.set_attributes(
+                {
+                    "meters.meter_id": str(request.meter_id),
+                    "meters.period_code": request.period_code,
+                    "meters.confirmation_level": request.confirmation_level,
+                }
             )
-            .with_for_update()
+            try:
+                response, outcome = await self._submit(user, request, span)
+            except DomainError as error:
+                span.set_attribute("meters.outcome", error.error_code)  # an expected 4xx
+                raise
+            except Exception as error:
+                span.record_exception(error)
+                span.set_status(trace.Status(trace.StatusCode.ERROR, type(error).__name__))
+                span.set_attribute("meters.outcome", "ERROR")
+                raise
+            span.set_attributes(
+                {
+                    "meters.outcome": outcome,
+                    "meters.anomaly_confirmed": response.is_anomaly_confirmed,
+                }
+            )
+            return response
+
+    async def _submit(
+        self, user: CurrentUserDTO, request: ReadingSubmitRequest, span
+    ) -> tuple[ReadingResponse, str]:
+        # 1. Visibility and role, before any lock: nobody can hold locks on meters they cannot see.
+        meter = await self.session.scalar(
+            select(MeterDevice).where(
+                MeterDevice.id == request.meter_id, MeterDevice.building_id == user.building_id
+            )
         )
         membership = (
             user.membership_for(meter.apartment_id) if meter and meter.apartment_id else None
         )
-        if meter is None or (membership is None and user.building_role not in OVERRIDE_ROLES):
+        if meter is None or (membership is None and user.building_role not in STAFF_VIEW_ROLES):
             raise _not_found("METER_NOT_FOUND", "Meter not found.")
+        if membership is None and user.building_role not in OVERRIDE_ROLES:
+            raise DomainError(
+                status_code=403,
+                error_code="FORBIDDEN",
+                message="Board members can view readings but not submit them.",
+            )
 
-        period = await self._period(meter.building_id, request.period_code)
-        source = self._authorize_submission(user, membership, period)
+        # 2. Locks, always period first, then meter (the same order as status changes and
+        # estimates, so they can never deadlock). FOR SHARE on the period blocks a concurrent
+        # status change until this reading is committed, and vice versa.
+        period = await self._period(user.building_id, request.period_code, lock="share")
+        meter = await self.session.scalar(
+            select(MeterDevice)
+            .where(MeterDevice.id == meter.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
         existing = await self.session.scalar(
             select(MeterReading).where(
                 MeterReading.meter_id == meter.id, MeterReading.period_id == period.id
             )
         )
-        span = trace.get_current_span()
-        span.set_attributes(
-            {
-                "meters.meter_id": str(meter.id),
-                "meters.period_code": period.period_code,
-                "meters.reading_source": source.value,
-                "meters.confirmation_level": request.confirmation_level,
-            }
-        )
+        is_override_role = user.building_role in OVERRIDE_ROLES
+        if not meter.is_active and not (is_override_role and existing is not None):
+            # A replaced meter only accepts board corrections of readings it already has.
+            raise _not_found("METER_NOT_FOUND", "Meter not found.")
 
-        if existing is not None and existing.value == request.value:
-            span.set_attribute("meters.outcome", "unchanged")
-            return self._reading_response(existing, period)
-        if source == ReadingSource.ADMIN_OVERRIDE and existing is not None and not request.reason:
+        # 3. Business rules.
+        source = self._authorize_submission(user, membership, period)
+        span.set_attribute("meters.reading_source", source.value)
+        if (
+            source == ReadingSource.RESIDENT
+            and existing is not None
+            and existing.source == ReadingSource.ADMIN_OVERRIDE
+        ):
             raise DomainError(
-                status_code=422,
-                error_code="REASON_REQUIRED",
-                message="Changing an existing reading on behalf of the board needs a reason.",
+                status_code=409,
+                error_code="READING_SET_BY_BOARD",
+                message="The board has corrected this reading; contact the board to change it.",
+            )
+        if await self._has_later_reading(meter.id, period):
+            raise DomainError(
+                status_code=409,
+                error_code="LATER_READING_EXISTS",
+                message="A later period already has a reading for this meter.",
             )
 
         previous_value = await self._previous_value(meter, period)
@@ -150,9 +198,35 @@ class MetersService:
             average,
             request.confirmation_level,
         )
-        span.set_attribute("meters.outcome", check.status.value)
+        if check.status == ReadingCheckStatus.ERR_BELOW_PREV:
+            self._raise_for_check(check, previous_value, request.value, average, meter)
+
+        # 4. Nothing would change (a double click): no audit row, no event.
+        target = (
+            request.value,
+            previous_value,
+            check.consumption_delta,
+            source,
+            check.is_anomaly_confirmed,
+            user.id,
+        )
+        if (
+            existing is not None
+            and check.status == ReadingCheckStatus.OK
+            and request.reason is None
+            and self._state_of(existing) == target
+        ):
+            return self._reading_response(existing, period), "unchanged"
+
+        if source == ReadingSource.ADMIN_OVERRIDE and existing is not None and not request.reason:
+            raise DomainError(
+                status_code=422,
+                error_code="REASON_REQUIRED",
+                message="A board change to an existing reading needs a reason.",
+            )
         self._raise_for_check(check, previous_value, request.value, average, meter)
 
+        # 5. Upsert, audit row, event.
         old_value = existing.value if existing is not None else None
         reading = existing or MeterReading(
             building_id=meter.building_id, meter_id=meter.id, period_id=period.id
@@ -179,7 +253,20 @@ class MetersService:
         )
         await self.session.flush()
         await self._publish_submitted(reading, meter, period)
-        return self._reading_response(reading, period)
+        return self._reading_response(reading, period), (
+            "created" if existing is None else "updated"
+        )
+
+    @staticmethod
+    def _state_of(reading: MeterReading) -> tuple:
+        return (
+            reading.value,
+            reading.previous_value,
+            reading.consumption_delta,
+            reading.source,
+            reading.is_anomaly_confirmed,
+            reading.submitted_by_user_id,
+        )
 
     @staticmethod
     def _authorize_submission(
@@ -265,10 +352,14 @@ class MetersService:
         if period_code is not None:
             period = await self._period(user.building_id, period_code)
         else:
+            # The latest period residents can submit to; else the latest period at all.
             period = await self.session.scalar(
                 select(ReadingPeriod)
                 .where(ReadingPeriod.building_id == user.building_id)
-                .order_by(ReadingPeriod.period_code.desc())
+                .order_by(
+                    (ReadingPeriod.status == PeriodStatus.OPEN_FOR_RESIDENTS).desc(),
+                    ReadingPeriod.period_code.desc(),
+                )
                 .limit(1)
             )
         apartment_ids = [m.apartment_id for m in user.memberships]
@@ -354,9 +445,22 @@ class MetersService:
                     meters=cells,
                 )
             )
+        master_meters = [
+            MasterMeterRow(
+                **self._matrix_cell(meter, readings.get(meter.id)).model_dump(),
+                previous_value=(
+                    readings[meter.id].previous_value
+                    if meter.id in readings
+                    else await self._previous_value(meter, period)
+                ),
+            )
+            for meter in meters
+            if meter.is_master_meter
+        ]
         return MatrixResponse(
             period=_period_dto(period),
             balances=self._balances(meters, readings),
+            master_meters=master_meters,
             apartments=rows,
         )
 
@@ -380,13 +484,18 @@ class MetersService:
     ) -> list[ResourceBalance]:
         """Master meters minus the sum of apartment meters, per resource type."""
         balances = []
-        resource_types = sorted({m.resource_type for m in meters if m.is_master_meter})
-        for resource_type in resource_types:
-            masters = [m for m in meters if m.is_master_meter and m.resource_type == resource_type]
+        # Grouped by resource AND unit: kWh and MWh are never summed together.
+        groups = sorted({(m.resource_type, m.unit) for m in meters if m.is_master_meter})
+        for resource_type, unit in groups:
+
+            def same_kind(meter: MeterDevice, rt=resource_type, u=unit) -> bool:
+                return meter.resource_type == rt and meter.unit == u
+
+            masters = [m for m in meters if m.is_master_meter and same_kind(m)]
             apartment_deltas = [
                 readings[m.id].consumption_delta
                 for m in meters
-                if not m.is_master_meter and m.resource_type == resource_type and m.id in readings
+                if not m.is_master_meter and same_kind(m) and m.id in readings
             ]
             apartments_sum = canonical_meter_value(sum(apartment_deltas, start=Decimal("0.000")))
             master_total = None
@@ -397,7 +506,7 @@ class MetersService:
             balances.append(
                 ResourceBalance(
                     resource_type=resource_type,
-                    unit=masters[0].unit,
+                    unit=unit,
                     master_total=master_total,
                     apartments_sum=apartments_sum,
                     unallocated_loss=(
@@ -412,7 +521,7 @@ class MetersService:
     # --- Estimates for missing apartments -------------------------------------------------------
 
     async def estimate_missing(self, user: CurrentUserDTO, period_code: str) -> EstimateResponse:
-        period = await self._period(user.building_id, period_code, for_update=True)
+        period = await self._period(user.building_id, period_code, lock="update")
         if period.status != PeriodStatus.REVIEW_BY_BOARD:
             raise DomainError(
                 status_code=409,
@@ -444,6 +553,13 @@ class MetersService:
             average = calculate_rolling_average_delta(
                 await self._history_deltas(meter.id, period), NO_HISTORY_AVERAGE
             )
+            if previous_value + average > METER_VALUE_MAX:
+                raise DomainError(
+                    status_code=422,
+                    error_code="ESTIMATE_OUT_OF_RANGE",
+                    message="The estimate does not fit NUMERIC(12, 3); enter this reading by hand.",
+                    extra={"meter_id": str(meter.id)},
+                )
             reading = MeterReading(
                 building_id=meter.building_id,
                 meter_id=meter.id,
@@ -492,7 +608,7 @@ class MetersService:
     async def change_period_status(
         self, user: CurrentUserDTO, period_code: str, target: PeriodStatus
     ) -> PeriodStatusUpdateResponse:
-        period = await self._period(user.building_id, period_code, for_update=True)
+        period = await self._period(user.building_id, period_code, lock="update")
         current = PeriodStatus(period.status)
         if not can_transition_period(current, target):
             raise DomainError(
@@ -545,7 +661,7 @@ class MetersService:
             await self.session.scalars(
                 select(MeterReadingLog)
                 .where(MeterReadingLog.reading_id == reading_id)
-                .order_by(MeterReadingLog.changed_at)
+                .order_by(MeterReadingLog.changed_at, MeterReadingLog.id)
             )
         )
 
@@ -627,17 +743,37 @@ class MetersService:
     # --- Internals ------------------------------------------------------------------------------
 
     async def _period(
-        self, building_id: uuid.UUID, period_code: str, for_update: bool = False
+        self, building_id: uuid.UUID, period_code: str, lock: str | None = None
     ) -> ReadingPeriod:
+        """lock="share": FOR SHARE (submissions; many may run at once).
+        lock="update": FOR NO KEY UPDATE (status changes, estimates). Unlike FOR UPDATE it does not
+        block the FOR KEY SHARE that foreign-key checks of new readings take on the period row.
+        """
         statement = select(ReadingPeriod).where(
             ReadingPeriod.building_id == building_id, ReadingPeriod.period_code == period_code
         )
-        if for_update:
-            statement = statement.with_for_update()
+        if lock == "share":
+            statement = statement.with_for_update(read=True)
+        elif lock == "update":
+            statement = statement.with_for_update(key_share=True)
+        if lock is not None:
+            statement = statement.execution_options(populate_existing=True)
         period = await self.session.scalar(statement)
         if period is None:
             raise _not_found("PERIOD_NOT_FOUND", f"Reading period {period_code} not found.")
         return period
+
+    async def _has_later_reading(self, meter_id: uuid.UUID, period: ReadingPeriod) -> bool:
+        """Changing a reading would silently break the next period's previous_value snapshot."""
+        later = await self.session.scalar(
+            select(MeterReading.id)
+            .join(ReadingPeriod, ReadingPeriod.id == MeterReading.period_id)
+            .where(
+                MeterReading.meter_id == meter_id, ReadingPeriod.period_code > period.period_code
+            )
+            .limit(1)
+        )
+        return later is not None
 
     async def _readings_by_meter(self, period: ReadingPeriod) -> dict[uuid.UUID, MeterReading]:
         readings = await self.session.scalars(

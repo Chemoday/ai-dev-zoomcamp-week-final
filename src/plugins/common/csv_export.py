@@ -2,6 +2,7 @@
 
 import csv
 import io
+import unicodedata
 from collections.abc import Iterable, Iterator
 
 from src.plugins.registry import PluginRegistry, ReadingExportRow
@@ -25,11 +26,20 @@ COLUMNS = (
 MASTER_METER_LABEL = "MASTER"
 
 # A cell starting with one of these is executed as a formula by Excel/LibreOffice (CSV injection).
-_FORMULA_TRIGGERS = ("=", "+", "-", "@", "\t", "\r")
+_FORMULA_TRIGGERS = ("=", "+", "-", "@")
+_LEADING_CONTROL = ("\t", "\r", "\n")
 
 
 def neutralize_formula(text: str) -> str:
-    return f"'{text}" if text.startswith(_FORMULA_TRIGGERS) else text
+    """Prefix a quote when a spreadsheet could read the cell as a formula.
+
+    NFKC folds look-alikes such as the full-width "＝" into "=", and leading whitespace or line
+    breaks are skipped, because spreadsheets skip them too before evaluating.
+    """
+    probe = unicodedata.normalize("NFKC", text).lstrip(" \t\r\n")
+    if text.startswith(_LEADING_CONTROL) or probe.startswith(_FORMULA_TRIGGERS):
+        return f"'{text}"
+    return text
 
 
 class CsvReadingExporter:

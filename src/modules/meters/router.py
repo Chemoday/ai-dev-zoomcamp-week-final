@@ -6,6 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Path, Query
 from fastapi.responses import StreamingResponse
 
+from src.core.exceptions import DomainError
 from src.core.security import get_current_user, require_building_roles
 from src.modules.meters.schemas import (
     PERIOD_CODE_PATTERN,
@@ -94,7 +95,14 @@ async def export_csv(
     service: MetersService = Depends(get_meters_service),
     plugins: PluginRegistry = Depends(get_plugin_registry),
 ) -> StreamingResponse:
-    exporter = plugins.exporter("csv")
+    try:
+        exporter = plugins.exporter("csv")
+    except LookupError as error:
+        raise DomainError(
+            status_code=404,
+            error_code="EXPORTER_NOT_ENABLED",
+            message="CSV export is not enabled on this instance (ENABLED_PLUGINS).",
+        ) from error
     # Rows are loaded before streaming starts: the DB session is closed once the response begins.
     rows = await service.export_rows(user, period_code)
     filename = service.export_filename(period_code, exporter)

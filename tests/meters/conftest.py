@@ -50,6 +50,10 @@ class MetersWorld:
 
 @pytest.fixture
 async def world(db_session: AsyncSession) -> MetersWorld:
+    return await build_meters_world(db_session)
+
+
+async def build_meters_world(db_session: AsyncSession) -> MetersWorld:
     building = await create_building(db_session)
     apt_14 = await create_apartment(db_session, building, "14", entrance=2, floor=4)
     apt_2 = await create_apartment(db_session, building, "2", entrance=1, floor=1)

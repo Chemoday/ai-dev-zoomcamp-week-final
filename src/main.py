@@ -12,7 +12,7 @@ from src.core.health import router as health_router
 from src.core.telemetry import configure_logging, setup_telemetry, shutdown_tracing
 from src.modules.meters.router import router as meters_router
 from src.modules.property.router import router as property_router
-from src.plugins.registry import parse_plugin_list, plugin_registry
+from src.plugins.registry import build_plugin_registry
 
 
 @asynccontextmanager
@@ -31,7 +31,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(health_router)
     app.include_router(property_router)
     app.include_router(meters_router)
-    plugin_registry.load(parse_plugin_list(settings.ENABLED_PLUGINS))
+    # One registry per app instance, so enabling a plugin never leaks between apps or tests.
+    app.state.plugin_registry = build_plugin_registry(settings.ENABLED_PLUGINS)
 
     setup_telemetry(app, settings)
     return app

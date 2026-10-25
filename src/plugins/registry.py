@@ -16,6 +16,8 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Protocol
 
+from fastapi import Request
+
 _PLUGIN_NAME = re.compile(r"[a-z0-9_]+(\.[a-z0-9_]+)*")
 
 
@@ -77,13 +79,16 @@ class PluginRegistry:
             self._loaded.add(name)
 
 
-plugin_registry = PluginRegistry()
-
-
 def parse_plugin_list(value: str) -> list[str]:
     return [name.strip() for name in value.split(",") if name.strip()]
 
 
-def get_plugin_registry() -> PluginRegistry:
-    """FastAPI dependency; plugins are loaded once by the app factory."""
-    return plugin_registry
+def build_plugin_registry(enabled_plugins: str) -> PluginRegistry:
+    registry = PluginRegistry()
+    registry.load(parse_plugin_list(enabled_plugins))
+    return registry
+
+
+def get_plugin_registry(request: Request) -> PluginRegistry:
+    """FastAPI dependency: the registry of this app instance (built by create_app)."""
+    return request.app.state.plugin_registry
