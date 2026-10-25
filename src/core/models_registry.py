@@ -5,6 +5,7 @@ Each module that introduces models MUST add its import here (see docs/BACKEND_CO
 """
 
 from src.core.database import Base
+from src.modules.communication.models import Comment, EmergencyAck, Post  # noqa: F401
 from src.modules.meters.models import (  # noqa: F401
     MeterDevice,
     MeterReading,
