@@ -2,10 +2,13 @@
 
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.modules.meters.models import MeterDevice, MeterReading, ReadingPeriod
+from src.modules.meters.schemas import PeriodStatus, ReadingSource, ResourceType
 from src.modules.property.models import Apartment, ApartmentMembership, Building, User
 from src.modules.property.schemas import BuildingRole, DisplayMode, RelationType
 
@@ -113,3 +116,73 @@ async def create_demo_building(session: AsyncSession) -> DemoBuilding:
         ),
         chairman=chairman,
     )
+
+
+# --- meters --------------------------------------------------------------------------------------
+
+
+async def create_meter(
+    session: AsyncSession,
+    building: Building,
+    apartment: Apartment | None,
+    resource_type: ResourceType = ResourceType.COLD_WATER,
+    initial_value: Decimal = Decimal("0.000"),
+    max_monthly_delta: Decimal = Decimal("25.000"),
+) -> MeterDevice:
+    """apartment=None creates a Building Master Meter."""
+    meter = MeterDevice(
+        building_id=building.id,
+        apartment_id=apartment.id if apartment else None,
+        resource_type=resource_type,
+        serial_number=f"SN-{uuid.uuid4().hex[:10]}",
+        location_label="Basement Master" if apartment is None else "Bathroom",
+        initial_value=initial_value,
+        max_monthly_delta=max_monthly_delta,
+    )
+    session.add(meter)
+    await session.flush()
+    return meter
+
+
+async def create_period(
+    session: AsyncSession,
+    building: Building,
+    period_code: str = "2026-10",
+    status: PeriodStatus = PeriodStatus.OPEN_FOR_RESIDENTS,
+) -> ReadingPeriod:
+    year, month = (int(part) for part in period_code.split("-"))
+    due_year, due_month = (year + 1, 1) if month == 12 else (year, month + 1)
+    period = ReadingPeriod(
+        building_id=building.id,
+        period_code=period_code,
+        status=status,
+        due_date=datetime(
+            due_year, due_month, building.reading_deadline_day, 23, 59, 59, tzinfo=UTC
+        ),
+    )
+    session.add(period)
+    await session.flush()
+    return period
+
+
+async def create_reading(
+    session: AsyncSession,
+    meter: MeterDevice,
+    period: ReadingPeriod,
+    value: Decimal,
+    previous_value: Decimal,
+    source: ReadingSource = ReadingSource.RESIDENT,
+    submitted_by: User | None = None,
+) -> MeterReading:
+    reading = MeterReading(
+        meter_id=meter.id,
+        period_id=period.id,
+        value=value,
+        previous_value=previous_value,
+        consumption_delta=value - previous_value,
+        source=source,
+        submitted_by_user_id=submitted_by.id if submitted_by else None,
+    )
+    session.add(reading)
+    await session.flush()
+    return reading
