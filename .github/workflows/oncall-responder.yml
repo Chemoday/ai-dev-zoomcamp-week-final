@@ -4,6 +4,11 @@
 # ANTHROPIC_API_KEY (API key) or CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`).
 # PRs opened with the default GITHUB_TOKEN do not trigger CI; set ONCALL_PR_TOKEN (a PAT) so the
 # fix PR runs CI like any other.
+#
+# DEMO ONLY (course demonstration): the responder only ever works on a `demo/*` branch. It checks
+# that branch out, pushes its fix to a new `oncall/*` branch and opens the PR into the demo branch.
+# `main` and every other branch are refused, so it can never change the main code. To remove the
+# feature, delete this file.
 name: On-call responder
 
 on:
@@ -15,8 +20,9 @@ on:
         description: Incident JSON as written by `oncall_agent.py serve` (incidents/<trace_id>.json)
         required: true
       base:
-        description: Branch the fix pull request targets (default - the branch this run uses)
+        description: Demo branch to fix and target (must start with demo/)
         required: false
+        default: demo/oncall-incident
 
 permissions:
   contents: write
@@ -45,9 +51,18 @@ jobs:
           --health-retries 20
     env:
       TEST_DATABASE_URL: postgresql+asyncpg://app:app@localhost:5432/app
+      BASE_BRANCH: ${{ github.event.inputs.base || github.event.client_payload.base || 'demo/oncall-incident' }}
     steps:
+      - name: Demo branches only
+        run: |
+          case "$BASE_BRANCH" in
+            demo/*) echo "Responding on $BASE_BRANCH" ;;
+            *) echo "::error::Demo only: refusing to work on '$BASE_BRANCH' (needs demo/*)."; exit 1 ;;
+          esac
+
       - uses: actions/checkout@v4
         with:
+          ref: ${{ env.BASE_BRANCH }}
           token: ${{ secrets.ONCALL_PR_TOKEN || github.token }}
 
       - uses: astral-sh/setup-uv@v6
@@ -89,7 +104,6 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           GH_TOKEN: ${{ secrets.ONCALL_PR_TOKEN || github.token }}
-          BASE_BRANCH: ${{ github.event.inputs.base || github.event.client_payload.base || github.ref_name }}
         run: |
           git config user.name "oncall-agent"
           git config user.email "oncall-agent@users.noreply.github.com"

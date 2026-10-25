@@ -77,8 +77,13 @@ Repository secrets for the workflow:
 | `ANTHROPIC_API_KEY` **or** `CLAUDE_CODE_OAUTH_TOKEN` | yes | Claude Code credential (API key, or a subscription token from `claude setup-token`) |
 | `ONCALL_PR_TOKEN` | optional | A PAT for pushing and opening the PR. Pull requests opened with the default `GITHUB_TOKEN` do not trigger CI |
 
-Run the responder by hand: **Actions → On-call responder → Run workflow**, paste the content of an
-`incidents/<trace_id>.json` file, and optionally the branch the fix should target.
+Run the responder by hand: **Actions → On-call responder → Run workflow** (from `main`), paste the
+content of an `incidents/<trace_id>.json` file, and keep the target `demo/oncall-incident`.
+
+**Demo only.** For the course demonstration the responder works exclusively on `demo/*` branches:
+it checks the demo branch out, pushes the fix to a new `oncall/*` branch and opens the pull request
+into the demo branch. A run for `main` or any other branch is refused, so it never changes the
+main code. Removing the feature means deleting `.github/workflows/oncall-responder.yml`.
 
 ## 4. Runbook: a reading submission fails
 
