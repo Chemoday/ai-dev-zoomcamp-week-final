@@ -91,6 +91,7 @@ Each task is atomic, self-contained, and designed to be executed sequentially by
 ### Task 6: Frontend UI — Resident Mobile View & Chairman Dashboard
 - **Tracking Issue:** [#7](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/7)
 - **Target Module:** `frontend/` at the repository root, built against the API contract [`docs/openapi.json`](openapi.json) (see [API.md](API.md)). How the built files are served (by the backend or by Caddy) is decided in this task.
+- **Integration rules:** [FRONTEND_GUIDE.md](FRONTEND_GUIDE.md) (demo users, errors, decimal strings, the popup flow, shared demo state).
 - **Requirements:**
   - Role switcher / Demo login bar at the top for easy grading (`Switch Role: Resident Apt 14 | Resident Apt 2 | Chairman | Accountant`).
   - Sticky red **Emergency Alert Banner** when active emergency exists for the user's entrance/building.
@@ -116,9 +117,9 @@ Each task is atomic, self-contained, and designed to be executed sequentially by
   - Auto-seed a realistic demo building (`"KÜ Sõpruse 12"`) on first startup: 2 entrances, 6 apartments, Basement Master Meters, 3 historical periods (`2026-07`, `2026-08`, `2026-09`), and 1 open period (`2026-10`).
   - _The CI workflow originally planned here moved to Task 9, which runs right after Task 1 so every later task goes through CI._
 - **Acceptance Criteria & Tests:**
-  - [ ] A fresh `docker compose up --build` seeds the demo building exactly once; restarting does not duplicate data.
-  - [ ] Seeded users exist for every role in the demo role switcher (Chairman, Accountant, Owner Apt 14, Owner Apt 1, Tenant).
-  - [ ] Historical periods are `LOCKED` with readings; `2026-10` is `OPEN_FOR_RESIDENTS`.
+  - [x] A fresh `docker compose up --build` seeds the demo building exactly once; restarting does not duplicate data.
+  - [x] Seeded users exist for every role in the demo role switcher (Chairman, Accountant, Owner Apt 14, Owner Apt 1, Tenant).
+  - [x] Historical periods are `LOCKED` with readings; `2026-10` is `OPEN_FOR_RESIDENTS`.
 
 ---
 
