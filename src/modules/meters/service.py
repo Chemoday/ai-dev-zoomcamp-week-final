@@ -249,7 +249,7 @@ class MetersService:
                 new_value=reading.value,
                 source=source,
                 changed_by_user_id=user.id,
-                reason=request.reason or self._default_reason(source, old_value),
+                reason=self._audit_reason(source, old_value, request.reason),
             )
         )
         await self.session.flush()
@@ -338,6 +338,14 @@ class MetersService:
                     "consumption_delta": str(delta),
                 },
             )
+
+    @staticmethod
+    def _audit_reason(source: ReadingSource, old_value: Decimal | None, reason: str | None) -> str:
+        """Updates always record what changed, so the board sees why a value moved."""
+        default = MetersService._default_reason(source, old_value)
+        if old_value is None:
+            return reason or default
+        return f"{default}: {reason.strip()} (was {old_value})"
 
     @staticmethod
     def _default_reason(source: ReadingSource, old_value: Decimal | None) -> str:
