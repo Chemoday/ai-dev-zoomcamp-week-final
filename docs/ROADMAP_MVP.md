@@ -53,6 +53,7 @@ Goal: Deliver a production-grade, extensible Modular Monolith implementing `prop
    - Structured JSON logs, metrics, and traces correlated by `trace_id` (zero PII in logs).
    - User-impact alert rule (triggers on 5xx errors or unhandled exceptions in `/api/v1/meters/readings`).
    - On-Call Agent workflow: Receives alert context, diagnoses the issue via trace/logs, runs `pytest`, and opens a fix PR.
+   - Deployment to a self-hosted VPS behind Caddy (HTTPS via `sslip.io` hostnames): CD auto-deploys `main` to `dev`, `prod` is promoted manually, and a failed health check rolls back to the previous image.
 
 ---
 

@@ -132,3 +132,31 @@ Each task is atomic, self-contained, and designed to be executed sequentially by
   - [ ] Exported telemetry contains no PII or credentials (covered by a test).
   - [ ] The alert fires when `POST /api/v1/meters/readings` returns 5xx and delivers a webhook payload containing the `trace_id`.
   - [ ] The on-call agent, triggered by that webhook, finds the correlated error log, adds a regression test, gets `pytest` green and opens a pull request that references the alert.
+
+---
+
+### Task 9: Deployment to VPS, CD Pipeline (dev → manual prod) & Rollback
+- **Tracking Issue:** [#12](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/12)
+- **Target:** `deploy/`, `.github/workflows/`, `docs/DEPLOYMENT.md`
+- **Files to Create:**
+  - `deploy/docker-compose.deploy.yml`, `deploy/Caddyfile`, `deploy/deploy.sh`
+  - `.github/workflows/deploy.yml`, `docs/DEPLOYMENT.md`
+- **Requirements:**
+  - Target host: a self-hosted Linux VPS with Docker and a single public IP, shared with unrelated containers.
+  - HTTPS without a purchased domain: Caddy with automatic Let's Encrypt certificates on `sslip.io` hostnames. Prod is `<ip-with-dashes>.sslip.io`, dev is `dev.<ip-with-dashes>.sslip.io`.
+  - Two isolated environments on the same host (`dev`, `prod`): separate Compose projects, databases, volumes and env files.
+  - Only Caddy binds host ports (`80`, `443`). All other services stay on internal Docker networks, so containers already running on the VPS are not affected.
+  - Images are built once in CI, tagged with the commit SHA and pushed to GHCR. The server only pulls images by tag and never builds.
+  - **CD to dev:** every push to `main` that passes CI deploys that SHA to `dev` automatically over SSH.
+  - **Manual prod:** a `workflow_dispatch` run promotes a chosen, already-deployed-to-dev tag to `prod`, gated by the GitHub Environment `production`.
+  - **Rollback:** `deploy.sh` records the previously deployed tag. If `/health/ready` fails after `up`, it automatically restores the previous tag. A manual rollback is the same workflow run with an older tag.
+  - Migrations stay backward compatible (expand/contract), so the previous image still runs after a rollback.
+  - Secrets (SSH key, database passwords) live only in GitHub Environment secrets and server-side env files, never in the repository.
+- **Acceptance Criteria & Tests:**
+  - [ ] Merging a PR into `main` deploys that commit to dev automatically; `https://dev.<ip-with-dashes>.sslip.io/health` returns `200` with `X-Trace-Id`.
+  - [ ] Prod is deployed only through the manual workflow and serves `https://<ip-with-dashes>.sslip.io`.
+  - [ ] Both URLs serve valid HTTPS certificates.
+  - [ ] A deploy whose health check fails restores the previous image tag automatically; a manual rollback to an earlier tag works with one workflow run.
+  - [ ] Dev and prod use separate databases; a dev deploy never touches prod data.
+  - [ ] Containers on the VPS that are unrelated to this project keep running, and their ports are untouched.
+  - [ ] `docs/DEPLOYMENT.md` documents the one-time VPS setup, the pipeline and the rollback procedure.
