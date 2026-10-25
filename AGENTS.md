@@ -6,16 +6,17 @@ All AI coding, testing, and on-call agents operating in this repository MUST fol
 - [Product Vision & Privacy Rules](docs/VISION.md)
 - [Modular Monolith Architecture & Domain Rules](docs/ARCHITECTURE.md)
 - [MVP Scope & Roadmap](docs/ROADMAP_MVP.md)
-- [Database Schema Specification](docs/SCHEMA.md) *(to be generated)*
-- [REST API Contracts](docs/API.md) *(to be generated)*
-- [Implementation Task Backlog](docs/TASKS.md) *(to be generated)*
+- [Database Schema Specification](docs/SCHEMA.md)
+- [REST API Contracts](docs/API.md) and the machine-readable [OpenAPI contract](docs/openapi.json)
+- [Frontend Integration Guide](docs/FRONTEND_GUIDE.md)
+- [Implementation Task Backlog](docs/TASKS.md)
 - [Product Backlog: known problems after the MVP](docs/BACKLOG.md)
 - [Deployment, CD & Rollback](docs/DEPLOYMENT.md)
 
 ## 2. Agent Team Roles
 1. **System Architect Agent:** Maintains `docs/*.md`. Any schema or API change must be documented before implementation.
 2. **Core & Backend Agent:** Implements FastAPI modules (`src/core`, `src/modules/*`, `src/plugins/*`). Enforces strict module boundaries and `EventBus` decoupling.
-3. **Frontend Agent:** Builds a clean, mobile-first UI supporting the 2-step anomaly confirmation modals, emergency alert banners, and chairman matrix view.
+3. **Frontend Agent:** Builds a clean, mobile-first UI in `frontend/` supporting the 2-step anomaly confirmation modals, emergency alert banners, and chairman matrix view. Works against `docs/openapi.json` and follows `docs/FRONTEND_GUIDE.md`; never changes backend code.
 4. **QA & Observability Agent:** Writes unit tests for `policies.py` and integration tests for API routers. Verifies OpenTelemetry `trace_id` propagation and ensures zero PII leakage.
 5. **On-Call Responder Agent:** Activated by monitoring webhooks when user-impact alerts fire. Inspects correlated logs by `trace_id`, writes a regression test, patches the bug, and submits a Pull Request.
 
