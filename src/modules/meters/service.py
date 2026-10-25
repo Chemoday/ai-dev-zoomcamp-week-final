@@ -12,8 +12,8 @@ from opentelemetry import trace
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.database import DbSession
-from src.core.event_bus import EventBus, get_event_bus
+from src.core.database import DbSession, get_event_outbox
+from src.core.event_bus import EventOutbox
 from src.core.exceptions import DomainError
 from src.modules.meters.events import MeterReadingSubmitted, ReadingPeriodStatusChanged
 from src.modules.meters.models import MeterDevice, MeterReading, MeterReadingLog, ReadingPeriod
@@ -86,11 +86,12 @@ def _period_dto(period: ReadingPeriod) -> PeriodDTO:
 
 class MetersService:
     def __init__(
-        self, session: AsyncSession, property_service: PropertyService, event_bus: EventBus
+        self, session: AsyncSession, property_service: PropertyService, outbox: EventOutbox
     ):
         self.session = session
         self.property_service = property_service
-        self.event_bus = event_bus
+        # Events go out only after the request's transaction commits (docs/BACKEND_CONVENTIONS.md).
+        self.outbox = outbox
 
     # --- Submitting readings --------------------------------------------------------------------
 
@@ -252,7 +253,7 @@ class MetersService:
             )
         )
         await self.session.flush()
-        await self._publish_submitted(reading, meter, period)
+        self._add_submitted_event(reading, meter, period)
         return self._reading_response(reading, period), (
             "created" if existing is None else "updated"
         )
@@ -586,7 +587,7 @@ class MetersService:
             estimated.append((reading, meter))
         await self.session.flush()
         for reading, meter in estimated:
-            await self._publish_submitted(reading, meter, period)
+            self._add_submitted_event(reading, meter, period)
 
         return EstimateResponse(
             period_code=period.period_code,
@@ -623,7 +624,7 @@ class MetersService:
             )
         period.status = target
         await self.session.flush()
-        await self.event_bus.publish(
+        self.outbox.add(
             ReadingPeriodStatusChanged(
                 period_id=period.id,
                 building_id=period.building_id,
@@ -823,10 +824,10 @@ class MetersService:
             is_anomaly_confirmed=reading.is_anomaly_confirmed,
         )
 
-    async def _publish_submitted(
+    def _add_submitted_event(
         self, reading: MeterReading, meter: MeterDevice, period: ReadingPeriod
     ) -> None:
-        await self.event_bus.publish(
+        self.outbox.add(
             MeterReadingSubmitted(
                 reading_id=reading.id,
                 meter_id=meter.id,
@@ -844,6 +845,6 @@ class MetersService:
 def get_meters_service(
     session: DbSession,
     property_service: PropertyService = Depends(get_property_service),
-    event_bus: EventBus = Depends(get_event_bus),
+    outbox: EventOutbox = Depends(get_event_outbox),
 ) -> MetersService:
-    return MetersService(session, property_service, event_bus)
+    return MetersService(session, property_service, outbox)
