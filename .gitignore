@@ -11,3 +11,6 @@ htmlcov/
 .claude/scheduled_tasks.lock
 # On-call agent output (docker compose oncall-agent)
 incidents/
+# Client build output (frontend/ itself is synced from the frontend repository)
+frontend/node_modules/
+frontend/dist/

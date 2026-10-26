@@ -9,3 +9,8 @@ tests
 **/*.pyc
 .pytest_cache
 .ruff_cache
+# Client: built inside the image; mockups and AI Studio files never ship
+frontend/node_modules
+frontend/dist
+frontend/.aistudio
+frontend/public/assets/aistudio
