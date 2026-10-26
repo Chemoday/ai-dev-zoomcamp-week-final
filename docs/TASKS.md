@@ -90,7 +90,7 @@ Each task is atomic, self-contained, and designed to be executed sequentially by
 
 ### Task 6: Frontend UI — Resident Mobile View & Chairman Dashboard
 - **Tracking Issue:** [#7](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/7)
-- **Target Module:** `frontend/` at the repository root, built against the API contract [`docs/openapi.json`](openapi.json) (see [API.md](API.md)). How the built files are served (by the backend or by Caddy) is decided in this task.
+- **Target Module:** `frontend/` at the repository root, built against the API contract [`docs/openapi.json`](openapi.json) (see [API.md](API.md)). The built files are served by the backend (`src/core/frontend.py`, see [FRONTEND_GIT_WORKFLOW.md](FRONTEND_GIT_WORKFLOW.md)); the client is built in Google AI Studio and synced into `frontend/` by the Frontend sync workflow.
 - **Integration rules:** [FRONTEND_GUIDE.md](FRONTEND_GUIDE.md) (demo users, errors, decimal strings, the popup flow, shared demo state).
 - **Requirements:**
   - Role switcher / Demo login bar at the top for easy grading (`Switch Role: Resident Apt 14 | Resident Apt 2 | Chairman | Accountant`).
@@ -99,13 +99,13 @@ Each task is atomic, self-contained, and designed to be executed sequentially by
   - **Community Micro-Forum** with inline Privacy Display Mode selector (`Apt. 14` / `I. P. (Apt. 14)` / `Ivan Petrov (Apt. 14)`).
   - **Chairman View:** Monthly Reading Matrix, Master Meter comparison, 1-click "Estimate Missing by Average", Reading History modal (🕒), and "Publish Emergency Alert" form.
 - **Acceptance Criteria & Tests:**
-  - [ ] Switching role changes the acting demo user (`X-Demo-User-Id`) and the UI shows only the views that role is allowed to use.
-  - [ ] The emergency banner appears only for users in the targeted building/entrance, and "Acknowledge" hides it for that user.
-  - [ ] An anomalous reading shows popup #1, then popup #2, and is saved only after the second confirmation; a normal reading saves at once.
-  - [ ] The forum shows only masked author badges; changing the privacy mode updates the preview badge.
-  - [ ] Chairman view: matrix shows `SUBMITTED` / `MISSING` / `AUTO_ESTIMATED` / `ANOMALY_CONFIRMED`; "Estimate Missing" fills the missing rows; the history modal shows the audit trail; the emergency form publishes an alert.
-  - [ ] Frontend tests cover the two-popup confirmation flow and run with a single command.
-  - [ ] Layout is usable at mobile width (375px).
+  - [x] Switching role changes the acting demo user (`X-Demo-User-Id`) and the UI shows only the views that role is allowed to use.
+  - [x] The emergency banner appears only for users in the targeted building/entrance, and "Acknowledge" hides it for that user.
+  - [x] An anomalous reading shows popup #1, then popup #2, and is saved only after the second confirmation; a normal reading saves at once.
+  - [x] The forum shows only masked author badges; changing the privacy mode updates the preview badge.
+  - [x] Chairman view: matrix shows `SUBMITTED` / `MISSING` / `AUTO_ESTIMATED` / `ANOMALY_CONFIRMED`; "Estimate Missing" fills the missing rows; the history modal shows the audit trail; the emergency form publishes an alert.
+  - [x] Frontend tests cover the two-popup confirmation flow and run with a single command.
+  - [x] Layout is usable at mobile width (375px).
 
 ---
 
