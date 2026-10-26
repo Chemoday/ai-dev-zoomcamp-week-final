@@ -8,6 +8,7 @@ import {
   sumMeterValues,
   compareMeterValues,
   formatSignedDelta,
+  stepMeterValue,
 } from './meterValue.js'
 
 test('normalizeMeterInput normalizes comma, spaces, and validates pattern', () => {
@@ -34,3 +35,19 @@ test('scaled BigInt arithmetic avoids floating point errors', () => {
   assert.equal(formatSignedDelta('2.100'), '+2.100')
   assert.equal(formatSignedDelta('-1.500'), '-1.500')
 })
+
+test('stepMeterValue steps by 0.1 and initializes from fallback when empty', () => {
+  // Empty input uses fallbackValue and applies ±0.1
+  assert.equal(stepMeterValue('', '84.100', 1), '84.200')
+  assert.equal(stepMeterValue('', '84.100', -1), '84.000')
+  assert.equal(stepMeterValue('   ', '10.000', 1), '10.100')
+
+  // Existing input steps from current input without floating-point drift
+  assert.equal(stepMeterValue('84.200', '84.100', 1), '84.300')
+  assert.equal(stepMeterValue('84.200', '84.100', -1), '84.100')
+  assert.equal(stepMeterValue('10', '10.000', -1), '9.900')
+
+  // Clamps at 0.000
+  assert.equal(stepMeterValue('0.050', '0.000', -1), '0.000')
+})
+

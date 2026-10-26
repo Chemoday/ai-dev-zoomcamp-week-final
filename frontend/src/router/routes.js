@@ -5,6 +5,7 @@ import ForumView from '@/views/forum/ForumView.vue'
 import PostDetailView from '@/views/forum/PostDetailView.vue'
 import DocumentsView from '@/views/documents/DocumentsView.vue'
 import WelcomeView from '@/views/entry/WelcomeView.vue'
+import ThemeLabView from '@/views/theme/ThemeLabView.vue'
 
 export const APP_ROUTES = [
   {
@@ -77,6 +78,15 @@ export const APP_ROUTES = [
     component: WelcomeView,
     meta: {
       layout: 'PublicLayout',
+      roles: ['USER', 'BOARD', 'CHAIRMAN', 'ACCOUNTANT'],
+    },
+  },
+  {
+    path: '/theme-lab',
+    name: 'theme-lab',
+    component: ThemeLabView,
+    meta: {
+      layout: 'AppLayout',
       roles: ['USER', 'BOARD', 'CHAIRMAN', 'ACCOUNTANT'],
     },
   },

@@ -1,13 +1,14 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
+import { useRoute } from 'vue-router'
 import { useSessionStore } from '@/stores/session.js'
-import { useTranslations } from '@/locales/index.js'
 
+const route = useRoute()
 const session = useSessionStore()
 const menuOpen = ref(false)
 const saving = ref(false)
+const rootRef = ref(null)
 
-const t = computed(() => useTranslations(session.lang))
 const membership = computed(() => session.activeMembership)
 
 const modes = ['APARTMENT_ONLY', 'INITIALS', 'FULL_NAME']
@@ -15,7 +16,7 @@ const modes = ['APARTMENT_ONLY', 'INITIALS', 'FULL_NAME']
 const badgePreviewText = computed(() => {
   if (!membership.value) {
     const role = session.me?.building_role || 'USER'
-    return t.value.buildingRole[role] || role
+    return session.t(`buildingRole.${role}`)
   }
   const b = membership.value.preview_badge
   return b.display_label
@@ -31,10 +32,31 @@ async function selectPrivacyMode(mode) {
     saving.value = false
   }
 }
+
+function handleDocumentClick(e) {
+  if (menuOpen.value && rootRef.value && !rootRef.value.contains(e.target)) {
+    menuOpen.value = false
+  }
+}
+
+watch(
+  () => route.fullPath,
+  () => {
+    menuOpen.value = false
+  },
+)
+
+onMounted(() => {
+  document.addEventListener('click', handleDocumentClick)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('click', handleDocumentClick)
+})
 </script>
 
 <template>
-  <div v-if="membership" class="relative shrink-0">
+  <div v-if="membership" ref="rootRef" class="relative shrink-0">
     <button
       type="button"
       :aria-expanded="menuOpen"

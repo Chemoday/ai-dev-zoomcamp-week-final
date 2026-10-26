@@ -4,6 +4,16 @@ import { activeDemoUserId, setDemoUser } from '@/api/client.js'
 import { getDemoUsers } from '@/api/endpoints/demo.js'
 import { getBuilding, getMe, updatePrivacy } from '@/api/endpoints/property.js'
 import { i18n, readStoredLocale, setI18nLocale, SUPPORTED_LOCALES } from '@/locales/index.js'
+import {
+  applyTheme,
+  DEFAULT_CYCLE_INDEX,
+  normalizeCycleIndex,
+  readStoredTheme,
+  readStoredThemeCyclesMap,
+  THEME_CYCLE_MODES,
+  THEME_PRESETS,
+  writeStoredThemeCyclesMap,
+} from '@/utils/theme.js'
 
 export const useSessionStore = defineStore('session', () => {
   const demoUsers = ref([])
@@ -17,6 +27,10 @@ export const useSessionStore = defineStore('session', () => {
 
   const selectedApartmentId = ref('')
   const lang = ref(setI18nLocale(readStoredLocale()))
+  const themeCycles = ref(readStoredThemeCyclesMap())
+  const initialThemeId = readStoredTheme()
+  const theme = ref(applyTheme(initialThemeId, themeCycles.value[initialThemeId] ?? DEFAULT_CYCLE_INDEX))
+  const themeCycle = computed(() => normalizeCycleIndex(themeCycles.value[theme.value] ?? DEFAULT_CYCLE_INDEX))
   const sessionRevision = ref(0)
 
   const actingUserId = computed(() => activeDemoUserId.value)
@@ -66,6 +80,43 @@ export const useSessionStore = defineStore('session', () => {
   function setLang(newLang) {
     const valid = setI18nLocale(newLang)
     lang.value = valid
+  }
+
+  function getPresetCycle(presetId) {
+    return normalizeCycleIndex(themeCycles.value[presetId] ?? DEFAULT_CYCLE_INDEX)
+  }
+
+  function setTheme(newThemeId) {
+    const cycleForTarget = getPresetCycle(newThemeId)
+    theme.value = applyTheme(newThemeId, cycleForTarget)
+  }
+
+  function setThemeCycle(cycleIndex, targetThemeId = theme.value) {
+    const normalized = normalizeCycleIndex(cycleIndex)
+    themeCycles.value = {
+      ...themeCycles.value,
+      [targetThemeId]: normalized,
+    }
+    writeStoredThemeCyclesMap(themeCycles.value)
+    if (targetThemeId === theme.value) {
+      applyTheme(theme.value, normalized)
+    }
+  }
+
+  function cycleTheme(step = 1, targetThemeId = theme.value) {
+    const current = getPresetCycle(targetThemeId)
+    const next = normalizeCycleIndex(current + step)
+    themeCycles.value = {
+      ...themeCycles.value,
+      [targetThemeId]: next,
+    }
+    writeStoredThemeCyclesMap(themeCycles.value)
+    theme.value = applyTheme(targetThemeId, next)
+  }
+
+  function resetAllThemeCycles() {
+    themeCycles.value = {}
+    writeStoredThemeCyclesMap({})
   }
 
   /**
@@ -216,8 +267,18 @@ export const useSessionStore = defineStore('session', () => {
     selectedApartmentId,
     lang,
     supportedLocales: SUPPORTED_LOCALES,
+    theme,
+    themeCycle,
+    themeCycles,
+    themeCycleModes: THEME_CYCLE_MODES,
+    themePresets: THEME_PRESETS,
     sessionRevision,
     setLang,
+    getPresetCycle,
+    setTheme,
+    setThemeCycle,
+    cycleTheme,
+    resetAllThemeCycles,
     t,
     selectApartment,
     loadDemoUsers,

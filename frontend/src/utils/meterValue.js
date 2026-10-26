@@ -113,3 +113,23 @@ export function formatSignedDelta(deltaStr) {
   const formatted = fromScaledBigInt(scaled)
   return scaled > 0n ? `+${formatted}` : formatted
 }
+
+/**
+ * Step a meter reading string by multiples of 0.1 (100 milli-units) using scaled BigInt.
+ * If currentInput is empty or not a valid meter input, uses fallbackValue as the base reading
+ * and applies the step (+0.1 or -0.1) to it. Clamps at 0.000 minimum.
+ * @param {string | null | undefined} currentInput
+ * @param {string | null | undefined} fallbackValue
+ * @param {number} stepTenths
+ * @returns {string}
+ */
+export function stepMeterValue(currentInput, fallbackValue, stepTenths = 1) {
+  const normalizedCurrent = normalizeMeterInput(currentInput)
+  const baseStr =
+    normalizedCurrent !== null ? normalizedCurrent : normalizeMeterInput(fallbackValue)
+  const baseScaled = toScaledBigInt(baseStr) ?? 0n
+  const deltaScaled = BigInt(Math.trunc(stepTenths)) * 100n
+  const nextScaled = baseScaled + deltaScaled
+  return fromScaledBigInt(nextScaled < 0n ? 0n : nextScaled)
+}
+
