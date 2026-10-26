@@ -144,6 +144,10 @@ class PeriodDTO(BaseModel):
     due_date: datetime
 
 
+class PeriodListResponse(BaseModel):
+    periods: list[PeriodDTO]  # newest first
+
+
 class ReadingSummary(BaseModel):
     reading_id: uuid.UUID
     value: MeterAmount
@@ -169,6 +173,9 @@ class DashboardMeter(BaseModel):
     location_label: str
     unit: MeterUnit
     previous_value: MeterAmount
+    # Hints before submitting: the anomaly check's 3-period average and last period's consumption.
+    average_delta: MeterAmount | None
+    previous_delta: MeterAmount | None
     reading: ReadingSummary | None
 
 
