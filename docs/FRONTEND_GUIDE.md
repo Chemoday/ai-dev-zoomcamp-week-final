@@ -9,6 +9,9 @@ client would assume.
 Do not change backend code from the frontend task. If the API is missing something, write it down
 as a request for the backend (an issue) instead.
 
+Repositories, commits and the way a frontend change reaches dev (Google AI Studio sync) are in
+[FRONTEND_GIT_WORKFLOW.md](FRONTEND_GIT_WORKFLOW.md).
+
 ---
 
 ## 1. Project setup
