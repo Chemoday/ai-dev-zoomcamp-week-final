@@ -2,18 +2,20 @@
 
 import uuid
 from collections.abc import Iterable
+from decimal import Decimal
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database import DbSession
 from src.core.exceptions import DomainError
-from src.modules.property.models import Apartment, ApartmentMembership, User
+from src.modules.property.models import Apartment, ApartmentMembership, Building, User
 from src.modules.property.policies import format_author_badge, most_private_display_mode
 from src.modules.property.schemas import (
     ApartmentDTO,
     ApartmentMembershipDTO,
     AuthorBadgeDTO,
+    BuildingResponse,
     BuildingRole,
     CurrentUserDTO,
     DisplayMode,
@@ -104,6 +106,31 @@ class PropertyService:
         )
         return PrivacyUpdateResponse(
             membership_id=membership.id, privacy_display_mode=mode, preview_badge=badge
+        )
+
+    # --- Building details -----------------------------------------------------------------------
+
+    async def get_building(self, current_user: CurrentUserDTO) -> BuildingResponse:
+        building = await self.session.get_one(Building, current_user.building_id)
+        apartment_count, entrance_count, area = (
+            await self.session.execute(
+                select(
+                    func.count(Apartment.id),
+                    func.count(Apartment.entrance.distinct()),
+                    func.coalesce(func.sum(Apartment.area_m2), 0),
+                ).where(Apartment.building_id == building.id)
+            )
+        ).one()
+        return BuildingResponse(
+            building_id=building.id,
+            name=building.name,
+            registry_code=building.registry_code,
+            address=building.address,
+            country_code=building.country_code,
+            reading_deadline_day=building.reading_deadline_day,
+            apartment_count=apartment_count,
+            entrance_count=entrance_count,
+            heated_area_m2=Decimal(area),
         )
 
     # --- Building structure for other modules --------------------------------------------------

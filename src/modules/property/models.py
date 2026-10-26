@@ -31,6 +31,8 @@ class Building(Base):
 
     id: Mapped[uuid.UUID] = uuid_pk()
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # The association's code in the commercial register (Estonia: 8 digits); unknown until entered.
+    registry_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
     address: Mapped[str] = mapped_column(String(500), nullable=False)
     country_code: Mapped[str] = mapped_column(
         String(2), nullable=False, default="EE", server_default="EE"

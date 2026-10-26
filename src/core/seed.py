@@ -47,6 +47,8 @@ def demo_id(name: str) -> uuid.UUID:
 
 
 DEMO_BUILDING_ID = demo_id("building")
+DEMO_REGISTRY_CODE = "80123456"
+DEMO_ADDRESS = "Sõpruse pst 12, Kristiine, 10615 Tallinn"
 
 
 # --- The demo building --------------------------------------------------------------------------
@@ -205,7 +207,8 @@ class _Builder:
         building = Building(
             id=DEMO_BUILDING_ID,
             name="KÜ Sõpruse 12",
-            address="Sõpruse pst 12, 10615 Tallinn",
+            registry_code=DEMO_REGISTRY_CODE,
+            address=DEMO_ADDRESS,
             country_code="EE",
             reading_deadline_day=4,
         )
@@ -437,8 +440,12 @@ async def seed_demo_data(session: AsyncSession, now: datetime | None = None) -> 
     """
     await session.execute(select(func.pg_advisory_xact_lock(SEED_LOCK_KEY)))
     if await session.scalar(select(Building.id).limit(1)) is not None:
-        demo_present = await session.get(Building, DEMO_BUILDING_ID) is not None
-        logger.info("seed_skipped", reason="already_seeded" if demo_present else "not_empty")
+        demo = await session.get(Building, DEMO_BUILDING_ID)
+        if demo is not None and demo.registry_code is None:
+            # Seeded before the registry code existed (migration 004): complete the demo building.
+            demo.registry_code, demo.address = DEMO_REGISTRY_CODE, DEMO_ADDRESS
+            logger.info("seed_demo_building_completed")
+        logger.info("seed_skipped", reason="already_seeded" if demo else "not_empty")
         return False
 
     now = now or datetime.now(UTC)
