@@ -106,10 +106,16 @@ def calculate_rolling_average_delta(
     docs/ROADMAP_MVP.md for which readings count as history). Rounded half-up to 0.001.
     """
     default_delta = _require_decimal("default_delta", default_delta)
+    average = rolling_average_delta(historical_deltas)
+    return default_delta if average is None else average
+
+
+def rolling_average_delta(historical_deltas: Sequence[Decimal]) -> Decimal | None:
+    """The same mean as calculate_rolling_average_delta, or None without usable deltas."""
     checked = [_require_decimal("historical delta", delta) for delta in historical_deltas]
     usable = [delta for delta in checked[-ROLLING_WINDOW:] if delta >= 0]
     if not usable:
-        return default_delta
+        return None
     average = sum(usable, start=Decimal(0)) / len(usable)
     return canonical_meter_value(average.quantize(METER_PRECISION, rounding=ROUND_HALF_UP))
 

@@ -147,6 +147,14 @@ any level ──► 422 READING_BELOW_PREVIOUS  → show previous_value, no popu
   `period` is `null` when the building has none. `reading` is `null` until something was submitted
   for that meter; `previous_value` is what the new value must not go below.
 - A user can belong to several apartments: render one card per apartment.
+- **Consumption hints**: each dashboard meter has `average_delta` (the 3-period average the anomaly
+  check uses) and `previous_delta` (last period's consumption), both decimal strings or `null`.
+  Show them before submitting ("usually about 4.2 m³"); a delta far above `average_delta` will
+  trigger the popups. There is no building average for residents: do not compute or show one.
+- **Period selector and export archive**: `GET /meters/periods` lists every period of the building,
+  newest first (`period_code`, `status`, `due_date`). Use it instead of guessing period codes.
+- **Association header**: `GET /property/building` returns the name, registry code, address,
+  apartment and entrance counts and `heated_area_m2` (a decimal string). Load it once per session.
 - **Matrix** (`/meters/periods/{code}/matrix`): apartment status is the most urgent of its meters
   (`MISSING` > `ANOMALY_CONFIRMED` > `AUTO_ESTIMATED` > `SUBMITTED`). `master_meters` holds the
   basement meters with their ids, so the board can submit them from the matrix. The matrix has no

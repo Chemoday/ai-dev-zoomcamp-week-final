@@ -13,6 +13,7 @@ from src.modules.meters.schemas import (
     DashboardResponse,
     EstimateResponse,
     MatrixResponse,
+    PeriodListResponse,
     PeriodStatusUpdateRequest,
     PeriodStatusUpdateResponse,
     ReadingHistoryResponse,
@@ -88,6 +89,14 @@ async def reading_history(
     service: MetersService = Depends(get_meters_service),
 ) -> ReadingHistoryResponse:
     return await service.get_history(user, reading_id)
+
+
+@router.get("/periods", response_model=PeriodListResponse)
+async def list_periods(
+    user: CurrentUserDTO = Depends(get_current_user),
+    service: MetersService = Depends(get_meters_service),
+) -> PeriodListResponse:
+    return await service.list_periods(user)
 
 
 @router.get(

@@ -451,3 +451,57 @@ async def test_database_rejects_unknown_enum_values(
             text(f"UPDATE {table} SET {column} = :value"), {"value": bad_value}
         )
     await db_session.rollback()
+
+
+# --- GET /building ------------------------------------------------------------------------------
+
+
+async def test_building_details_for_any_user_of_the_building(
+    api_client: AsyncClient, db_session: AsyncSession, demo: DemoBuilding
+) -> None:
+    demo.building.registry_code = "80123456"
+    await db_session.flush()
+
+    response = await api_client.get("/api/v1/property/building", headers=as_user(demo.tenant_2.id))
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "building_id": str(demo.building.id),
+        "name": "KÜ Sõpruse 12",
+        "registry_code": "80123456",
+        "address": "Sõpruse pst 12, Tallinn",
+        "country_code": "EE",
+        "reading_deadline_day": 4,
+        "apartment_count": 2,
+        "entrance_count": 2,
+        "heated_area_m2": "108.60",  # 2 x 54.30
+    }
+    assert_no_raw_pii(response.text, demo)
+
+
+async def test_building_counts_only_its_own_apartments(
+    api_client: AsyncClient, db_session: AsyncSession, demo: DemoBuilding
+) -> None:
+    other = await create_building(db_session, name="KÜ Teine 1")
+    await create_apartment(db_session, other, "1", entrance=5)
+    new_building = await create_building(db_session, name="KÜ Uus 1")
+    chairman = await create_user(db_session, new_building, "New Chair", BuildingRole.CHAIRMAN)
+
+    own = (
+        await api_client.get("/api/v1/property/building", headers=as_user(demo.owner_14.id))
+    ).json()
+    empty = (await api_client.get("/api/v1/property/building", headers=as_user(chairman.id))).json()
+
+    assert (own["apartment_count"], own["entrance_count"]) == (2, 2)
+    assert empty["name"] == "KÜ Uus 1" and empty["registry_code"] is None
+    assert (empty["apartment_count"], empty["entrance_count"], empty["heated_area_m2"]) == (
+        0,
+        0,
+        "0.00",
+    )
+
+
+async def test_building_requires_authentication(api_client: AsyncClient) -> None:
+    response = await api_client.get("/api/v1/property/building")
+
+    assert response.status_code == 401

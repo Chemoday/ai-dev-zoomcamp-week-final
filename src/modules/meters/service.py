@@ -24,6 +24,7 @@ from src.modules.meters.policies import (
     calculate_rolling_average_delta,
     can_transition_period,
     meter_submission_status,
+    rolling_average_delta,
     validate_reading_delta,
 )
 from src.modules.meters.schemas import (
@@ -40,6 +41,7 @@ from src.modules.meters.schemas import (
     MatrixResponse,
     MeterUnit,
     PeriodDTO,
+    PeriodListResponse,
     PeriodStatus,
     PeriodStatusUpdateResponse,
     ReadingHistoryResponse,
@@ -394,6 +396,7 @@ class MetersService:
                             if reading is not None
                             else await self._previous_value(meter, period)
                         ),
+                        **(await self._consumption_hints(meter, period)),
                         reading=_summary(reading) if reading is not None else None,
                     )
                 )
@@ -408,6 +411,36 @@ class MetersService:
         return DashboardResponse(
             period=_period_dto(period) if period else None, apartments=apartments
         )
+
+    async def _consumption_hints(
+        self, meter: MeterDevice, period: ReadingPeriod | None
+    ) -> dict[str, Decimal | None]:
+        if period is None:
+            return {"average_delta": None, "previous_delta": None}
+        previous_delta = await self.session.scalar(
+            select(MeterReading.consumption_delta)
+            .join(ReadingPeriod, ReadingPeriod.id == MeterReading.period_id)
+            .where(
+                MeterReading.meter_id == meter.id,
+                ReadingPeriod.period_code < period.period_code,
+            )
+            .order_by(ReadingPeriod.period_code.desc())
+            .limit(1)
+        )
+        return {
+            "average_delta": rolling_average_delta(await self._history_deltas(meter.id, period)),
+            "previous_delta": previous_delta,
+        }
+
+    # --- Periods --------------------------------------------------------------------------------
+
+    async def list_periods(self, user: CurrentUserDTO) -> PeriodListResponse:
+        periods = await self.session.scalars(
+            select(ReadingPeriod)
+            .where(ReadingPeriod.building_id == user.building_id)
+            .order_by(ReadingPeriod.period_code.desc())
+        )
+        return PeriodListResponse(periods=[_period_dto(period) for period in periods])
 
     # --- Chairman matrix ------------------------------------------------------------------------
 

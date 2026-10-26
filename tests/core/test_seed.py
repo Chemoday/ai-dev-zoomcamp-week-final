@@ -63,6 +63,39 @@ async def test_the_demo_building_is_seeded_exactly_once(seeded: AsyncSession) ->
     assert await count(seeded, ReadingPeriod) == 4
 
 
+async def test_the_demo_building_has_its_association_details(
+    api_client: AsyncClient, seeded: AsyncSession
+) -> None:
+    response = await api_client.get(
+        "/api/v1/property/building", headers=as_demo(DemoUserKey.OWNER_14)
+    )
+
+    body = response.json()
+    apartments = list(await seeded.scalars(select(Apartment)))
+    assert body["registry_code"] == "80123456"
+    assert body["address"] == "Sõpruse pst 12, Kristiine, 10615 Tallinn"
+    assert (body["apartment_count"], body["entrance_count"]) == (6, 2)
+    assert Decimal(body["heated_area_m2"]) == sum(a.area_m2 for a in apartments)
+
+
+async def test_an_older_demo_building_gets_the_new_details_once(seeded: AsyncSession) -> None:
+    building = await seeded.get(Building, DEMO_BUILDING_ID)
+    building.registry_code, building.address = None, "Sõpruse pst 12, 10615 Tallinn"
+    await seeded.flush()
+
+    assert await seed_demo_data(seeded) is False
+    assert (building.registry_code, building.address) == (
+        "80123456",
+        "Sõpruse pst 12, Kristiine, 10615 Tallinn",
+    )
+
+    # A code someone entered later is never overwritten.
+    building.registry_code, building.address = "80999999", "Edited address"
+    await seeded.flush()
+    assert await seed_demo_data(seeded) is False
+    assert (building.registry_code, building.address) == ("80999999", "Edited address")
+
+
 async def test_a_database_with_data_is_never_seeded(db_session: AsyncSession) -> None:
     # A real association that switched SEED_DEMO_DATA on by mistake keeps its data alone.
     await create_building(db_session, name="Real association")

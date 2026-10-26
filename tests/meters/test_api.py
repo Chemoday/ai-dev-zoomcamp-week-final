@@ -17,6 +17,7 @@ from src.modules.meters.events import MeterReadingSubmitted, ReadingPeriodStatus
 from src.modules.meters.models import MeterDevice, MeterReading, MeterReadingLog, ReadingPeriod
 from src.modules.meters.schemas import MeterUnit, PeriodStatus, ReadingSource, ResourceType
 from src.modules.property.models import ApartmentMembership
+from src.modules.property.schemas import BuildingRole
 from tests.db_utils import failing_commit
 from tests.factories import (
     create_apartment,
@@ -612,6 +613,82 @@ async def test_dashboard_for_an_earlier_period_and_unsubmitted_meters(
     assert july["apartments"][0]["meters"][0]["previous_value"] == "100.000"
 
 
+async def test_dashboard_meters_carry_the_average_and_last_consumption(
+    api_client: AsyncClient, world: MetersWorld
+) -> None:
+    async def hints(user, period_code: str | None = None) -> tuple:
+        params = {"period_code": period_code} if period_code else {}
+        body = (
+            await api_client.get(f"{API}/my-dashboard", params=params, headers=as_user(user))
+        ).json()
+        meter = body["apartments"][0]["meters"][0]
+        return meter["average_delta"], meter["previous_delta"]
+
+    assert await hints(world.owner_14) == ("5.000", "6.000")  # deltas 4, 5, 6
+    assert await hints(world.owner_5) == (None, None)  # no history
+    assert await hints(world.owner_14, "2026-07") == (None, None)  # the first period
+
+    # The hints describe the history before the period, so submitting does not change them.
+    await submit(api_client, world.owner_14, world.meter_14, "120.000")
+    assert await hints(world.owner_14) == ("5.000", "6.000")
+
+
+async def test_dashboard_average_is_the_one_the_anomaly_check_uses(
+    api_client: AsyncClient, db_session: AsyncSession, world: MetersWorld
+) -> None:
+    # An estimate is no consumption history, but it is still last period's consumption.
+    await db_session.execute(
+        update(MeterReading)
+        .where(
+            MeterReading.meter_id == world.meter_14.id,
+            MeterReading.period_id == world.periods["2026-09"].id,
+        )
+        .values(source=ReadingSource.AUTO_ESTIMATED)
+    )
+
+    body = (await api_client.get(f"{API}/my-dashboard", headers=as_user(world.owner_14))).json()
+    anomaly = await submit(api_client, world.owner_14, world.meter_14, "1245.000")
+
+    meter = body["apartments"][0]["meters"][0]
+    assert (meter["average_delta"], meter["previous_delta"]) == ("4.500", "6.000")
+    assert anomaly.json()["average_delta"] == meter["average_delta"]
+
+
+# --- Periods ------------------------------------------------------------------------------------
+
+
+async def test_periods_are_listed_newest_first_for_any_user_of_the_building(
+    api_client: AsyncClient, db_session: AsyncSession, world: MetersWorld
+) -> None:
+    other = await create_building(db_session, name="KÜ Teine 1")
+    await create_period(db_session, other, "2026-11")
+
+    response = await api_client.get(f"{API}/periods", headers=as_user(world.tenant_2))
+
+    assert response.status_code == 200
+    periods = response.json()["periods"]
+    assert [p["period_code"] for p in periods] == ["2026-10", "2026-09", "2026-08", "2026-07"]
+    assert periods[0] == {
+        "period_code": "2026-10",
+        "status": "OPEN_FOR_RESIDENTS",
+        "due_date": "2026-11-04T23:59:59Z",
+    }
+    assert {p["status"] for p in periods[1:]} == {"LOCKED"}
+
+
+async def test_periods_of_a_new_building_and_without_authentication(
+    api_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    building = await create_building(db_session, name="KÜ Uus 1")
+    chairman = await create_user(db_session, building, "New Chair", role=BuildingRole.CHAIRMAN)
+
+    empty = await api_client.get(f"{API}/periods", headers=as_user(chairman))
+    anonymous = await api_client.get(f"{API}/periods")
+
+    assert empty.json() == {"periods": []}
+    assert anonymous.status_code == 401
+
+
 # --- CSV export ---------------------------------------------------------------------------------
 
 
@@ -984,7 +1061,9 @@ async def test_dashboard_without_any_period(
     body = (await api_client.get(f"{API}/my-dashboard", headers=as_user(owner))).json()
 
     assert body["period"] is None
-    assert body["apartments"][0]["meters"][0]["previous_value"] == "5.000"
+    meter = body["apartments"][0]["meters"][0]
+    assert meter["previous_value"] == "5.000"
+    assert (meter["average_delta"], meter["previous_delta"]) == (None, None)
 
 
 async def test_dashboard_defaults_to_the_open_period_not_a_pre_created_one(

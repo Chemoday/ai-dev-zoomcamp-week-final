@@ -76,6 +76,25 @@ The payload never contains the raw `full_name`, `email` or `phone`, not even the
 ```
 Memberships are ordered by entrance, then apartment number in natural order (`2`, `10`, `14`, `14A`). The top-level `privacy_display_mode` is the most private mode across the memberships (`APARTMENT_ONLY` when there are none); it is the mode used when the user acts without an apartment context. Only memberships of apartments in the user's own building are returned.
 
+### `GET /api/v1/property/building`
+The association and its building, for the app header and the dashboard. Any user of the building.
+```json
+{
+  "building_id": "uuid",
+  "name": "KÜ Sõpruse 12",
+  "registry_code": "80123456",
+  "address": "Sõpruse pst 12, Kristiine, 10615 Tallinn",
+  "country_code": "EE",
+  "reading_deadline_day": 4,
+  "apartment_count": 6,
+  "entrance_count": 2,
+  "heated_area_m2": "329.20"
+}
+```
+- `registry_code` is the association's code in the commercial register, `null` until it is entered.
+- `apartment_count`, `entrance_count` and `heated_area_m2` are computed from the apartments. `heated_area_m2` is the sum of the apartments' `area_m2`, a decimal string with 2 places (`"0.00"` without apartments); common areas are not included.
+- No people in the payload: no chairman name, no contact details.
+
 ### `PATCH /api/v1/property/memberships/{membership_id}/privacy`
 Updates how the user is displayed to neighbors in the micro-forum.
 Only the user of that membership may change it. A membership that belongs to someone else returns `404 MEMBERSHIP_NOT_FOUND`, the same as an unknown one, so membership IDs cannot be probed.
@@ -108,7 +127,7 @@ Returns the resident's apartment meters, previous readings, current period statu
       "meters": [
         {
           "meter_id": "uuid", "resource_type": "COLD_WATER", "serial_number": "SN-1", "location_label": "Bathroom",
-          "unit": "m3", "previous_value": "124.000",
+          "unit": "m3", "previous_value": "124.000", "average_delta": "4.200", "previous_delta": "3.900",
           "reading": { "reading_id": "uuid", "value": "128.200", "consumption_delta": "4.200", "source": "RESIDENT", "is_anomaly_confirmed": false }
         }
       ]
@@ -117,6 +136,23 @@ Returns the resident's apartment meters, previous readings, current period statu
 }
 ```
 `reading` is `null` until something was submitted for that period.
+
+Consumption hints, so the client can show "your usual consumption is about 4.2 m³" before anything is submitted:
+- `average_delta`: the meter's 3-period average before this period, exactly the value the anomaly check uses (docs/ROADMAP_MVP.md, section C: only `RESIDENT`, `ADMIN_OVERRIDE` and `IOT_WEBHOOK` readings that are not confirmed anomalies count). `null` when there is no such history.
+- `previous_delta`: the consumption of the latest earlier period that has a reading for the meter (any source). `null` when there is none.
+- Both are `null` when `period` is `null`. There is no comparison with the rest of the building: other apartments' consumption is not shown to residents.
+
+GET /api/v1/meters/periods
+The reading periods of the user's building, newest first, for a period selector and the archive of exports. Any user of the building.
+```json
+{
+  "periods": [
+    { "period_code": "2026-10", "status": "OPEN_FOR_RESIDENTS", "due_date": "2026-11-04T23:59:59Z" },
+    { "period_code": "2026-09", "status": "LOCKED", "due_date": "2026-10-04T23:59:59Z" }
+  ]
+}
+```
+An empty list when the building has no periods yet. Matrix and export stay limited to the staff roles.
 
 POST /api/v1/meters/readings
 Submits or updates a meter reading for an open period.
@@ -395,6 +431,7 @@ Seeded at startup by `src/core/seed.py` when `SEED_DEMO_DATA=true` (local Docker
 | Owner Apt 1 | `USER` | 1, owner | `FULL_NAME` | `Kati Mets (Apt. 1)` (`OWNER`) |
 | Tenant Apt 2 | `USER` | 2, tenant | `INITIALS` | `M. T. (Apt. 2)` (`RESIDENT`) |
 
+- **Association:** `KÜ Sõpruse 12`, registry code `80123456`, `Sõpruse pst 12, Kristiine, 10615 Tallinn`. An instance seeded before the registry code existed gets the code and the address on its next start (only the demo building, only while its `registry_code` is empty).
 - **Building:** entrance 1 has apartments 1, 2, 3; entrance 2 has 13, 14, 15. Apartments 3 and 13 have no app users. Every apartment has a cold and a hot water meter; the basement has a cold and a hot water master meter.
 - **History:** `2026-07`, `2026-08`, `2026-09` are `LOCKED` with readings for every meter. Readings of apartments without app users were entered by the chairman (`ADMIN_OVERRIDE`); Apt 13 in `2026-08` is `AUTO_ESTIMATED`. The master meters show a small loss over the apartments. Apt 14's cold water reading of `2026-09` was corrected once, so its history has two entries.
 - **October (`2026-10`, `OPEN_FOR_RESIDENTS`):** Apt 1 submitted both meters and Apt 2 its cold water. Apt 15's hot water is a confirmed anomaly (31 m³, a leaking tap). **Apt 14 has submitted nothing**, so the demo can start there; a normal value is its previous value plus about 4.8 m³ (cold) or 2.2 m³ (hot). A delta above 3 × its 3-month average (about 14.4 m³ cold, 6.5 m³ hot) or above the meter limit (25 / 15 m³) triggers the two popups.

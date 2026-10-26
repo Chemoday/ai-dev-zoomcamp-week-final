@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends
 from src.core.exceptions import AUTH_ERRORS, error_responses
 from src.core.security import get_current_user
 from src.modules.property.schemas import (
+    BuildingResponse,
     CurrentUserDTO,
     MeResponse,
     PrivacyUpdateRequest,
@@ -27,6 +28,14 @@ async def get_me(
     service: PropertyService = Depends(get_property_service),
 ) -> MeResponse:
     return await service.get_me(current_user)
+
+
+@router.get("/building", response_model=BuildingResponse)
+async def get_building(
+    current_user: CurrentUserDTO = Depends(get_current_user),
+    service: PropertyService = Depends(get_property_service),
+) -> BuildingResponse:
+    return await service.get_building(current_user)
 
 
 @router.patch(

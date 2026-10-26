@@ -5,9 +5,11 @@ an AuthorBadgeDTO, already masked according to the user's privacy display mode.
 """
 
 import uuid
+from decimal import Decimal
 from enum import StrEnum
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, PlainSerializer, WithJsonSchema
 
 
 class BuildingRole(StrEnum):
@@ -98,6 +100,31 @@ class MeResponse(BaseModel):
     building_role: BuildingRole
     privacy_display_mode: DisplayMode
     memberships: list[MembershipView]
+
+
+# An area in m2 in a response: a string with exactly 2 decimals ("329.20"), never a JSON number.
+AreaAmount = Annotated[
+    Decimal,
+    PlainSerializer(lambda value: f"{value:.2f}", return_type=str),
+    WithJsonSchema(
+        {"type": "string", "pattern": r"^[0-9]+\.[0-9]{2}$", "examples": ["329.20"]},
+        mode="serialization",
+    ),
+]
+
+
+class BuildingResponse(BaseModel):
+    """The association and its building; public within the building (no people in it)."""
+
+    building_id: uuid.UUID
+    name: str
+    registry_code: str | None
+    address: str
+    country_code: str
+    reading_deadline_day: int
+    apartment_count: int
+    entrance_count: int
+    heated_area_m2: AreaAmount
 
 
 class PrivacyUpdateRequest(BaseModel):
