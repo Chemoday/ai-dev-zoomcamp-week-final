@@ -2,8 +2,10 @@
 import { computed, ref, watch } from 'vue'
 import { submitReading } from '@/api/endpoints/meters.js'
 import {
+  compareMeterValues,
   formatSignedDelta,
   normalizeMeterInput,
+  stepMeterValue,
   subtractMeterValues,
 } from '@/utils/meterValue.js'
 import {
@@ -108,6 +110,13 @@ const liveDelta = computed(() => {
   return props.meter.reading?.consumption_delta || null
 })
 
+// Whether the current input matches the previous reading (resulting in 0.000 consumption)
+const isSameAsPrevious = computed(() => {
+  const normalized = normalizeMeterInput(input.value)
+  if (normalized === null || !props.meter.previous_value) return false
+  return compareMeterValues(normalized, props.meter.previous_value) === 0
+})
+
 // Board/Accountant changing an existing reading must provide a reason (REASON_REQUIRED)
 const needsReasonField = computed(
   () => Boolean(props.meter.reading) && canSubmitAnyMeter.value,
@@ -148,8 +157,8 @@ const meterStatus = computed(() => {
   return 'SUBMITTED'
 })
 
-function handleInputEdit(event) {
-  input.value = event.target.value
+function updateInputValue(nextVal) {
+  input.value = nextVal
   // Editing the input while a popup is open cancels it; the next submit starts again at level 0
   if (flow.value.anomaly || flow.value.fieldError) {
     flow.value = resetAnomalyOnEdit(flow.value)
@@ -159,6 +168,22 @@ function handleInputEdit(event) {
     value: input.value,
     delta: liveDelta.value,
   })
+}
+
+function handleInputEdit(event) {
+  updateInputValue(event.target.value)
+}
+
+function applyPreviousReading() {
+  if (isInputDisabled.value || submitting.value || !props.meter.previous_value) return
+  updateInputValue(props.meter.previous_value)
+}
+
+function stepReadingByTenths(stepTenths) {
+  if (isInputDisabled.value || submitting.value) return
+  const fallbackBase = props.meter.previous_value || props.meter.reading?.value || '0.000'
+  const nextVal = stepMeterValue(input.value, fallbackBase, stepTenths)
+  updateInputValue(nextVal)
 }
 
 async function submit(level = 0) {
@@ -252,13 +277,57 @@ defineExpose({
 
     <!-- Input Field -->
     <div class="flex flex-col gap-1">
-      <label
-        :for="`meter-input-${meter.meter_id}`"
-        class="font-label-md text-label-md text-on-surface font-semibold flex justify-between"
-      >
-        <span>{{ session.t('readings.meterCard.newReading') }}</span>
-        <span class="text-on-surface-variant text-[11px] font-normal">{{ displayUnit }}</span>
-      </label>
+      <div class="flex items-center justify-between gap-2 mb-0.5">
+        <label
+          :for="`meter-input-${meter.meter_id}`"
+          class="font-label-md text-label-md text-on-surface font-semibold"
+        >
+          {{ session.t('readings.meterCard.newReading') }}
+        </label>
+
+        <button
+          v-if="!isInputDisabled && meter.previous_value"
+          type="button"
+          :disabled="submitting"
+          :aria-pressed="isSameAsPrevious"
+          :title="session.t('readings.meterCard.sameAsPreviousTooltip', { value: meter.previous_value, unit: displayUnit })"
+          class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] leading-none transition-colors border cursor-pointer select-none disabled:opacity-50"
+          :class="
+            isSameAsPrevious
+              ? 'bg-secondary-container/70 text-on-secondary-container border-secondary/40 font-semibold'
+              : 'bg-surface-container-lowest text-on-surface-variant border-outline-variant/60 hover:text-on-surface hover:border-outline hover:bg-surface-container-high/50 font-medium'
+          "
+          @click="applyPreviousReading"
+        >
+          <svg
+            v-if="isSameAsPrevious"
+            class="w-2.5 h-2.5 text-secondary shrink-0"
+            viewBox="0 0 12 12"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M2.5 6.5L5 9L9.5 3.5" />
+          </svg>
+          <svg
+            v-else
+            class="w-2.5 h-2.5 text-on-surface-variant shrink-0"
+            viewBox="0 0 12 12"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <rect x="2" y="2" width="8" height="8" rx="1.5" />
+          </svg>
+          <span>{{ session.t('readings.meterCard.sameAsPreviousBtn', { unit: displayUnit }) }}</span>
+        </button>
+        <span v-else class="text-on-surface-variant text-[11px] font-normal">{{ displayUnit }}</span>
+      </div>
+
       <div class="flex items-center gap-2">
         <div class="relative flex-1">
           <input
@@ -268,14 +337,47 @@ defineExpose({
             inputmode="decimal"
             :disabled="isInputDisabled || submitting"
             :placeholder="meter.previous_value"
-            class="w-full h-11 px-3 pr-12 bg-surface-container-lowest border rounded-lg font-numeric-display tabular-nums text-lg text-on-surface font-semibold focus:outline-none focus:ring-2 focus:ring-primary shadow-2xs disabled:opacity-60 disabled:bg-surface-container"
+            class="w-full h-11 px-3 pr-16 bg-surface-container-lowest border rounded-lg font-numeric-display tabular-nums text-lg text-on-surface font-semibold focus:outline-none focus:ring-2 focus:ring-primary shadow-2xs disabled:opacity-60 disabled:bg-surface-container"
             :class="flow.fieldError ? 'border-error focus:ring-error' : 'border-outline-variant'"
             @input="handleInputEdit"
             @keydown.enter.prevent="submit(0)"
+            @keydown.up.prevent="stepReadingByTenths(1)"
+            @keydown.down.prevent="stepReadingByTenths(-1)"
           />
-          <span class="absolute right-3 top-2.5 text-xs text-on-surface-variant font-medium pointer-events-none">
-            {{ displayUnit }}
-          </span>
+          <div class="absolute right-2 inset-y-0 flex items-center gap-1">
+            <span class="text-xs text-on-surface-variant font-medium pointer-events-none select-none">
+              {{ displayUnit }}
+            </span>
+            <div
+              v-if="!isInputDisabled"
+              class="flex flex-col items-center justify-center w-4 h-6 rounded border border-outline-variant/50 bg-surface-container-low/80 overflow-hidden divide-y divide-outline-variant/40 shrink-0"
+            >
+              <button
+                type="button"
+                :disabled="submitting"
+                :title="session.t('readings.meterCard.stepUpTooltip')"
+                :aria-label="session.t('readings.meterCard.stepUpTooltip')"
+                class="w-full h-3 flex items-center justify-center text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high active:bg-primary/15 transition-colors disabled:opacity-40 cursor-pointer"
+                @click="stepReadingByTenths(1)"
+              >
+                <svg class="w-2.5 h-2.5" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M2.5 6.25L5 3.75L7.5 6.25" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                :disabled="submitting"
+                :title="session.t('readings.meterCard.stepDownTooltip')"
+                :aria-label="session.t('readings.meterCard.stepDownTooltip')"
+                class="w-full h-3 flex items-center justify-center text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high active:bg-primary/15 transition-colors disabled:opacity-40 cursor-pointer"
+                @click="stepReadingByTenths(-1)"
+              >
+                <svg class="w-2.5 h-2.5" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M2.5 3.75L5 6.25L7.5 3.75" />
+                </svg>
+              </button>
+            </div>
+          </div>
         </div>
 
         <button

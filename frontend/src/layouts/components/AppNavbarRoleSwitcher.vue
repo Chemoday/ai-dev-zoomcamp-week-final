@@ -1,9 +1,12 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
+import { useRoute } from 'vue-router'
 import { useSessionStore } from '@/stores/session.js'
 
+const route = useRoute()
 const session = useSessionStore()
 const dropdownOpen = ref(false)
+const rootRef = ref(null)
 
 async function handleSelectUser(userId) {
   dropdownOpen.value = false
@@ -11,10 +14,31 @@ async function handleSelectUser(userId) {
     await session.switchUser(userId)
   }
 }
+
+function handleDocumentClick(e) {
+  if (dropdownOpen.value && rootRef.value && !rootRef.value.contains(e.target)) {
+    dropdownOpen.value = false
+  }
+}
+
+watch(
+  () => route.fullPath,
+  () => {
+    dropdownOpen.value = false
+  },
+)
+
+onMounted(() => {
+  document.addEventListener('click', handleDocumentClick)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('click', handleDocumentClick)
+})
 </script>
 
 <template>
-  <div v-if="session.demoUsers.length > 0" class="relative shrink-0">
+  <div v-if="session.demoUsers.length > 0" ref="rootRef" class="relative shrink-0">
     <button
       type="button"
       aria-label="Switch seeded demo user"

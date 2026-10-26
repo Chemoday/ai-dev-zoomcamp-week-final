@@ -1,31 +1,13 @@
 <script setup>
 import { computed } from 'vue'
-import { RouterLink, useRoute } from 'vue-router'
+import { RouterLink } from 'vue-router'
 import { useSessionStore } from '@/stores/session.js'
 import { useRole } from '@/composables/useRole.js'
-import { useTranslations } from '@/locales/index.js'
-import { APP_ROUTES } from '@/router/routes.js'
 import AppNavbarRoleSwitcher from './AppNavbarRoleSwitcher.vue'
 import AppNavbarPrivacySelector from './AppNavbarPrivacySelector.vue'
 
-const route = useRoute()
 const session = useSessionStore()
 const { buildingRole } = useRole()
-const t = computed(() => useTranslations(session.lang))
-
-const visibleNavRoutes = computed(() =>
-  APP_ROUTES.filter((r) => {
-    if (!r.meta?.navKey) return false
-    const allowed = r.meta?.roles
-    if (!allowed || allowed.length === 0) return true
-    return allowed.includes(buildingRole.value)
-  }),
-)
-
-function isRouteActive(item) {
-  if (item.path === '/') return route.path === '/'
-  return route.path.startsWith(item.path)
-}
 
 const avatarInitials = computed(() => {
   const label =
@@ -43,8 +25,8 @@ const avatarInitials = computed(() => {
 
 <template>
   <div class="h-16 sm:h-20 w-full max-w-[1280px] mx-auto px-3 sm:px-gutter flex items-center justify-between gap-2 sm:gap-4">
-    <!-- Brand + Desktop Navigation -->
-    <div class="flex items-center gap-4 lg:gap-5 min-w-0">
+    <!-- Brand -->
+    <div class="flex items-center gap-4 min-w-0 shrink-0">
       <RouterLink to="/" class="flex flex-col shrink-0 group">
         <div class="flex items-center gap-1.5">
           <span class="font-headline-md text-base sm:text-headline-md font-bold tracking-tight text-on-surface whitespace-nowrap">
@@ -58,28 +40,6 @@ const avatarInitials = computed(() => {
           {{ session.buildingAddress }} • Reg {{ session.buildingRegistryCode }}
         </span>
       </RouterLink>
-
-      <nav aria-label="Main Navigation" class="hidden xl:flex items-center gap-1">
-        <RouterLink
-          v-for="item in visibleNavRoutes"
-          :key="item.name"
-          :to="item.path"
-          class="px-2.5 py-1.5 rounded-lg font-label-md text-xs transition-colors whitespace-nowrap shrink-0 inline-flex items-center gap-1.5"
-          :class="
-            isRouteActive(item)
-              ? 'bg-primary-container text-on-primary font-semibold'
-              : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'
-          "
-        >
-          <span>{{ session.t(`nav.${item.meta.navKey}`) }}</span>
-          <span
-            v-if="item.meta.navKey === 'accounting'"
-            class="inline-flex items-center px-1.5 py-0.5 rounded-full bg-secondary-fixed text-on-secondary-fixed font-label-md text-[10px] uppercase font-bold"
-          >
-            {{ session.t('nav.newBadge') }}
-          </span>
-        </RouterLink>
-      </nav>
     </div>
 
     <!-- Right Controls: Role Switcher, Privacy Mode, Language Switch, Profile -->
