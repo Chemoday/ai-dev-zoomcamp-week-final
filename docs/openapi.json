@@ -116,6 +116,55 @@
         ]
       }
     },
+    "/api/v1/property/building": {
+      "get": {
+        "tags": [
+          "property"
+        ],
+        "summary": "Get Building",
+        "operationId": "get_building_api_v1_property_building_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildingResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated. error_code: `NOT_AUTHENTICATED`, `INVALID_TOKEN`, `UNKNOWN_USER`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error. error_code: `INTERNAL_SERVER_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
     "/api/v1/property/memberships/{membership_id}/privacy": {
       "patch": {
         "tags": [
@@ -473,6 +522,55 @@
             }
           }
         }
+      }
+    },
+    "/api/v1/meters/periods": {
+      "get": {
+        "tags": [
+          "meters"
+        ],
+        "summary": "List Periods",
+        "operationId": "list_periods_api_v1_meters_periods_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PeriodListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated. error_code: `NOT_AUTHENTICATED`, `INVALID_TOKEN`, `UNKNOWN_USER`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error. error_code: `INTERNAL_SERVER_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ]
       }
     },
     "/api/v1/meters/periods/{period_code}/matrix": {
@@ -1688,6 +1786,72 @@
         ],
         "title": "AuthorBadgeDTO"
       },
+      "BuildingResponse": {
+        "properties": {
+          "building_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Building Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "registry_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Registry Code"
+          },
+          "address": {
+            "type": "string",
+            "title": "Address"
+          },
+          "country_code": {
+            "type": "string",
+            "title": "Country Code"
+          },
+          "reading_deadline_day": {
+            "type": "integer",
+            "title": "Reading Deadline Day"
+          },
+          "apartment_count": {
+            "type": "integer",
+            "title": "Apartment Count"
+          },
+          "entrance_count": {
+            "type": "integer",
+            "title": "Entrance Count"
+          },
+          "heated_area_m2": {
+            "type": "string",
+            "pattern": "^[0-9]+\\.[0-9]{2}$",
+            "title": "Heated Area M2",
+            "examples": [
+              "329.20"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "building_id",
+          "name",
+          "registry_code",
+          "address",
+          "country_code",
+          "reading_deadline_day",
+          "apartment_count",
+          "entrance_count",
+          "heated_area_m2"
+        ],
+        "title": "BuildingResponse",
+        "description": "The association and its building; public within the building (no people in it)."
+      },
       "BuildingRole": {
         "type": "string",
         "enum": [
@@ -1827,6 +1991,36 @@
               "1254.000"
             ]
           },
+          "average_delta": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^-?[0-9]+\\.[0-9]{3}$",
+                "examples": [
+                  "1254.000"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Average Delta"
+          },
+          "previous_delta": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^-?[0-9]+\\.[0-9]{3}$",
+                "examples": [
+                  "1254.000"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Delta"
+          },
           "reading": {
             "anyOf": [
               {
@@ -1846,6 +2040,8 @@
           "location_label",
           "unit",
           "previous_value",
+          "average_delta",
+          "previous_delta",
           "reading"
         ],
         "title": "DashboardMeter"
@@ -2521,6 +2717,22 @@
           "due_date"
         ],
         "title": "PeriodDTO"
+      },
+      "PeriodListResponse": {
+        "properties": {
+          "periods": {
+            "items": {
+              "$ref": "#/components/schemas/PeriodDTO"
+            },
+            "type": "array",
+            "title": "Periods"
+          }
+        },
+        "type": "object",
+        "required": [
+          "periods"
+        ],
+        "title": "PeriodListResponse"
       },
       "PeriodStatus": {
         "type": "string",
