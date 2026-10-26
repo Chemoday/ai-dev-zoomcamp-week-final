@@ -1,0 +1,6 @@
+{
+  "name": "Apartment Association Platform",
+  "description": "Vue 3 frontend for the Apartment Association Platform with role-based meter readings, two-step anomaly confirmation, emergencies, and community forum.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
