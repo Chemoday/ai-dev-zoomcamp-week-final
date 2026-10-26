@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     # Comma-separated plugin modules under src/plugins/ (docs/ARCHITECTURE.md).
     ENABLED_PLUGINS: str = "common.csv_export"
 
+    # The built client (docs/FRONTEND_GIT_WORKFLOW.md). Served at / when it holds an index.html.
+    FRONTEND_DIST_DIR: str = "frontend/dist"
+
     LOG_LEVEL: str = "INFO"
     LOG_JSON: bool = True
 

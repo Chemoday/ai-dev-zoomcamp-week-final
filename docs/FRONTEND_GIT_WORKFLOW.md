@@ -9,10 +9,10 @@ dev.
 Google Stitch (mockup) ──► Google AI Studio (Build) ◄──two-way sync──► frontend repository
                                                                             │ Frontend sync workflow
                                                                             ▼
-     this repository: branch frontend/sync-<sha> ──► PR into main ──► CI (lint, build, pytest)
-                                                                            │ merge
-                                                                            ▼
-                                                                 automatic deploy to dev
+     this repository: branch frontend/sync ──► PR into main ──► CI (lint, test, build, pytest)
+                                                     │ label deploy-dev          │ merge
+                                                     ▼                           ▼
+                                               preview on dev          automatic deploy to dev
 ```
 
 ## 1. Two repositories
@@ -45,12 +45,17 @@ Every push becomes a reviewable part of the next sync pull request.
 
 | Rule | Why |
 | :--- | :--- |
-| `package.json` and `package-lock.json` at the repository root | `npm ci` must install exactly what was tested |
-| `npm run build` writes static files to `dist/` | The image copies `dist/`; the backend serves it at `/` |
-| `npm run lint` and `npm test` exist and pass | CI runs them on every sync pull request |
-| Base path `/`; Vue Router in HTML5 history mode | The backend answers unknown paths with `index.html` |
+| `package.json` and `bun.lock` at the repository root (AI Studio uses bun) | `bun install --frozen-lockfile` installs exactly what was tested |
+| `bun run build` writes static files to `dist/` | The image copies `dist/`; the backend serves it at `/` |
+| `bun run lint` and `npm run test` exist and pass (tests use `node:test`, so they run on Node) | CI runs them on every sync pull request |
+| Base path `/`; Vue Router in HTML5 history mode | The backend answers client routes with `index.html` |
 | API calls use relative URLs (`/api/v1/...`) | The same build works on localhost, dev and prod; no CORS |
-| Vite dev proxy: `/api`, `/health`, `/docs` → `VITE_API_PROXY_TARGET` (default `http://localhost:8000`) | Local development against a local or the dev backend |
+| `VITE_BACKEND_URL` for `bun run dev`: set, the dev server proxies `/api` to that backend; unset, it uses its built-in mock API | Local development against a local backend, the dev URL, or no backend at all |
+| `index.html` is a static file, configuration comes from the API | The backend never rewrites the client, so the client can move to its own server later |
+
+**Not part of the app:** the AI Studio workspace (`.aistudio/`) and the mockups in
+`public/assets/aistudio/`. The sync leaves them out, so they never reach this repository or a
+build. Keep app files out of these two folders.
 
 **Never commit:** `node_modules/`, `dist/`, `.env` files (only `.env.example`), API keys.
 AI Studio templates often read `GEMINI_API_KEY` / `process.env.API_KEY`: the client does not
@@ -71,14 +76,25 @@ with an API change and a new `docs/openapi.json`; the frontend then regenerates 
 
 ## 3. Bringing a frontend version into this repository
 
-The **Frontend sync** workflow (*Actions → Frontend sync → Run workflow*, optionally with a commit
-of the frontend repository; default: its latest `main`):
+The **Frontend sync** workflow (`.github/workflows/frontend-sync.yml`) runs every 15 minutes and
+by hand (*Actions → Frontend sync → Run workflow*, optionally with a branch or commit of the
+frontend repository; default: its `main`). When the frontend has a version that `main` does not:
 
-1. copies the frontend repository into `frontend/` without `.git`, `node_modules` and `dist`;
+1. it copies the frontend repository into `frontend/`, without `.git`, `node_modules`, `dist`,
+   `.env` files, `.aistudio/` and `public/assets/aistudio/`;
 2. writes the synced commit into `frontend/.source-commit`;
-3. pushes the branch `frontend/sync-<short sha>` and opens a pull request into `main` titled
-   `feat(frontend): sync <short sha>`, with the frontend commit messages since the last sync;
-4. CI runs on the pull request: frontend lint, tests and build, plus the backend `pytest`.
+3. force-pushes the single branch `frontend/sync` (one commit on top of `main`) and opens, or
+   updates, the pull request `feat(frontend): sync <short sha>` with the frontend commit messages
+   since the version on `main`, and the label `deploy-dev`;
+4. CI runs on the pull request: frontend lint, tests and build, the backend `pytest`, the image,
+   and then the deploy of that pull request to dev.
+
+So a frontend push is on dev about 20 minutes later at most (15 for the schedule, ~5 for CI),
+without anyone merging. Run the workflow by hand to skip the wait.
+
+Configuration (once): repository variable `FRONTEND_REPOSITORY` (`owner/name`) and secret
+`FRONTEND_SYNC_TOKEN`, a token that reads the frontend repository and writes this one. A personal
+token is required: pushes and pull requests made with the default `GITHUB_TOKEN` start no CI.
 
 Rules for the pull request:
 
@@ -92,24 +108,42 @@ Rules for the pull request:
 
 | Way | When | Time |
 | :--- | :--- | :--- |
-| `npm run dev` with `VITE_API_PROXY_TARGET` set to a local backend (`docker compose up`) or the dev URL | Every layout change | Instant |
-| Label `deploy-dev` on the sync pull request: CI deploys that pull request to dev | Show a finished screen before the merge | ~5 min |
-| Merge the sync pull request into `main` | The screen is done | ~5 min, automatic |
+| `bun run dev` with `VITE_BACKEND_URL` set to a local backend (`docker compose up`) or the dev URL | Every layout change | Instant |
+| The sync pull request (label `deploy-dev`, set by the workflow): every update goes to dev | Check a version before it reaches `main` | ≤ 20 min after the push |
+| Merge the sync pull request into `main` | The version is accepted | ~5 min, automatic |
+| `docker compose up --build` in this repository | The whole app locally: the image builds `frontend/` and serves it at http://localhost:8000 | A few minutes |
 
 Dev is a single environment: whatever was deployed last is what it shows, whether it came from a
-pull request or from `main`. Do not use the `deploy-dev` label on a pull request that changes
-database migrations. Prod is promoted manually (docs/DEPLOYMENT.md).
+pull request or from `main`. The label `deploy-dev` works on any same-repository pull request; do
+not use it on one that changes database migrations. Prod is promoted manually
+(docs/DEPLOYMENT.md).
 
-## 5. Branches of this repository
+## 5. How the backend serves the client
+
+`src/core/frontend.py`, active only when the image contains `frontend/dist/index.html`:
+
+| Request | Answer |
+| :--- | :--- |
+| `/assets/*` (hashed build files) | The file, `Cache-Control: public, max-age=31536000, immutable` |
+| Any other `GET`/`HEAD` path without a file extension (`/`, `/documents`, `/forum/posts/…`) | `index.html`, `Cache-Control: no-cache` |
+| A path with a file extension | The file from `dist/` if it exists, else a JSON `404` (a stale tab never gets HTML instead of a script) |
+| `/api/…`, `/health`, `/docs`, `/redoc`, `/openapi.json`, other methods | The backend as before: an unknown API path stays a JSON `404` |
+
+**Moving the client to its own server later** (e.g. Caddy or nginx serving `dist/`, with `/api`,
+`/health` and `/docs` proxied to the backend) needs no client change, as long as two rules hold:
+`index.html` stays a static file (no server-side templating), and API changes stay backward
+compatible (add fields; remove or rename only after a period where both work), because then the
+client and the backend are deployed separately and can briefly run different versions.
+
+## 6. Branches of this repository
 
 | Branch | What | Who |
 | :--- | :--- | :--- |
 | `main` | Always deployable; every merge deploys to dev | Merges only through pull requests with green CI |
 | `feat/...`, `fix/...`, `docs/...` | Backend, CI and docs work, one task per branch | Backend agent |
-| `frontend/sync-<sha>` | One frontend version, created by the Frontend sync workflow | Workflow |
+| `frontend/sync` | The next frontend version; force-pushed by the Frontend sync workflow | Workflow |
 | `demo/*` | Course demonstrations (on-call responder); never merged | Demo only |
 
-The Frontend sync workflow, the `deploy-dev` label and serving the client from the backend are
-tracked in issue
+The Frontend sync workflow, the `deploy-dev` label and serving the client from the backend were
+added in
 [#28 Frontend in CI, the Docker image and dev](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/28).
-Until it is done, sections 3 and 4 describe the target, not what runs today.

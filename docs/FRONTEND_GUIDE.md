@@ -22,9 +22,9 @@ Repositories, commits and the way a frontend change reaches dev (Google AI Studi
   `/health` and `/docs` to the backend (e.g. the Vite `server.proxy` option) instead of calling
   `http://localhost:8000` directly. Locally the backend listens on `BACKEND_PORT` (default `8000`).
 - **Single command (course requirement).** `docker compose up --build` must still start the whole
-  application, including the built frontend, and `pytest` must stay green. Plan how the built files
-  are served (the backend with FastAPI `StaticFiles`, or Caddy on the VPS) as part of Task 6; the
-  backend serves nothing at `/` yet.
+  application, including the built frontend, and `pytest` must stay green. The image builds
+  `frontend/` and the backend serves `dist/` at `/`, answering client routes with `index.html`
+  (docs/FRONTEND_GIT_WORKFLOW.md, section 5).
 - **Routes the frontend must not shadow:** `/api/v1/...`, `/health`, `/health/ready`, `/docs`,
   `/redoc`, `/openapi.json`. An SPA fallback (`index.html` for unknown paths) must exclude them, or API 404s
   turn into HTML pages.
