@@ -38,6 +38,7 @@ All tables use `UUID` primary keys (`uuid4`), UTC timestamps (`TIMESTAMPTZ`), an
 | :--- | :--- | :--- | :--- |
 | `id` | `UUID` | `PK` | Building ID |
 | `name` | `VARCHAR(255)` | `NOT NULL` | e.g., `"KÜ Sõpruse pst 12"` |
+| `registry_code` | `VARCHAR(20)` | `NULLABLE` | Association's code in the commercial register (e.g., `"80123456"`) |
 | `address` | `VARCHAR(500)` | `NOT NULL` | Physical address |
 | `country_code` | `VARCHAR(2)` | `NOT NULL, DEFAULT 'EE'` | ISO country code for active country plugins |
 | `reading_deadline_day` | `INTEGER` | `NOT NULL, DEFAULT 4` | Day of next month until readings are open (e.g., `4`) |
