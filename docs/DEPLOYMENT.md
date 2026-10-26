@@ -41,13 +41,21 @@ Server layout (`/opt/aap`):
 ## Pipeline
 
 ```text
-pull request ──► CI: ruff + pytest (PostgreSQL service) ──► image ghcr.io/chemoday/ai-dev-zoomcamp-week-final:<head sha>
+pull request ──► CI: ruff + pytest (PostgreSQL service), frontend lint + test + build ──► image ghcr.io/chemoday/ai-dev-zoomcamp-week-final:<head sha>
+   label deploy-dev ──► Deploy (dev, <head sha>) ──► smoke test via the public URL
 push to main ──► CI: ruff + pytest ──► image :<sha> and :main ──► Deploy (dev) ──► smoke test via the public URL
 manual       ──► Deploy (prod, <sha>) ──► smoke test via the public URL
 ```
 
 - **`.github/workflows/ci.yml`** runs on every pull request and every push to `main`. Images are
-  built once per commit and tagged with its SHA; servers never build.
+  built once per commit and tagged with its SHA; servers never build. The image contains the
+  client: its first stage builds `frontend/` with bun (an empty `frontend/` gives an API-only
+  image).
+- **Pull request preview.** A same-repository pull request with the label `deploy-dev` is deployed
+  to dev after CI, on every push to it. The Frontend sync pull request carries the label, so each
+  frontend version shows up on dev before the merge (docs/FRONTEND_GIT_WORKFLOW.md). Dev shows
+  whatever was deployed last; the next merge to `main` replaces a preview. Do not preview a pull
+  request that changes database migrations.
 - **`.github/workflows/deploy.yml`** is reused by CI for dev and is the manual entry point for prod
   and rollbacks: *Actions → Deploy → Run workflow*, pick `prod`, paste the full commit SHA.
   The `production` environment only accepts runs from `main`.
@@ -94,7 +102,9 @@ over on dev, the dev database has to be emptied; prod is never reset by a deploy
 2. **GitHub repository settings**:
    - Secrets: `DEPLOY_SSH_KEY` (private half of the CI key) and `DEPLOY_KNOWN_HOSTS` (the VPS
      ed25519 host key, verified against `/etc/ssh/ssh_host_ed25519_key.pub`).
-   - Variables: `DEPLOY_HOST`, `DEV_URL`, `PROD_URL`.
+   - Variables: `DEPLOY_HOST`, `DEV_URL`, `PROD_URL`, `FRONTEND_REPOSITORY` (frontend sync).
+   - Secret `FRONTEND_SYNC_TOKEN`: a token that reads the frontend repository and writes this
+     one (pushes and pull requests of the Frontend sync workflow must start CI).
    - Environments: `dev`, and `production` restricted to the `main` branch.
 
 ## Notes
