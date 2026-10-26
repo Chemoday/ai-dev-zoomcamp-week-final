@@ -76,9 +76,11 @@ with an API change and a new `docs/openapi.json`; the frontend then regenerates 
 
 ## 3. Bringing a frontend version into this repository
 
-The **Frontend sync** workflow (`.github/workflows/frontend-sync.yml`) runs every 15 minutes and
-by hand (*Actions → Frontend sync → Run workflow*, optionally with a branch or commit of the
-frontend repository; default: its `main`). When the frontend has a version that `main` does not:
+The **Frontend sync** workflow (`.github/workflows/frontend-sync.yml`) runs **only by hand**: when
+a frontend version is ready, open *Actions → Frontend sync → Run workflow* (optionally with a
+branch or commit of the frontend repository; default: its `main`). Nothing is synced
+automatically, so work in progress in AI Studio never reaches this repository or dev. When the
+frontend has a version that `main` does not:
 
 1. it copies the frontend repository into `frontend/`, without `.git`, `node_modules`, `dist`,
    `.env` files, `.aistudio/` and `public/assets/aistudio/`;
@@ -89,8 +91,8 @@ frontend repository; default: its `main`). When the frontend has a version that 
 4. CI runs on the pull request: frontend lint, tests and build, the backend `pytest`, the image,
    and then the deploy of that pull request to dev.
 
-So a frontend push is on dev about 20 minutes later at most (15 for the schedule, ~5 for CI),
-without anyone merging. Run the workflow by hand to skip the wait.
+So a version is on dev about 5 minutes after the run, before anyone merges. Running the workflow
+again with the same frontend version changes nothing.
 
 Configuration (once): repository variable `FRONTEND_REPOSITORY` (`owner/name`) and secret
 `FRONTEND_SYNC_TOKEN`, a token that reads the frontend repository and writes this one. A personal
@@ -109,7 +111,7 @@ Rules for the pull request:
 | Way | When | Time |
 | :--- | :--- | :--- |
 | `bun run dev` with `VITE_BACKEND_URL` set to a local backend (`docker compose up`) or the dev URL | Every layout change | Instant |
-| The sync pull request (label `deploy-dev`, set by the workflow): every update goes to dev | Check a version before it reaches `main` | ≤ 20 min after the push |
+| The sync pull request (label `deploy-dev`, set by the workflow): every update goes to dev | Check a version before it reaches `main` | ~5 min after the manual sync |
 | Merge the sync pull request into `main` | The version is accepted | ~5 min, automatic |
 | `docker compose up --build` in this repository | The whole app locally: the image builds `frontend/` and serves it at http://localhost:8000 | A few minutes |
 

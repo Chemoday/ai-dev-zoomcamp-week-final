@@ -1,5 +1,6 @@
 # Frontend sync: copies the client from the frontend repository (Google AI Studio pushes there)
 # into frontend/ and proposes it as one pull request into main (docs/FRONTEND_GIT_WORKFLOW.md).
+# Manual only: Actions -> Frontend sync -> Run workflow, when a frontend version is ready.
 #
 # One rolling branch, frontend/sync: every new frontend version updates the same pull request,
 # which carries the label "deploy-dev", so each version is on dev a few minutes after the sync.
@@ -17,8 +18,6 @@ on:
         description: Branch or commit of the frontend repository
         required: false
         default: main
-  schedule:
-    - cron: "*/15 * * * *"
 
 permissions:
   contents: read
