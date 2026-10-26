@@ -2,6 +2,8 @@ name: CI
 
 on:
   pull_request:
+    # labeled: adding "deploy-dev" deploys the pull request to dev (job deploy-preview).
+    types: [opened, synchronize, reopened, labeled]
   push:
     branches: [main]
 
@@ -53,9 +55,51 @@ jobs:
       - name: Pytest
         run: uv run pytest
 
+  frontend:
+    name: Frontend lint, test & build
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect the client
+        id: detect
+        run: |
+          if [ -f package.json ]; then echo "present=true" >> "$GITHUB_OUTPUT"
+          else echo "present=false" >> "$GITHUB_OUTPUT"; echo "No client in frontend/ yet."; fi
+
+      # The client uses bun (bun.lock, as Google AI Studio creates it); its tests run on Node.
+      - if: steps.detect.outputs.present == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - if: steps.detect.outputs.present == 'true'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.2"
+
+      - if: steps.detect.outputs.present == 'true'
+        name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - if: steps.detect.outputs.present == 'true'
+        name: Lint
+        run: bun run lint
+
+      - if: steps.detect.outputs.present == 'true'
+        name: Test
+        run: npm run test
+
+      - if: steps.detect.outputs.present == 'true'
+        name: Build
+        run: bun run build
+
   image:
     name: Build & push image
-    needs: test
+    needs: [test, frontend]
     runs-on: ubuntu-24.04
     # Fork PRs get no write token, so they only build the image without pushing it.
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
@@ -101,6 +145,24 @@ jobs:
     name: Deploy to dev
     needs: image
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/deploy.yml
+    with:
+      environment: dev
+      image_tag: ${{ needs.image.outputs.tag }}
+    secrets: inherit
+
+  # A pull request with the label "deploy-dev" goes to dev before the merge (docs/DEPLOYMENT.md).
+  # The SSH gate accepts the head commit of an open same-repository pull request for dev.
+  deploy-preview:
+    name: Deploy pull request to dev
+    needs: image
+    if: >-
+      github.event_name == 'pull_request'
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && contains(github.event.pull_request.labels.*.name, 'deploy-dev')
     permissions:
       contents: read
       packages: read

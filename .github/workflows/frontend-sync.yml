@@ -1,0 +1,143 @@
+# Frontend sync: copies the client from the frontend repository (Google AI Studio pushes there)
+# into frontend/ and proposes it as one pull request into main (docs/FRONTEND_GIT_WORKFLOW.md).
+#
+# One rolling branch, frontend/sync: every new frontend version updates the same pull request,
+# which carries the label "deploy-dev", so each version is on dev a few minutes after the sync.
+# Merging the pull request (squash) puts the version on main.
+#
+# Needs: repository variable FRONTEND_REPOSITORY (owner/name) and secret FRONTEND_SYNC_TOKEN, a
+# token that reads the frontend repository and writes this one. Pull requests and pushes made with
+# the default GITHUB_TOKEN would not trigger CI, so a personal token is required.
+name: Frontend sync
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch or commit of the frontend repository
+        required: false
+        default: main
+  schedule:
+    - cron: "*/15 * * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frontend-sync
+  cancel-in-progress: false
+
+env:
+  FRONTEND_REPOSITORY: ${{ vars.FRONTEND_REPOSITORY }}
+  SYNC_BRANCH: frontend/sync
+  PREVIEW_LABEL: deploy-dev
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check the configuration
+        env:
+          HAS_TOKEN: ${{ secrets.FRONTEND_SYNC_TOKEN != '' }}
+        run: |
+          [[ -n "$FRONTEND_REPOSITORY" ]] || { echo "::error::Set the repository variable FRONTEND_REPOSITORY (owner/name)."; exit 1; }
+          [[ "$HAS_TOKEN" == "true" ]] || { echo "::error::Set the secret FRONTEND_SYNC_TOKEN."; exit 1; }
+
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          path: platform
+          token: ${{ secrets.FRONTEND_SYNC_TOKEN }}
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.FRONTEND_REPOSITORY }}
+          ref: ${{ inputs.ref || 'main' }}
+          path: source
+          fetch-depth: 0
+          token: ${{ secrets.FRONTEND_SYNC_TOKEN }}
+
+      - name: Copy the client into frontend/
+        id: copy
+        run: |
+          sha=$(git -C source rev-parse HEAD)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "short=${sha:0:7}" >> "$GITHUB_OUTPUT"
+          previous=$(cat platform/frontend/.source-commit 2>/dev/null || true)
+          echo "previous=$previous" >> "$GITHUB_OUTPUT"
+
+          # Not copied: git data, build output, secrets, and the AI Studio workspace with the
+          # mockups (they are design input, not part of the app). .gitkeep and .source-commit
+          # belong to this repository.
+          rsync -a --delete \
+            --exclude=/.git/ --exclude=node_modules/ --exclude=/dist/ \
+            --exclude=/.aistudio/ --exclude=/public/assets/aistudio/ \
+            --include=.env.example --exclude='.env*' \
+            --exclude=/.gitkeep --exclude=/.source-commit \
+            source/ platform/frontend/
+          echo "$sha" > platform/frontend/.source-commit
+
+          if git -C platform diff --quiet HEAD -- frontend && \
+             [ -z "$(git -C platform ls-files --others --exclude-standard frontend)" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "main already has $sha."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip a version that is already proposed
+        id: proposed
+        if: steps.copy.outputs.changed == 'true'
+        working-directory: platform
+        run: |
+          proposed=$(git ls-remote --exit-code origin "refs/heads/$SYNC_BRANCH" >/dev/null 2>&1 \
+            && git fetch -q origin "$SYNC_BRANCH" \
+            && git show "FETCH_HEAD:frontend/.source-commit" 2>/dev/null || true)
+          if [ "$proposed" = "${{ steps.copy.outputs.sha }}" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "$SYNC_BRANCH already proposes ${{ steps.copy.outputs.sha }}."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push the branch and open or update the pull request
+        if: steps.copy.outputs.changed == 'true' && steps.proposed.outputs.skip == 'false'
+        working-directory: platform
+        env:
+          GH_TOKEN: ${{ secrets.FRONTEND_SYNC_TOKEN }}
+          SHA: ${{ steps.copy.outputs.sha }}
+          SHORT: ${{ steps.copy.outputs.short }}
+          PREVIOUS: ${{ steps.copy.outputs.previous }}
+        run: |
+          title="feat(frontend): sync $SHORT"
+          if [ -n "$PREVIOUS" ] && git -C ../source cat-file -e "$PREVIOUS^{commit}" 2>/dev/null; then
+            range="$PREVIOUS..$SHA"
+          else
+            range="-20 $SHA"
+          fi
+          log=$(git -C ../source log --no-merges --format='- %h %s' $range)
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -q -c "$SYNC_BRANCH"
+          git add -A frontend
+          git commit -q -m "$title" -m "From $FRONTEND_REPOSITORY@$SHA" -m "$log"
+          # The branch belongs to this workflow: it always holds exactly one sync commit on main.
+          git push -q --force origin "$SYNC_BRANCH"
+
+          body=$(printf '%s\n' \
+            "Client from \`$FRONTEND_REPOSITORY@$SHA\`, copied into \`frontend/\` by the Frontend sync workflow." \
+            "" "Frontend commits since the version on main:" "" "$log" "" \
+            "The label \`$PREVIEW_LABEL\` deploys this pull request to dev after CI. Merge with **squash**." \
+            "Do not edit \`frontend/\` here: the next sync overwrites it (docs/FRONTEND_GIT_WORKFLOW.md).")
+
+          gh label create "$PREVIEW_LABEL" --color 0e8a16 \
+            --description "CI deploys this pull request to dev" 2>/dev/null || true
+          number=$(gh pr list --head "$SYNC_BRANCH" --state open --json number --jq '.[0].number')
+          if [ -z "$number" ]; then
+            gh pr create --base main --head "$SYNC_BRANCH" --title "$title" --body "$body" \
+              --label "$PREVIEW_LABEL"
+          else
+            gh pr edit "$number" --title "$title" --body "$body" --add-label "$PREVIEW_LABEL"
+          fi
