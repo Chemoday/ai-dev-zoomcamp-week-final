@@ -9,7 +9,15 @@ from decimal import Decimal
 import pytest
 
 from src.plugins.common.csv_export import COLUMNS, CsvReadingExporter, neutralize_formula
-from src.plugins.registry import PluginRegistry, ReadingExportRow, parse_plugin_list
+from src.plugins.common.fcm_push import CHANNEL_NAME as FCM_CHANNEL_NAME
+from src.plugins.common.fcm_push import FcmPushChannel
+from src.plugins.registry import (
+    DeliveryResult,
+    OutgoingMessage,
+    PluginRegistry,
+    ReadingExportRow,
+    parse_plugin_list,
+)
 
 
 def row(**overrides) -> ReadingExportRow:
@@ -103,3 +111,66 @@ def test_plugin_list_parsing() -> None:
         "countries.ee.e_arve_xml",
     ]
     assert parse_plugin_list("") == []
+
+
+class FakeChannel:
+    name = "fake"
+
+    async def send(self, message: OutgoingMessage) -> DeliveryResult:
+        return DeliveryResult(ok=True)
+
+
+def message() -> OutgoingMessage:
+    return OutgoingMessage(
+        address={"token": "secret-device-token"},
+        locale="en",
+        event_type="EMERGENCY_PUBLISHED",
+        subject="Hot water off",
+        body="Entrance 2",
+        deep_link="https://example.test/posts/1",
+        urgent=True,
+        collapse_key="post:1",
+        expires_at=datetime(2026, 10, 31, 12, 0, tzinfo=UTC),
+    )
+
+
+def test_registry_holds_notification_channels() -> None:
+    registry = PluginRegistry()
+    channel = FakeChannel()
+
+    registry.register_channel(channel)
+
+    assert registry.channel("fake") is channel
+    assert registry.channel("email") is None
+    assert registry.channels() == [channel]
+    with pytest.raises(ValueError, match="already registered"):
+        registry.register_channel(FakeChannel())
+
+
+def test_outgoing_message_repr_hides_address_and_texts() -> None:
+    text = repr(message())
+
+    for secret in ("secret-device-token", "Hot water off", "Entrance 2", "example.test"):
+        assert secret not in text
+    assert "urgent=True" in text
+    assert "EMERGENCY_PUBLISHED" in text
+
+
+def test_fcm_push_stub_cannot_be_enabled() -> None:
+    registry = PluginRegistry()
+
+    with pytest.raises(RuntimeError, match="not implemented yet"):
+        registry.load(["common.fcm_push"])
+
+    assert not registry.is_enabled("common.fcm_push")
+    assert registry.channel(FCM_CHANNEL_NAME) is None
+
+
+async def test_fcm_push_stub_does_not_send() -> None:
+    channel = FcmPushChannel(project_id="demo", service_account_file="/run/secrets/fcm.json")
+
+    assert channel.name == "mobile_push"
+    with pytest.raises(NotImplementedError):
+        await channel.send(message())
+    with pytest.raises(NotImplementedError):
+        channel.build_message(message())

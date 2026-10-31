@@ -42,7 +42,7 @@ src/
 
 Design and the reasoning behind it: [docs/epics/E1_NOTIFICATIONS.md](epics/E1_NOTIFICATIONS.md). Tables: docs/SCHEMA.md section 5. API: docs/API.md section 6.
 
-**Status:** the module, the subscriber, the in-app channel, the feed and preferences exist since task N2 (`src/modules/notifications/`). The dispatcher, the channel plugins and the scheduler (3.2, 3.3) are planned for N3-N6.
+**Status:** the module, the subscriber, the in-app channel, the feed and preferences exist since task N2 (`src/modules/notifications/`). `NotificationChannel`, `OutgoingMessage` and `DeliveryResult` (3.2) are in `src/plugins/registry.py` since N7's stub together with `register_channel` / `channel` / `channels` (`InboundChannel` and `InboundLink` come with N4); the dispatcher, the channel plugins and the scheduler (3.2, 3.3) are planned for N3-N7. Clients poll for in-app notifications; there is no WebSocket (docs/epics/E1_NOTIFICATIONS.md 6.5).
 
 ### 3.1 Place in the system
 - It **only consumes**: it subscribes to domain events and calls other modules' system-level service methods (3.4). No other module imports it, so `NOTIFICATIONS_ENABLED=false` removes it (no subscriber, no loops, no routes) and everything else works unchanged.
@@ -54,7 +54,7 @@ New protocols in `src/plugins/registry.py`, next to `ReadingExporter`:
 
 ```python
 class NotificationChannel(Protocol):
-    name: str  # "email", "telegram", "webpush"
+    name: str  # "email", "telegram", "webpush", "mobile_push"
 
     async def send(self, message: OutgoingMessage) -> DeliveryResult: ...
 
@@ -69,14 +69,15 @@ class InboundChannel(Protocol):  # optional; implemented by common.telegram
 - Registry additions: `register_channel(channel)`, `channel(name) -> NotificationChannel | None`,
   `channels()`; a plugin that also implements `InboundChannel` is found through `channel(name)`.
 
-- `OutgoingMessage` (address, locale, subject, body, deep link) is built at send time and never stored or logged. `DeliveryResult` carries `ok`, `retryable`, `error_code` and `revoke_binding`; no provider text.
+- `OutgoingMessage` (address, locale, event type, subject, body, deep link, plus `urgent` for emergencies, a `collapse_key` and `expires_at`, used by push channels) is built at send time and never stored or logged; its `repr` hides the address, subject, body and link, and it is never passed to `asdict`/`vars` or into log fields. `DeliveryResult` carries `ok`, `retryable`, `error_code` and `revoke_binding`; no provider text.
 - The notifications service owns every table: bindings, link codes, deliveries. Plugins only verify, format and send.
-- Plugins: `common.email_smtp`, `common.telegram`, `common.webpush`. `in_app` is built in.
+- Plugins: `common.email_smtp`, `common.telegram`, `common.webpush`, *(N7)* `common.fcm_push` (native phone app through Firebase Cloud Messaging; today a stub that refuses to load). `in_app` is built in.
 - **Startup checks.** With any external channel enabled, the app refuses to start without
-  `PUBLIC_BASE_URL`; with `common.telegram` or `common.webpush` also without
+  `PUBLIC_BASE_URL`; with `common.telegram`, `common.webpush` or `common.fcm_push` also without
   `NOTIFICATIONS_HASH_SECRET` (at least 32 bytes; e-mail hashes nothing). Each plugin also needs its
   own settings: SMTP host and sender; bot token, bot username and a webhook secret of at least
-  32 characters in `[A-Za-z0-9_-]`; the VAPID keys and subject.
+  32 characters in `[A-Za-z0-9_-]`; the VAPID keys and subject; the FCM project id and a readable
+  service account file.
 - **Demo mode (owner decision).** While `DEMO_MODE_ENABLED=true` (anyone can act as anyone),
   external channels are treated as unavailable: no linking, and the dispatcher never calls an
   external plugin. Only `in_app` works. There is no override. Every environment today (docker
@@ -89,7 +90,7 @@ class InboundChannel(Protocol):  # optional; implemented by common.telegram
 Both start in the app lifespan, stop on shutdown, and have switches (`NOTIFICATIONS_DISPATCHER_ENABLED`, `NOTIFICATIONS_SCHEDULER_ENABLED`); tests turn them off and call one tick directly.
 - **Dispatcher** (every 5 s), lease protocol:
   1. A short transaction claims up to 10 rows: `(status = 'PENDING' AND next_attempt_at <= now()) OR (status = 'SENDING' AND lease_until < now())`, both with `attempts < 5`, `ORDER BY priority, next_attempt_at FOR UPDATE SKIP LOCKED`. It sets `SENDING`, `lease_until = now() + 5 min`, `attempts = attempts + 1`. In the same transaction, expired `SENDING` rows with `attempts = 5` become `FAILED` (`LEASE_EXPIRED`, `lease_until = NULL`), also selected with `SKIP LOCKED`.
-  2. Send-time checks (`SKIPPED` with an `error_code`): the alert was resolved, the binding is revoked, the user is inactive, the e-mail is gone, a non-mandatory preference was switched off, demo mode. Then the sends run one after another with no transaction open, each with a 10 s timeout (WebPush: no redirects), so a batch fits in the lease.
+  2. Send-time checks (`SKIPPED` with an `error_code`): the alert was resolved, the binding is revoked, the user is inactive, the e-mail is gone, a non-mandatory preference was switched off, demo mode, an `EMERGENCY_PUBLISHED` delivery whose row is more than 1 hour old (`EMERGENCY_TOO_OLD`, any external channel: the retry backoff must not bring an alert late). Then the sends run one after another with no transaction open, each with a 10 s timeout (WebPush: no redirects), so a batch fits in the lease.
   3. A second transaction records `SENT`, `FAILED`, `SKIPPED` or the next retry, **fenced**: `UPDATE … WHERE id = :id AND status = 'SENDING' AND attempts = :claimed_attempts`. Zero updated rows means another worker took over after the lease expired, and the result is dropped. Every move out of `SENDING` sets `lease_until = NULL`. A retryable failure on the fifth attempt becomes `FAILED`, never `PENDING`.
   An expired lease is claimed again, so delivery is at least once. Retry backoff: 1 min, 5 min, 30 min, 2 h (5 attempts in total).
 - **Scheduler** (every 10 min), each tick in a short transaction under `pg_try_advisory_xact_lock`:
@@ -127,10 +128,11 @@ System-level methods (no `CurrentUserDTO`), returning DTOs, used only by notific
 | `INSTANCE_TIMEZONE` | `Europe/Tallinn` | Local time for `due_date` and texts |
 | `DEFAULT_LOCALE` | `et` | Language when `core_users.locale` is `NULL` |
 | `PUBLIC_BASE_URL` | empty | Base of deep links in external messages; required when an external channel is enabled |
-| `NOTIFICATIONS_HASH_SECRET` | empty | Key of the HMAC for chat ids, endpoints and link codes; required with `common.telegram` or `common.webpush`. Never rotate it without rehashing: active addresses would lose their uniqueness and open link codes would stop working |
+| `NOTIFICATIONS_HASH_SECRET` | empty | Key of the HMAC for chat ids, endpoints, FCM tokens and link codes; required with `common.telegram`, `common.webpush` or `common.fcm_push`. Never rotate it without rehashing: active addresses would lose their uniqueness and open link codes would stop working |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_STARTTLS` | | `common.email_smtp` |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`, `TELEGRAM_WEBHOOK_SECRET` | | `common.telegram` (one bot per environment) |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | | `common.webpush` |
+| `FCM_PROJECT_ID`, `FCM_SERVICE_ACCOUNT_FILE` | | `common.fcm_push` *(N7)*: the Firebase project and the path of a mounted service account key file (never the key itself in the environment) |
 
 ### 3.6 Privacy and observability
-No names, e-mails, phones, chat ids, endpoints or message bodies in logs or spans. Spans carry `event_type`, `channel`, `status`, `delivery_id`. Metrics: deliveries by channel and status, retries, revoked bindings.
+No names, e-mails, phones, chat ids, endpoints, FCM tokens or message bodies in logs or spans. Spans carry `event_type`, `channel`, `status`, `delivery_id`. Metrics: deliveries by channel and status, retries, revoked bindings.
