@@ -1,6 +1,6 @@
 """Private SQLAlchemy models of the notifications module. NEVER import them from another module.
 
-docs/SCHEMA.md section 5. The link-code tables of Telegram come with the Telegram channel (N4).
+docs/SCHEMA.md section 5.
 """
 
 import uuid
@@ -69,7 +69,8 @@ class ChannelBinding(Base):
     )
     # Only the external channels with an address have bindings (e-mail uses core_users.email).
     channel: Mapped[str] = mapped_column(String(16), nullable=False)
-    config: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    # none_as_null: None is SQL NULL (wiped), never the JSON value null.
+    config: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
     address_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     label: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -184,3 +185,34 @@ class Delivery(Base):
     )
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class LinkCode(Base):
+    """A one-time code that links a Telegram chat to a user; only its keyed hash is stored."""
+
+    __tablename__ = "notif_link_codes"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("core_users.id"), nullable=False, index=True
+    )
+    code_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class LinkAttempt(Base):
+    """One "/start <code>" message, for the limit of 10 attempts per chat per hour."""
+
+    __tablename__ = "notif_link_attempts"
+    __table_args__ = (Index("ix_notif_link_attempts_address_time", "address_hash", "attempted_at"),)
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    address_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    attempted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now
+    )
+    succeeded: Mapped[bool] = mapped_column(Boolean, nullable=False)

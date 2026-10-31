@@ -3,6 +3,9 @@
 docs/API.md section 6 ("Who gets what", "Default preferences") and docs/ARCHITECTURE.md 3.
 """
 
+import hashlib
+import hmac
+import secrets
 import uuid
 from collections.abc import Mapping
 from datetime import datetime, timedelta
@@ -77,6 +80,38 @@ def emergency_too_old(
         event_type == NotificationEventType.EMERGENCY_PUBLISHED
         and now - created_at > EMERGENCY_MAX_AGE
     )
+
+
+# Telegram linking (docs/API.md 6, "Telegram linking").
+LINK_CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"  # Crockford base32: no I, L, O, U
+LINK_CODE_LENGTH = 8
+LINK_CODE_TTL = timedelta(minutes=10)
+LINK_CODES_PER_HOUR = 5
+LINK_ATTEMPTS_PER_HOUR = 10
+LINK_WINDOW = timedelta(hours=1)
+MIN_HASH_SECRET_BYTES = 32
+
+
+def new_link_code() -> str:
+    return "".join(secrets.choice(LINK_CODE_ALPHABET) for _ in range(LINK_CODE_LENGTH))
+
+
+def normalize_link_code(code: str) -> str | None:
+    """Upper-cased code, or None when it cannot be one (so it is not even looked up)."""
+    code = code.strip().upper()
+    if len(code) != LINK_CODE_LENGTH or any(c not in LINK_CODE_ALPHABET for c in code):
+        return None
+    return code
+
+
+def keyed_hash(secret: str, value: str) -> str:
+    """Hex HMAC-SHA-256: a plain hash of a 10-digit chat id or an 8-character code is reversible."""
+    return hmac.new(secret.encode(), value.encode(), hashlib.sha256).hexdigest()
+
+
+def retry_after_seconds(oldest_in_window: datetime, now: datetime) -> int:
+    """Seconds until the oldest event leaves the rolling one-hour window (at least 1)."""
+    return max(1, int((oldest_in_window + LINK_WINDOW - now).total_seconds()) + 1)
 
 
 def is_mandatory(event_type: NotificationEventType) -> bool:

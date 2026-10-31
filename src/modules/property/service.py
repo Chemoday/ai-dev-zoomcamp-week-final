@@ -202,6 +202,14 @@ class PropertyService:
         )
         return DeliveryContactDTO(email=email) if email else None
 
+    async def get_recipient(self, user_id: uuid.UUID) -> RecipientDTO | None:
+        """An active user as a notification recipient (id and language), or None."""
+        row = await self.session.execute(
+            select(User.id, User.locale).where(User.id == user_id, User.is_active.is_(True))
+        )
+        found = row.first()
+        return RecipientDTO(user_id=found.id, locale=found.locale) if found else None
+
     async def is_user_active(self, user_id: uuid.UUID) -> bool:
         active = await self.session.scalar(select(User.is_active).where(User.id == user_id))
         return bool(active)
