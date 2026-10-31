@@ -116,3 +116,9 @@ def test_httpx_request_logs_are_silenced(app) -> None:
     # Bot API URLs carry the token, and httpx logs every URL at INFO.
     assert logging.getLogger("httpx").getEffectiveLevel() >= logging.WARNING
     assert logging.getLogger("httpcore").getEffectiveLevel() >= logging.WARNING
+
+
+def test_push_endpoints_and_keys_are_redacted() -> None:
+    scrubbed = scrub_pii({"endpoint": "https://fcm.googleapis.com/fcm/send/x", "p256dh": "BC"})
+
+    assert scrubbed == {"endpoint": REDACTED, "p256dh": REDACTED}

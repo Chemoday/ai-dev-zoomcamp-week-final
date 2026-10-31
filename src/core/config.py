@@ -71,6 +71,13 @@ class Settings(BaseSettings):
     # Telegram sends it back in X-Telegram-Bot-Api-Secret-Token: 32+ characters of [A-Za-z0-9_-].
     TELEGRAM_WEBHOOK_SECRET: SecretStr = SecretStr("")
 
+    # WebPush (plugin common.webpush): the VAPID key pair as base64url (public: 65 bytes, private:
+    # 32 bytes; `python -m src.plugins.common.webpush generate-vapid-keys`) and a contact for the
+    # push services, "mailto:..." or "https://...". One key pair per environment.
+    VAPID_PUBLIC_KEY: str = ""
+    VAPID_PRIVATE_KEY: SecretStr = SecretStr("")
+    VAPID_SUBJECT: str = ""
+
     # Durable domain events (docs/BACKEND_CONVENTIONS.md 2.B): the relay that publishes events a
     # crash or a failing handler left behind, and how long published events are kept (0 = always).
     DOMAIN_EVENTS_RELAY_ENABLED: bool = True
