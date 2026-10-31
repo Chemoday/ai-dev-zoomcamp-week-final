@@ -27,4 +27,4 @@ Country plugin protocol `VoteVerifier`:
 ## Depends on
 
 - E1 Notifications (vote opened, deadline approaching, results).
-- `user_identities.subject_hash` (exists since the MVP).
+- `core_user_identities.subject_hash` (exists since the MVP).

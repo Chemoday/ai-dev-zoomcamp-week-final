@@ -31,8 +31,11 @@ All AI coding, testing, and on-call agents operating in this repository MUST fol
 ## 4. Change Workflow
 - One issue, one branch, one pull request per task. While the course submission is under review,
   `main` is frozen: branch from `develop` and open pull requests into `develop`.
+- During the freeze, merges into `develop` are not deployed (CD deploys only pushes to `main`); to
+  try a change on dev, add the label `deploy-dev` to its pull request. The frontend sync workflow
+  opens pull requests into `main`, so it is paused until the freeze ends.
 - **CTO review before merge:** when a task is done and `pytest` is green, a fresh reviewer agent
-  without the development context reviews only the branch commits (`git diff develop...HEAD`) and
+  without the development context reviews only the branch commits (`git fetch` first, then `git diff origin/develop...HEAD`) and
   the current code for quality, security, bugs and the guardrails above. The implementing agent
   verifies every finding, fixes the confirmed ones in the same branch, and lists all findings
   (fixed / rejected and why) in the pull request. The owner approves the merge.

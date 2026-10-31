@@ -67,7 +67,7 @@ Goal: Deliver a production-grade, extensible Modular Monolith implementing `prop
 
 ---
 
-Phases 2 and 3 are organised as epics: a design page in [docs/epics/](epics/README.md) and a GitHub
+Large features of phases 2 and 3 are organised as epics: a design page in [docs/epics/](epics/README.md) and a GitHub
 issue with the `epic` label. Background: [docs/cli_planning/2026-10-31-post-course-epics.md](cli_planning/2026-10-31-post-course-epics.md).
 
 ## Phase 2: Billing, Cost Allocation & Notifications (NEXT)
@@ -76,7 +76,7 @@ issue with the `epic` label. Background: [docs/cli_planning/2026-10-31-post-cour
   reminders. See [E1_NOTIFICATIONS.md](epics/E1_NOTIFICATIONS.md).
 - **E2 Billing and accounting export:** tariffs, cost allocation (including
   `Master Meter - Sum(Apartment Meters)` water losses) and charges per apartment; no own ledger,
-  export through plugins (`ee/e_arve_xml`, Merit Aktiva). See [E2_BILLING_EXPORT.md](epics/E2_BILLING_EXPORT.md).
+  export through plugins (`countries.ee.e_arve_xml`, `countries.ee.merit`). See [E2_BILLING_EXPORT.md](epics/E2_BILLING_EXPORT.md).
 - **E4 IoT readings API:** a public, token-per-vendor contract for remote meter systems, writing
   readings with source `IOT_WEBHOOK`.
 - **E5 Bulk import:** apartments, owners and memberships from CSV.

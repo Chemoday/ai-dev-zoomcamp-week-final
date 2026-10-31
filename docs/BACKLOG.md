@@ -173,15 +173,18 @@ There is no check inside the data itself.
 - **Status:** note only, no work planned. Raised 2026-10-31.
 
 ### Current state
-Several submissions within one period are already handled: `UNIQUE(meter_id, period_id)` keeps one
-reading per meter and period, a new submission overwrites the value, and each change writes an
-audit row to `meter_reading_logs`. Nothing to change for manual readings.
+Several submissions within one period are already handled: `UNIQUE(meter_id, period_id)` keeps
+one reading per meter and period, and every change writes an audit row to
+`meters_reading_logs`. A new submission overwrites the value within the rules of
+`POST /api/v1/meters/readings` in docs/API.md (residents only while the period is open, never over
+a board correction, never once a later period has a reading).
+Nothing to change for manual readings.
 
 ### When it matters
 Smart electricity meters deliver hourly or 15-minute values, used to split costs by the exchange
 price. If we support that, store the raw time series in a separate table (fed by the IoT readings
 API, epic E4) and derive the period reading from it; do not put time series into
-`meter_readings`.
+`meters_readings`.
 
 ## B-6. Debt reminders
 

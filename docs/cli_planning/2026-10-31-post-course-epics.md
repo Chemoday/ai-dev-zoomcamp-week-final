@@ -35,8 +35,10 @@ through a representative. Voting is abstract in the core, and verified (signed) 
 country plugin; for Estonia, a signed `.asice` container with the ballot PDF. Details: E3.
 
 **Several readings per month.** Already supported, no change: `UNIQUE(meter_id, period_id)` keeps
-one reading per meter and period, a new submission overwrites the value, and every change writes
-an audit row to `meter_reading_logs`. Hourly smart-meter readings are a different feature
+one reading per meter and period, and every change writes an audit row to
+`meters_reading_logs`. A new submission overwrites the value within the rules of
+`POST /api/v1/meters/readings` in docs/API.md (residents only while the period is open, never over
+a board correction, never once a later period has a reading). Hourly smart-meter readings are a different feature
 (docs/BACKLOG.md B-5).
 
 **Accounting.** A full accounting system is years of work and not our strength. We calculate
