@@ -454,9 +454,9 @@ Seeded at startup by `src/core/seed.py` when `SEED_DEMO_DATA=true` (local Docker
 
 > **Status.** Implemented (in `docs/openapi.json`): in-app notifications for emergencies,
 > resolved emergencies and periods in review; the feed, preferences and the notification language
-> (N2); e-mail (N3); Telegram linking, the webhook and the bindings API (N4); WebPush (N5).
-> **Planned** (marked below; not in `docs/openapi.json` yet): reading reminders (N6) and push to
-> the native phone app (N7). Every current environment runs in demo mode, so only `in_app` delivers
+> (N2); e-mail (N3); Telegram linking, the webhook and the bindings API (N4); WebPush (N5); reading
+> reminders and the deletion of old notifications (N6). **Planned** (marked below; not in
+> `docs/openapi.json` yet): push to the native phone app (N7). Every current environment runs in demo mode, so only `in_app` delivers
 > there and the other channels are reported unavailable. Design: [docs/epics/E1_NOTIFICATIONS.md](epics/E1_NOTIFICATIONS.md).
 
 ### How notifications reach people
@@ -484,7 +484,7 @@ Seeded at startup by `src/core/seed.py` when `SEED_DEMO_DATA=true` (local Docker
 | :--- | :--- | :--- |
 | `EMERGENCY_PUBLISHED` | active users of the targeted apartments, plus the chairman and board members; one notification per person and channel; never the author | yes |
 | `EMERGENCY_RESOLVED` | one per `EMERGENCY_PUBLISHED` notification that was sent (same channel and device), filtered by preferences; never the person who resolved it | no |
-| `READING_DEADLINE` *(planned, N6)* | active members with `can_submit_readings` of apartments where at least one active meter has no reading in the open period; sent between 09:00 and 21:00 local time, starting `READING_REMINDER_DAYS_BEFORE` (default 2) days before the deadline day; if that window is missed, the next window before `due_date` is used, and after `due_date` nothing is sent; once per period | no |
+| `READING_DEADLINE` | active members with `can_submit_readings` of apartments where at least one active meter has no reading in the open period; sent between 09:00 and 21:00 local time, starting `READING_REMINDER_DAYS_BEFORE` (default 2) days before the deadline day; if that window is missed, the next window before `due_date` is used, and a message that would go out at night (a retry, an outage) waits for 09:00 local time, and after `due_date` nothing is sent; once per period: once reminders were stored, members who become reachable later are not reminded | no |
 | `PERIOD_REVIEW` | the chairman and accountants when a period moves to `REVIEW_BY_BOARD`, except the person who moved it | no |
 
 - Users who join, link a channel or add a device while an emergency is active see it as the banner
@@ -532,8 +532,8 @@ Seeded at startup by `src/core/seed.py` when `SEED_DEMO_DATA=true` (local Docker
 ### `GET /api/v1/notifications/feed?unread_only=false&limit=50&offset=0`
 The caller's in-app notifications as a JSON array of `NotificationView`, newest first
 (`created_at`, then `id`). `limit` 1..100
-(default 50), `offset` 0..100000. *(Planned, N6:)* notifications older than
-`NOTIFICATIONS_RETENTION_DAYS` (default 180) are deleted.
+(default 50), `offset` 0..100000. Notifications older than `NOTIFICATIONS_RETENTION_DAYS`
+(default 180) are deleted.
 
 ### `GET /api/v1/notifications/unread-count`
 `{"unread": 3}`, for the badge on the bell icon. This is the endpoint the client polls (every 60 s
