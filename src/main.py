@@ -1,13 +1,17 @@
 """FastAPI application factory and ASGI entry point (``uvicorn src.main:app``)."""
 
+import asyncio
+import contextlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
 from src.core.config import Settings, get_settings
-from src.core.database import engine
+from src.core.database import async_session_factory, engine
 from src.core.demo import router as demo_router
+from src.core.domain_events import run_relay_loop
+from src.core.event_bus import get_event_bus
 from src.core.exceptions import register_exception_handlers
 from src.core.frontend import mount_frontend
 from src.core.health import router as health_router
@@ -20,7 +24,22 @@ from src.plugins.registry import build_plugin_registry
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    settings: Settings = app.state.settings
+    relay: asyncio.Task[None] | None = None
+    if settings.DOMAIN_EVENTS_RELAY_ENABLED:
+        relay = asyncio.create_task(
+            run_relay_loop(
+                async_session_factory,
+                get_event_bus(),
+                retention_days=settings.DOMAIN_EVENTS_RETENTION_DAYS,
+            ),
+            name="domain-event-relay",
+        )
     yield
+    if relay is not None:
+        relay.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await relay
     shutdown_tracing()
     await engine.dispose()
 
@@ -30,6 +49,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     configure_logging(level=settings.LOG_LEVEL, json_logs=settings.LOG_JSON)
 
     app = FastAPI(title=settings.APP_NAME, version=settings.APP_VERSION, lifespan=lifespan)
+    app.state.settings = settings
     register_exception_handlers(app)
     app.include_router(health_router)
     app.include_router(property_router)
