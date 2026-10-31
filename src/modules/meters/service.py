@@ -863,6 +863,7 @@ class MetersService:
         self.outbox.add(
             MeterReadingSubmitted(
                 reading_id=reading.id,
+                building_id=meter.building_id,
                 meter_id=meter.id,
                 apartment_id=meter.apartment_id,
                 period_code=period.period_code,

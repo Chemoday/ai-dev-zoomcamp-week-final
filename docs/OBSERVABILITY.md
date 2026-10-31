@@ -37,6 +37,13 @@ backend ──OTLP/HTTP──► otel-collector ──OTLP──► lgtm (Grafan
 Each signal carries the same `trace_id`, so one id leads from a user's error message (500 bodies
 include `trace_id`) to the trace, the logs and the metrics.
 
+**Domain events** (docs/BACKEND_CONVENTIONS.md 2.B): every event is stored in `core_domain_events`
+with the request's `traceparent`, so an event the relay publishes later still appears in the
+request's trace (span `domain_event_relay <EventName>`). Metrics:
+`domain_events.oldest_unpublished_age` (seconds; it should stay near 0, a growing value means the
+relay or a subscriber is stuck) and `domain_events.failed` (events given up after 10 attempts,
+also logged as `domain_event_gave_up`).
+
 **No PII in telemetry.** The backend scrubs every span, JSON log line and exported log record
 (`src/core/telemetry.py`; exported log records keep only the scrubbed JSON body plus logger name
 and code location). Metrics carry route templates, methods and status codes only. The collector

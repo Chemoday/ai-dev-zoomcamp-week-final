@@ -298,7 +298,7 @@ Rows of `notif_link_codes` and `notif_link_attempts` older than 24 hours are del
 
 ---
 
-## 6. Core infrastructure (`src/core`): durable domain events (planned, task E1/N1b)
+## 6. Core infrastructure (`src/core`): durable domain events
 
 *`src/core/` holds no domain models, but it owns this infrastructure table: the persistent part of the event outbox (docs/BACKEND_CONVENTIONS.md 2.B). Its model lives in `src/core/` and is listed in `src/core/models_registry.py`.*
 
@@ -315,7 +315,7 @@ Rows of `notif_link_codes` and `notif_link_attempts` older than 24 hours are del
 | `published_at` | `TIMESTAMPTZ` | `NULLABLE` | Set once every handler succeeded; `NULL` = still to publish |
 | `publish_attempts` | `INTEGER` | `NOT NULL, DEFAULT 0` | Failed or claimed attempts so far (at most 10) |
 | `next_attempt_at` | `TIMESTAMPTZ` | `NOT NULL` | When the relay may take the row (`occurred_at` at first); moved forward on every claim, which also keeps other workers away |
-| `failed_at` | `TIMESTAMPTZ` | `NULLABLE` | Set after 10 attempts; the row is skipped from then on (poison row, alerted) |
+| `failed_at` | `TIMESTAMPTZ` | `NULLABLE` | Set when the 10th attempt fails; the row is skipped from then on (poison row: logged and counted in `domain_events.failed`) |
 | `last_error` | `VARCHAR(64)` | `NULLABLE` | Machine code, e.g. `UNKNOWN_EVENT_TYPE`, `PAYLOAD_INVALID`, `HANDLER_FAILED`; never exception text |
 
 - `ix_core_domain_events_unpublished`: partial index `(next_attempt_at) WHERE published_at IS NULL AND failed_at IS NULL`, for the relay.

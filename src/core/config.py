@@ -2,7 +2,7 @@
 
 from functools import lru_cache
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # HS256 keys shorter than the hash output are brute-forceable (RFC 7518, section 3.2).
@@ -38,6 +38,11 @@ class Settings(BaseSettings):
 
     LOG_LEVEL: str = "INFO"
     LOG_JSON: bool = True
+
+    # Durable domain events (docs/BACKEND_CONVENTIONS.md 2.B): the relay that publishes events a
+    # crash or a failing handler left behind, and how long published events are kept (0 = always).
+    DOMAIN_EVENTS_RELAY_ENABLED: bool = True
+    DOMAIN_EVENTS_RETENTION_DAYS: int = Field(default=365, ge=0)
 
     OTEL_SERVICE_NAME: str = "apartment-platform-backend"
     # OTLP/HTTP collector base URL, e.g. "http://otel-collector:4318". Empty disables export.
