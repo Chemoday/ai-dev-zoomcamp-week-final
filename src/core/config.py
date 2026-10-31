@@ -4,7 +4,7 @@ from functools import lru_cache
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import Field, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # HS256 keys shorter than the hash output are brute-forceable (RFC 7518, section 3.2).
@@ -47,6 +47,19 @@ class Settings(BaseSettings):
     NOTIFICATIONS_ENABLED: bool = True
     DEFAULT_LOCALE: Literal["et", "ru", "en"] = "et"
     INSTANCE_TIMEZONE: str = "Europe/Tallinn"
+    # The loop that sends notifications on external channels (tests call one tick directly).
+    NOTIFICATIONS_DISPATCHER_ENABLED: bool = True
+    # Base URL of the site, linked from every external message; required with an external channel.
+    PUBLIC_BASE_URL: str = ""
+
+    # E-mail (plugin common.email_smtp): the app is only an SMTP client of an external provider.
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = Field(default=587, ge=1, le=65535)
+    SMTP_USERNAME: str = ""
+    SMTP_PASSWORD: SecretStr = SecretStr("")
+    SMTP_FROM: str = ""
+    # starttls: port 587; tls: implicit TLS, port 465; none: only for a local test server.
+    SMTP_TLS: Literal["starttls", "tls", "none"] = "starttls"
 
     # Durable domain events (docs/BACKEND_CONVENTIONS.md 2.B): the relay that publishes events a
     # crash or a failing handler left behind, and how long published events are kept (0 = always).
@@ -64,6 +77,14 @@ class Settings(BaseSettings):
             ZoneInfo(value)
         except (ZoneInfoNotFoundError, ValueError) as exc:
             raise ValueError(f"unknown INSTANCE_TIMEZONE {value!r}") from exc
+        return value
+
+    @field_validator("PUBLIC_BASE_URL")
+    @classmethod
+    def _public_base_url_is_http(cls, value: str) -> str:
+        value = value.strip().rstrip("/")
+        if value and not value.startswith(("https://", "http://")):
+            raise ValueError("PUBLIC_BASE_URL must start with https:// or http://")
         return value
 
     @field_validator("JWT_SECRET_KEY")

@@ -205,3 +205,15 @@ def log_capture(app: FastAPI) -> Iterator[LogCapture]:
     configure_logging(level="INFO", json_logs=True, stream=capture.stream)
     yield capture
     configure_logging(level="INFO", json_logs=True)
+
+
+# --- E-mail ------------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def smtp_server():
+    """An in-process SMTP server (tests/smtp_server.py) that records what it accepts."""
+    from tests.smtp_server import running_smtp_server
+
+    with running_smtp_server() as server:
+        yield server

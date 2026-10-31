@@ -1,8 +1,10 @@
 """Public enums and DTOs of the property module (API payloads and inter-module contracts).
 
 None of these DTOs carries a raw full name, email or phone: identity leaves the module only as
-an AuthorBadgeDTO, already masked according to the user's privacy display mode. (Planned
-exception, docs/ARCHITECTURE.md 3.4: a delivery contact DTO for the notifications dispatcher.)
+an AuthorBadgeDTO, already masked according to the user's privacy display mode. The one documented
+exception (docs/ARCHITECTURE.md 3.4) is DeliveryContactDTO: the notifications dispatcher asks for
+one user's address right before sending, keeps it in memory for that send, and never logs or
+stores it.
 """
 
 import uuid
@@ -128,6 +130,19 @@ class LocaleUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     locale: Locale | None
+
+
+class DeliveryContactDTO(BaseModel):
+    """The documented exception to "no raw e-mail in a DTO": only for sending one message."""
+
+    model_config = ConfigDict(frozen=True)
+
+    email: str
+
+    def __repr__(self) -> str:  # never print the address by accident
+        return "DeliveryContactDTO(email=***)"
+
+    __str__ = __repr__
 
 
 class RecipientDTO(BaseModel):

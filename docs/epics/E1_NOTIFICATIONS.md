@@ -1,6 +1,6 @@
 # E1. Notifications
 
-- **Phase:** 2. **Status:** N1, N1b and N2 done (in-app notifications live in `develop`); N3 next. **Epic issue:** [#39](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/39).
+- **Phase:** 2. **Status:** N1, N1b, N2 and N3 done (in-app notifications, the dispatcher and e-mail in `develop`; e-mail sends nowhere until a real login, 10.10); N4 next. **Epic issue:** [#39](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/39).
 - **Goal:** one pluggable notification system that every module uses, instead of each feature
   sending its own messages. Reminders, emergency alerts and (later) voting all go through it.
 
@@ -139,10 +139,19 @@ Default preferences (a user can change the non-mandatory ones):
 
 - Mandatory events ignore preferences, but use only channels where the user is reachable.
 - Retry: up to 5 attempts, backoff 1 min, 5 min, 30 min, 2 h; non-retryable errors fail at once.
-- Templates per event type and locale (`et`, `ru`, `en`).
-- **What leaves the system on external channels:** event type, the emergency title (written by the
-  board; only the board can publish emergencies), the target (e.g. "entrance 2"), period code and a
-  deep link. Post bodies, comments and author names stay in the app.
+- **Message texts (owner decision 2026-10-31, task N3).** Two kinds:
+  - **custom**, written by people: an emergency message is the post's title and body exactly as
+    the board wrote them (any language, or several);
+  - **system**, fixed in the code: the subject lines, "emergency resolved", the reading reminder,
+    "period in review", the target line and the footer. They are rendered in the recipient's
+    locale from one file, `src/modules/notifications/messages.csv` (`key,en,ru,et`; a new language
+    is a new column plus a `Locale` value). The chairman cannot change system texts.
+  Every e-mail ends with a fixed footer that links to the site, where the contact channels of the
+  association are listed.
+- **What leaves the system on external channels:** the event type, the emergency title **and
+  body** (written by the board; only the board can publish emergencies), the target (e.g.
+  "entrance 2"), the period code and due date, and a link to the site. Comments, forum posts and
+  author names stay in the app.
 
 ## 6. Channels as plugins
 
@@ -169,9 +178,37 @@ class InboundChannel(Protocol):  # optional, implemented by telegram
   plugins only format, verify and send.
 - Enabled through `ENABLED_PLUGINS`, e.g. `common.csv_export,common.email_smtp,common.telegram`.
 
-### 6.1 E-mail (`common.email_smtp`)
-SMTP settings from env. Verified by automated tests against a local SMTP test server (owner
-decision: no external channel runs in the current demo-mode environments, see 10.10).
+### 6.1 E-mail (`common.email_smtp`, task N3)
+**The app is an SMTP client only** (owner decision 2026-10-31). Each backend connects with
+`aiosmtplib` to an external transactional e-mail provider; no image contains a mail server, and
+there is no shared relay container on the VPS:
+- several environments on one VPS (dev, prod) simply have their own `SMTP_*` values in their
+  `.env` (their own account, or at least their own sender address);
+- a local relay would answer "accepted" at once, so the dispatcher could not see failures, and its
+  own queue would retry behind our back and break the one-hour rule for emergencies;
+- sending directly from the VPS (own MTA) would land in spam (shared hosting IP ranges, no PTR,
+  SPF, DKIM and DMARC warm-up).
+
+Real sending needs an own domain for SPF/DKIM (none is registered yet) and a real login
+(docs/BACKLOG.md B-7); until then every environment runs in demo mode and sends nothing (10.10).
+The provider is chosen then; any provider with SMTP submission works, so a self-hosted association
+uses its own (docs/BACKLOG.md B-8).
+
+- Connection per message, `SMTP_TLS`: `starttls` (port 587, default), `tls` (implicit TLS, 465) or
+  `none` (only for a local test server); 10 s timeout.
+- The message is plain text, UTF-8: `From: SMTP_FROM`, `To`, `Subject`, `Date`, `Message-ID` and
+  `X-Trace-Id` (the trace of the request that caused the event, so support can follow one e-mail
+  back to its request; it is not personal data).
+- Results: a `4xx` reply, a timeout or a connection error is retryable (`SMTP_TEMPORARY`,
+  `SMTP_UNAVAILABLE`); a `5xx` reply fails at once (`SMTP_REJECTED`), an authentication failure
+  too (`SMTP_AUTH_FAILED`, a configuration error), and so does a server that lacks what the
+  settings need, e.g. STARTTLS (`SMTP_NOT_SUPPORTED`). Bounces that arrive later need the
+  provider's webhooks and are not handled here.
+- The plugin refuses to start without `SMTP_HOST` or a valid `SMTP_FROM`, and with credentials
+  over `SMTP_TLS=none` (they would travel in clear text).
+- Tests run an in-process SMTP server (`aiosmtpd`), no container. For looking at e-mails by hand,
+  `docker compose --profile mail up` starts Mailpit (web UI on port 8025); it is never part of the
+  image or the VPS deployment.
 
 ### 6.2 Telegram (`common.telegram`): linking
 - Updates arrive by **webhook** `POST /api/v1/notifications/telegram/webhook`. The plugin checks the
@@ -248,7 +285,7 @@ timeout, no redirects. The message:
 
 **Privacy.** Unlike WebPush, an FCM notification is not end-to-end encrypted: Google (and Apple for
 iOS) can read it. It therefore carries exactly what the other external channels may carry (section
-5: event type, emergency title, target, period code, link), never post bodies, comments or names.
+5: event type, emergency title and body, target, period code, link), never comments or names.
 Tokens never appear in logs, spans or API responses.
 
 **Done when (N7):** a migration adds `mobile_push` to the channel checks (`notif_channel_bindings`,

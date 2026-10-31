@@ -22,6 +22,7 @@ from src.modules.property.schemas import (
     BuildingResponse,
     BuildingRole,
     CurrentUserDTO,
+    DeliveryContactDTO,
     DisplayMode,
     Locale,
     LocaleUpdate,
@@ -179,6 +180,31 @@ class PropertyService:
         """Whether the user can be reached by e-mail (the address itself never leaves)."""
         email = await self.session.scalar(select(User.email).where(User.id == user_id))
         return bool(email)
+
+    async def with_delivery_email(self, user_ids: Iterable[uuid.UUID]) -> set[uuid.UUID]:
+        """Which of these users have an e-mail address (one query; the addresses stay here)."""
+        ids = list(user_ids)
+        if not ids:
+            return set()
+        rows = await self.session.scalars(
+            select(User.id).where(User.id.in_(ids), User.email.is_not(None), User.email != "")
+        )
+        return set(rows)
+
+    async def get_delivery_contact(self, user_id: uuid.UUID) -> DeliveryContactDTO | None:
+        """The address to send one message to, or None (no address, or the user is inactive).
+
+        The documented PII exception (docs/ARCHITECTURE.md 3.4): the caller keeps it in memory
+        for one send and never logs or stores it.
+        """
+        email = await self.session.scalar(
+            select(User.email).where(User.id == user_id, User.is_active.is_(True))
+        )
+        return DeliveryContactDTO(email=email) if email else None
+
+    async def is_user_active(self, user_id: uuid.UUID) -> bool:
+        active = await self.session.scalar(select(User.is_active).where(User.id == user_id))
+        return bool(active)
 
     # --- Building details -----------------------------------------------------------------------
 

@@ -74,5 +74,16 @@ services:
     depends_on:
       - lgtm
 
+  # Optional local mail catcher for looking at notification e-mails by hand; never deployed.
+  # `docker compose --profile mail up`, web UI on http://localhost:8025. To send to it, run the
+  # backend with DEMO_MODE_ENABLED=false, ENABLED_PLUGINS=common.csv_export,common.email_smtp,
+  # SMTP_HOST=mailpit, SMTP_PORT=1025, SMTP_TLS=none, SMTP_FROM and PUBLIC_BASE_URL (e.g. in a
+  # docker-compose.override.yml); docs/epics/E1_NOTIFICATIONS.md 6.1.
+  mailpit:
+    image: axllent/mailpit:v1.32.0
+    profiles: ["mail"]
+    ports:
+      - "${MAILPIT_PORT:-8025}:8025"
+
 volumes:
   pgdata:
