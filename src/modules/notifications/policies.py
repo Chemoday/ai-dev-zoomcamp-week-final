@@ -45,6 +45,40 @@ CHANNEL_PLUGINS: Mapping[Channel, str] = {
 LATE_EVENT_THRESHOLD = timedelta(hours=1)
 
 
+# Dispatcher (docs/ARCHITECTURE.md 3.3): batches, leases and retries.
+DISPATCH_BATCH_SIZE = 10
+LEASE_DURATION = timedelta(minutes=5)
+MAX_ATTEMPTS = 5
+# Waits after attempts 1..4; the fifth attempt is the last one.
+RETRY_BACKOFF = (
+    timedelta(minutes=1),
+    timedelta(minutes=5),
+    timedelta(minutes=30),
+    timedelta(hours=2),
+)
+# An emergency that could not go out within this time after its delivery row was created is
+# skipped on every external channel: retries must not bring an alert late (owner rule).
+EMERGENCY_MAX_AGE = timedelta(hours=1)
+# Push channels drop other messages after this time (docs/epics/E1_NOTIFICATIONS.md 6.4).
+OTHER_MESSAGE_TTL = timedelta(hours=24)
+
+
+def retry_delay(attempts: int) -> timedelta | None:
+    """How long to wait after a retryable failure of attempt number `attempts`; None: give up."""
+    if attempts >= MAX_ATTEMPTS:
+        return None
+    return RETRY_BACKOFF[attempts - 1]
+
+
+def emergency_too_old(
+    event_type: NotificationEventType, created_at: datetime, now: datetime
+) -> bool:
+    return (
+        event_type == NotificationEventType.EMERGENCY_PUBLISHED
+        and now - created_at > EMERGENCY_MAX_AGE
+    )
+
+
 def is_mandatory(event_type: NotificationEventType) -> bool:
     return event_type in MANDATORY_EVENTS
 

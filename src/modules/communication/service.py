@@ -96,6 +96,7 @@ class CommunicationService:
             target_entrance=post.target_entrance,
             target_apartment_ids=tuple(uuid.UUID(a) for a in post.target_apartment_ids or ()),
             title=post.title,
+            body=post.body,
             category=post.category,
         )
 

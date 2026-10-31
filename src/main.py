@@ -18,6 +18,11 @@ from src.core.health import router as health_router
 from src.core.telemetry import configure_logging, setup_telemetry, shutdown_tracing
 from src.modules.communication.router import router as communication_router
 from src.modules.meters.router import router as meters_router
+from src.modules.notifications.dispatcher import (
+    Dispatcher,
+    run_dispatcher_loop,
+    validate_channel_settings,
+)
 from src.modules.notifications.router import router as notifications_router
 from src.modules.notifications.service import NotificationsSubscriber
 from src.modules.property.router import router as property_router
@@ -27,21 +32,28 @@ from src.plugins.registry import build_plugin_registry
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
-    relay: asyncio.Task[None] | None = None
+    loops: list[asyncio.Task[None]] = []
     if settings.DOMAIN_EVENTS_RELAY_ENABLED:
-        relay = asyncio.create_task(
-            run_relay_loop(
-                async_session_factory,
-                app.state.event_bus,
-                retention_days=settings.DOMAIN_EVENTS_RETENTION_DAYS,
-            ),
-            name="domain-event-relay",
+        loops.append(
+            asyncio.create_task(
+                run_relay_loop(
+                    async_session_factory,
+                    app.state.event_bus,
+                    retention_days=settings.DOMAIN_EVENTS_RETENTION_DAYS,
+                ),
+                name="domain-event-relay",
+            )
+        )
+    dispatcher: Dispatcher | None = getattr(app.state, "notifications_dispatcher", None)
+    if dispatcher is not None and settings.NOTIFICATIONS_DISPATCHER_ENABLED:
+        loops.append(
+            asyncio.create_task(run_dispatcher_loop(dispatcher), name="notifications-dispatcher")
         )
     yield
-    if relay is not None:
-        relay.cancel()
+    for loop in loops:
+        loop.cancel()
         with contextlib.suppress(asyncio.CancelledError):
-            await relay
+            await loop
     shutdown_tracing()
     await engine.dispose()
 
@@ -59,18 +71,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(property_router)
     app.include_router(meters_router)
     app.include_router(communication_router)
+    # One registry per app instance, so enabling a plugin never leaks between apps or tests.
+    # Plugins with incomplete settings raise here, so the app does not start half-configured.
+    plugins = build_plugin_registry(settings)
+    app.state.plugin_registry = plugins
     if settings.NOTIFICATIONS_ENABLED:
+        validate_channel_settings(settings, plugins)
         app.include_router(notifications_router)
-        # The subscriber reads the factory on every event, so tests can swap it after create_app.
+        # The subscriber and the dispatcher read the factory on every use, so tests can swap it
+        # after create_app.
         app.state.notifications_session_factory = async_session_factory
         NotificationsSubscriber(
-            lambda: app.state.notifications_session_factory, settings.DEFAULT_LOCALE
+            lambda: app.state.notifications_session_factory,
+            settings.DEFAULT_LOCALE,
+            demo_mode=settings.DEMO_MODE_ENABLED,
+            plugins=plugins,
         ).subscribe(app.state.event_bus)
+        app.state.notifications_dispatcher = Dispatcher(
+            lambda: app.state.notifications_session_factory, plugins, settings
+        )
     app.include_router(demo_router)
     # After every API route: the client only gets paths that nothing else answered.
     mount_frontend(app, settings.FRONTEND_DIST_DIR)
-    # One registry per app instance, so enabling a plugin never leaks between apps or tests.
-    app.state.plugin_registry = build_plugin_registry(settings.ENABLED_PLUGINS)
 
     setup_telemetry(app, settings)
     return app

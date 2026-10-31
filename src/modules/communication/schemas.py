@@ -136,9 +136,11 @@ class ResolveResponse(BaseModel):
 
 
 class EmergencyRefDTO(BaseModel):
-    """An emergency as the notifications module sees it (system-level; no author name, no body).
+    """An emergency as the notifications module sees it (system-level; no author name).
 
-    `author_user_id` is only compared, never shown: notifications skip the author.
+    `author_user_id` is only compared, never shown: notifications skip the author. `title` and
+    `body` are the board's own text, sent as the emergency message (owner decision, E1 section 5);
+    never log them.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -151,4 +153,5 @@ class EmergencyRefDTO(BaseModel):
     target_entrance: int | None
     target_apartment_ids: tuple[uuid.UUID, ...]
     title: str
+    body: str
     category: PostCategory

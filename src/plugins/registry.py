@@ -18,6 +18,8 @@ from typing import Protocol
 
 from fastapi import Request
 
+from src.core.config import Settings
+
 _PLUGIN_NAME = re.compile(r"[a-z0-9_]+(\.[a-z0-9_]+)*")
 
 
@@ -73,6 +75,8 @@ class OutgoingMessage:
     collapse_key: str | None = None
     # Push channels drop the message after this moment (emergencies: 1 hour after the delivery row).
     expires_at: datetime | None = None
+    # The trace of the request that caused the event; e-mail carries it as X-Trace-Id.
+    trace_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -92,7 +96,10 @@ class NotificationChannel(Protocol):
 
 
 class PluginRegistry:
-    def __init__(self) -> None:
+    def __init__(self, settings: Settings | None = None) -> None:
+        # Plugins read their own settings from here in register(); incomplete ones raise there,
+        # so the app does not start with a half-configured channel.
+        self.settings = settings or Settings()
         self._exporters: dict[str, ReadingExporter] = {}
         self._channels: dict[str, NotificationChannel] = {}
         self._loaded: set[str] = set()
@@ -140,9 +147,9 @@ def parse_plugin_list(value: str) -> list[str]:
     return [name.strip() for name in value.split(",") if name.strip()]
 
 
-def build_plugin_registry(enabled_plugins: str) -> PluginRegistry:
-    registry = PluginRegistry()
-    registry.load(parse_plugin_list(enabled_plugins))
+def build_plugin_registry(settings: Settings) -> PluginRegistry:
+    registry = PluginRegistry(settings)
+    registry.load(parse_plugin_list(settings.ENABLED_PLUGINS))
     return registry
 
 
