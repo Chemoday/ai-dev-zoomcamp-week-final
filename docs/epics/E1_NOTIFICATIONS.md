@@ -158,7 +158,9 @@ class NotificationChannel(Protocol):
 
 
 class InboundChannel(Protocol):  # optional, implemented by telegram
-    async def parse_inbound(self, headers: Mapping[str, str], body: bytes) -> InboundLink | None: ...
+    async def parse_inbound(
+        self, headers: Mapping[str, str], body: bytes
+    ) -> InboundLink | None: ...
 ```
 
 - `OutgoingMessage`: address (from the binding or the delivery contact), locale, subject, body,
