@@ -13,6 +13,7 @@ from src.modules.meters.models import (  # noqa: F401
     MeterReadingLog,
     ReadingPeriod,
 )
+from src.modules.notifications.models import ChannelBinding, Delivery, Preference  # noqa: F401
 from src.modules.property.models import (  # noqa: F401
     Apartment,
     ApartmentMembership,

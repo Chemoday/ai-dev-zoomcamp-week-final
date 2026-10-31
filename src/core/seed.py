@@ -28,6 +28,7 @@ from src.core.telemetry import configure_logging
 from src.modules.communication.models import Comment, Post
 from src.modules.communication.schemas import PostCategory, PostType, TargetScope
 from src.modules.meters.models import MeterDevice, MeterReading, MeterReadingLog, ReadingPeriod
+from src.modules.meters.policies import period_due_date
 from src.modules.meters.schemas import MeterUnit, PeriodStatus, ReadingSource, ResourceType
 from src.modules.property.models import Apartment, ApartmentMembership, Building, User
 from src.modules.property.schemas import BuildingRole, DisplayMode, RelationType
@@ -158,9 +159,7 @@ def _q(value: Decimal) -> Decimal:
 
 
 def _due_date(period_code: str, deadline_day: int) -> datetime:
-    year, month = (int(part) for part in period_code.split("-"))
-    year, month = (year + 1, 1) if month == 12 else (year, month + 1)
-    return datetime(year, month, deadline_day, 23, 59, 59, tzinfo=UTC)
+    return period_due_date(period_code, deadline_day, settings.INSTANCE_TIMEZONE)
 
 
 _INSERT_ORDER = (

@@ -11,7 +11,6 @@ from httpx import AsyncClient, Response
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.event_bus import event_bus
 from src.core.security import DEMO_USER_HEADER
 from src.modules.meters.events import MeterReadingSubmitted, ReadingPeriodStatusChanged
 from src.modules.meters.models import MeterDevice, MeterReading, MeterReadingLog, ReadingPeriod
@@ -204,7 +203,7 @@ async def test_value_below_previous_is_rejected(
 
 
 async def test_identical_resubmission_is_a_no_op(
-    api_client: AsyncClient, db_session: AsyncSession, world: MetersWorld
+    api_client: AsyncClient, db_session: AsyncSession, world: MetersWorld, event_bus
 ) -> None:
     first = await submit(api_client, world.owner_14, world.meter_14, "119.000")
     received: list[MeterReadingSubmitted] = []
@@ -336,7 +335,7 @@ async def test_unknown_period_is_404(api_client: AsyncClient, world: MetersWorld
 
 
 async def test_submission_publishes_an_event_without_personal_data(
-    api_client: AsyncClient, world: MetersWorld
+    api_client: AsyncClient, world: MetersWorld, event_bus
 ) -> None:
     received: list[MeterReadingSubmitted] = []
 
@@ -380,7 +379,7 @@ async def test_no_event_is_published_when_the_commit_fails(
 # --- Period status ------------------------------------------------------------------------------
 
 
-async def test_period_state_machine(api_client: AsyncClient, world: MetersWorld) -> None:
+async def test_period_state_machine(api_client: AsyncClient, world: MetersWorld, event_bus) -> None:
     received: list[ReadingPeriodStatusChanged] = []
 
     async def handler(event: ReadingPeriodStatusChanged) -> None:
@@ -585,7 +584,7 @@ async def test_dashboard_shows_own_meters_previous_values_and_the_deadline(
     assert body["period"] == {
         "period_code": "2026-10",
         "status": "OPEN_FOR_RESIDENTS",
-        "due_date": "2026-11-04T23:59:59Z",
+        "due_date": "2026-11-04T21:59:59Z",
     }
     (apartment,) = body["apartments"]
     assert apartment["apartment_number"] == "14" and apartment["can_submit_readings"] is True
@@ -671,7 +670,7 @@ async def test_periods_are_listed_newest_first_for_any_user_of_the_building(
     assert periods[0] == {
         "period_code": "2026-10",
         "status": "OPEN_FOR_RESIDENTS",
-        "due_date": "2026-11-04T23:59:59Z",
+        "due_date": "2026-11-04T21:59:59Z",
     }
     assert {p["status"] for p in periods[1:]} == {"LOCKED"}
 

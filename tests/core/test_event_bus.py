@@ -4,7 +4,8 @@ from dataclasses import dataclass
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import StatusCode
 
-from src.core.event_bus import DomainEvent, InMemoryEventBus, event_bus, get_event_bus
+from src.core.event_bus import DomainEvent, InMemoryEventBus, get_event_bus
+from src.main import create_app
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -146,6 +147,30 @@ async def test_publish_without_handlers_is_a_no_op() -> None:
     await InMemoryEventBus().publish(AlertPublished(post_id="p-1"))
 
 
-def test_get_event_bus_returns_process_wide_singleton() -> None:
-    assert get_event_bus() is event_bus
-    assert isinstance(event_bus, InMemoryEventBus)
+def test_every_app_has_its_own_event_bus() -> None:
+    first, second = create_app(), create_app()
+
+    assert isinstance(first.state.event_bus, InMemoryEventBus)
+    assert first.state.event_bus is not second.state.event_bus
+
+    class FakeRequest:
+        app = first
+
+    assert get_event_bus(FakeRequest()) is first.state.event_bus  # type: ignore[arg-type]
+
+
+async def test_publish_reports_the_failed_handlers() -> None:
+    bus = InMemoryEventBus()
+
+    async def ok(event: AlertPublished) -> None:
+        return None
+
+    async def broken(event: AlertPublished) -> None:
+        raise RuntimeError("down")
+
+    bus.subscribe(AlertPublished, ok)
+    bus.subscribe(AlertPublished, broken)
+
+    failed = await bus.publish(AlertPublished(post_id="p-1"))
+
+    assert len(failed) == 1 and "broken" in failed[0]

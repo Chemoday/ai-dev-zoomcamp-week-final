@@ -29,6 +29,7 @@ from src.modules.communication.schemas import (
     AcknowledgeResponse,
     CommentCreateRequest,
     CommentView,
+    EmergencyRefDTO,
     EmergencyView,
     PostCategory,
     PostCreateRequest,
@@ -57,12 +58,46 @@ def _author_key(item: Post | Comment) -> AuthorKey:
 
 class CommunicationService:
     def __init__(
-        self, session: AsyncSession, property_service: PropertyService, outbox: EventOutbox
+        self,
+        session: AsyncSession,
+        property_service: PropertyService,
+        outbox: EventOutbox | None = None,
     ):
         self.session = session
         self.property_service = property_service
         # Events go out only after the request's transaction commits (docs/BACKEND_CONVENTIONS.md).
+        # None only for system-level readers (e.g. notifications), which never write.
         self.outbox = outbox
+
+    # --- System-level reads (no caller; used by the notifications module) -----------------------
+
+    async def get_emergency_ref(
+        self, post_id: uuid.UUID, *, lock_for_share: bool = False
+    ) -> EmergencyRefDTO | None:
+        """An emergency regardless of its status, or None if there is no such emergency.
+
+        `lock_for_share` keeps the row locked until the caller's transaction ends, so a
+        concurrent resolve waits: notifications use it to store "published" rows before the
+        alert can be resolved (a resolved event then always finds them).
+        """
+        query = select(Post).where(Post.id == post_id, Post.post_type == PostType.EMERGENCY)
+        if lock_for_share:
+            # Refresh an object the session may already hold, so the locked state is the one read.
+            query = query.with_for_update(read=True).execution_options(populate_existing=True)
+        post = await self.session.scalar(query)
+        if post is None:
+            return None
+        return EmergencyRefDTO(
+            post_id=post.id,
+            building_id=post.building_id,
+            author_user_id=post.author_user_id,
+            is_active=post.is_active,
+            target_scope=post.target_scope,
+            target_entrance=post.target_entrance,
+            target_apartment_ids=tuple(uuid.UUID(a) for a in post.target_apartment_ids or ()),
+            title=post.title,
+            category=post.category,
+        )
 
     # --- Emergencies ----------------------------------------------------------------------------
 
@@ -140,6 +175,7 @@ class CommunicationService:
             if await self.session.scalar(select(Post.id).where(is_emergency)) is None:
                 raise _post_not_found()
         else:
+            assert self.outbox is not None, "writes need the request outbox"
             self.outbox.add(
                 EmergencyAlertResolved(
                     post_id=post_id, building_id=user.building_id, resolved_by_user_id=user.id
@@ -239,6 +275,7 @@ class CommunicationService:
         await self.session.flush()
 
         if post.post_type == PostType.EMERGENCY:
+            assert self.outbox is not None, "writes need the request outbox"
             self.outbox.add(
                 EmergencyAlertPublished(
                     post_id=post.id,

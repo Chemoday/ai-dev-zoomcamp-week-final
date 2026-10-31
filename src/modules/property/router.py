@@ -9,6 +9,7 @@ from src.core.security import get_current_user
 from src.modules.property.schemas import (
     BuildingResponse,
     CurrentUserDTO,
+    LocaleUpdate,
     MeResponse,
     PrivacyUpdateRequest,
     PrivacyUpdateResponse,
@@ -28,6 +29,20 @@ async def get_me(
     service: PropertyService = Depends(get_property_service),
 ) -> MeResponse:
     return await service.get_me(current_user)
+
+
+@router.patch(
+    "/me/locale",
+    response_model=LocaleUpdate,
+    responses=error_responses({422: ["VALIDATION_ERROR"]}),
+)
+async def update_locale(
+    body: LocaleUpdate,
+    current_user: CurrentUserDTO = Depends(get_current_user),
+    service: PropertyService = Depends(get_property_service),
+) -> LocaleUpdate:
+    """Language of the caller's notifications sent outside the app; null = the instance default."""
+    return await service.update_locale(current_user, body.locale)
 
 
 @router.get("/building", response_model=BuildingResponse)
