@@ -1,8 +1,9 @@
-"""Linking external channels: Telegram link codes, the webhook and the bindings API (task N4).
+"""Linking external channels: Telegram link codes and the webhook (N4), WebPush subscriptions
+(N5) and the bindings API.
 
-docs/API.md 6 ("Telegram linking", bindings) and docs/epics/E1_NOTIFICATIONS.md 10.7. Codes and
-chat ids are stored only as keyed HMACs (NOTIFICATIONS_HASH_SECRET); chat ids never leave this
-module except to the plugin that sends.
+docs/API.md 6 ("Telegram linking", "WebPush", bindings) and docs/epics/E1_NOTIFICATIONS.md 10.7.
+Codes, chat ids and push endpoints are matched only by keyed HMACs (NOTIFICATIONS_HASH_SECRET);
+chat ids and endpoints never leave this module except to the plugin that sends.
 """
 
 import uuid
@@ -23,12 +24,19 @@ from src.modules.notifications.policies import (
     LINK_CODE_TTL,
     LINK_CODES_PER_HOUR,
     LINK_WINDOW,
+    MAX_PUSH_DEVICES,
     keyed_hash,
     new_link_code,
     normalize_link_code,
     retry_after_seconds,
 )
-from src.modules.notifications.schemas import BindingView, Channel, LinkCodeResponse
+from src.modules.notifications.schemas import (
+    BindingView,
+    Channel,
+    LinkCodeResponse,
+    VapidPublicKeyResponse,
+    WebPushSubscriptionRequest,
+)
 from src.modules.property.schemas import CurrentUserDTO
 from src.modules.property.service import PropertyService
 from src.plugins.registry import InboundChannel, InboundLink, PluginRegistry
@@ -43,6 +51,14 @@ class LinkingChannel(InboundChannel, Protocol):
     def deep_link(self, code: str) -> str: ...
 
 
+class PushChannel(Protocol):
+    """A channel plugin that browsers subscribe to (common.webpush)."""
+
+    public_key: str
+
+    def accepts_endpoint(self, endpoint: str) -> bool: ...
+
+
 def _now() -> datetime:
     return datetime.now(UTC)
 
@@ -55,6 +71,15 @@ def channel_not_enabled() -> DomainError:
 
 def binding_not_found() -> DomainError:
     return DomainError(status_code=404, error_code="BINDING_NOT_FOUND", message="Not linked.")
+
+
+def _view(binding: ChannelBinding) -> BindingView:
+    return BindingView(
+        binding_id=binding.id,
+        channel=Channel(binding.channel),
+        label=binding.label,
+        created_at=binding.created_at,
+    )
 
 
 async def _advisory_lock(session: AsyncSession, key: str) -> None:
@@ -86,6 +111,12 @@ class ChannelLinking:
         if self.settings.DEMO_MODE_ENABLED:
             return None
         return cast(LinkingChannel | None, self.plugins.channel(Channel.TELEGRAM.value))
+
+    def webpush(self) -> PushChannel | None:
+        """The WebPush plugin, or None in demo mode or when it is not enabled."""
+        if self.settings.DEMO_MODE_ENABLED:
+            return None
+        return cast(PushChannel | None, self.plugins.channel(Channel.WEBPUSH.value))
 
     # --- Link codes -----------------------------------------------------------------------------
 
@@ -213,6 +244,85 @@ class ChannelLinking:
             return catalog.render("bot.invalid_code", default_locale)
         return catalog.render("bot.linked", locale)
 
+    # --- WebPush --------------------------------------------------------------------------------
+
+    def vapid_public_key(self) -> VapidPublicKeyResponse:
+        channel = self.webpush()
+        if channel is None:
+            raise channel_not_enabled()
+        return VapidPublicKeyResponse(public_key=channel.public_key)
+
+    async def subscribe_webpush(
+        self, user: CurrentUserDTO, request: WebPushSubscriptionRequest
+    ) -> tuple[BindingView, bool]:
+        """Store a browser subscription as a binding; returns it and whether it is new.
+
+        The same endpoint again for the same user updates its keys and label. An endpoint active
+        for another user (a shared browser) moves to this one. Locks: the user, then the endpoint,
+        so concurrent subscriptions end with one active binding per endpoint and never an error.
+        """
+        channel = self.webpush()
+        if channel is None:
+            raise channel_not_enabled()
+        if not channel.accepts_endpoint(request.endpoint):
+            raise DomainError(
+                status_code=422,
+                error_code="INVALID_PUSH_ENDPOINT",
+                message="The endpoint is not a known push service.",
+            )
+        now = _now()
+        endpoint_hash = self._hash(request.endpoint)
+        config = {
+            "endpoint": request.endpoint,
+            "p256dh": request.keys.p256dh,
+            "auth": request.keys.auth,
+        }
+        await _advisory_lock(self.session, f"notif:user:{user.id}")
+        await _advisory_lock(self.session, f"notif:webpush-endpoint:{endpoint_hash}")
+        current = await self.session.scalar(
+            select(ChannelBinding)
+            .where(
+                ChannelBinding.channel == Channel.WEBPUSH.value,
+                ChannelBinding.address_hash == endpoint_hash,
+                ChannelBinding.revoked_at.is_(None),
+            )
+            .with_for_update()
+        )
+        if current is not None and current.user_id == user.id:
+            current.config = config  # the browser may have new keys for the same endpoint
+            current.label = request.label
+            await self.session.flush()
+            return _view(current), False
+        devices = await self.session.scalar(
+            select(func.count())
+            .select_from(ChannelBinding)
+            .where(
+                ChannelBinding.user_id == user.id,
+                ChannelBinding.channel == Channel.WEBPUSH.value,
+                ChannelBinding.revoked_at.is_(None),
+            )
+        )
+        if (devices or 0) >= MAX_PUSH_DEVICES:
+            raise DomainError(
+                status_code=409,
+                error_code="DEVICE_LIMIT_REACHED",
+                message=f"At most {MAX_PUSH_DEVICES} devices; remove one first.",
+            )
+        if current is not None:
+            revoke(current, now)  # a shared browser: the previous user stops receiving pushes
+            await self.session.flush()  # free the partial unique index first
+        binding = ChannelBinding(
+            user_id=user.id,
+            channel=Channel.WEBPUSH.value,
+            config=config,
+            address_hash=endpoint_hash,
+            label=request.label,
+            created_at=now,
+        )
+        self.session.add(binding)
+        await self.session.flush()
+        return _view(binding), True
+
     # --- Bindings -------------------------------------------------------------------------------
 
     async def list_bindings(self, user: CurrentUserDTO) -> list[BindingView]:
@@ -221,15 +331,7 @@ class ChannelLinking:
             .where(ChannelBinding.user_id == user.id, ChannelBinding.revoked_at.is_(None))
             .order_by(ChannelBinding.created_at, ChannelBinding.id)
         )
-        return [
-            BindingView(
-                binding_id=row.id,
-                channel=Channel(row.channel),
-                label=row.label,
-                created_at=row.created_at,
-            )
-            for row in rows
-        ]
+        return [_view(row) for row in rows]
 
     async def delete_binding(self, user: CurrentUserDTO, binding_id: uuid.UUID) -> None:
         row = await self.session.scalar(

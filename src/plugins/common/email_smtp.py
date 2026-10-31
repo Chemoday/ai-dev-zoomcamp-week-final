@@ -49,7 +49,7 @@ class SmtpEmailChannel:
         email["Message-ID"] = make_msgid(domain=self._msgid_domain)
         if message.trace_id:
             email["X-Trace-Id"] = message.trace_id
-        email.set_content(message.body)  # text/plain; charset utf-8
+        email.set_content(message.full_text)  # text/plain; charset utf-8
         return email
 
     async def send(self, message: OutgoingMessage) -> DeliveryResult:

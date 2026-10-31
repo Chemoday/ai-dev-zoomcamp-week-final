@@ -21,11 +21,11 @@ from zoneinfo import ZoneInfo
 
 from src.modules.notifications.schemas import NotificationEventType
 from src.modules.property.schemas import Locale
+from src.plugins.registry import SIGNATURE_SEPARATOR
 
 CATALOG_FILE = Path(__file__).with_name("messages.csv")
 FALLBACK_LOCALE = Locale.EN
 _PLACEHOLDER = re.compile(r"\{([a-z_]+)\}")
-SIGNATURE_SEPARATOR = "\n\n-- \n"  # the standard e-mail signature delimiter, before the footer
 
 
 class MessageCatalogError(ValueError):
@@ -77,7 +77,13 @@ def default_catalog() -> MessageCatalog:
 @dataclass(frozen=True)
 class RenderedMessage:
     subject: str
-    body: str
+    text: str
+    footer: str
+
+    @property
+    def body(self) -> str:
+        """The text and the footer, as e-mail and Telegram show them."""
+        return f"{self.text}{SIGNATURE_SEPARATOR}{self.footer}"
 
 
 def _target(catalog: MessageCatalog, locale: str, params: Mapping[str, Any]) -> str:
@@ -133,4 +139,4 @@ def compose(
     # A subject is one line: a title may contain line breaks (also U+2028), which a mail header
     # cannot carry, and the mandatory alert must not fail because of them.
     subject = " ".join(subject.split())
-    return RenderedMessage(subject=subject, body=f"{text}{SIGNATURE_SEPARATOR}{footer}")
+    return RenderedMessage(subject=subject, text=text, footer=footer)

@@ -218,12 +218,12 @@ Shared enums (each has a named `CHECK (… IN (…))`):
 | `address_hash` | `VARCHAR(64)` | `NOT NULL` | Hex HMAC-SHA-256 (key `NOTIFICATIONS_HASH_SECRET`) of the chat id, the endpoint URL or the FCM token. Keyed, because a plain hash of a 10-digit chat id is reversible |
 | `label` | `VARCHAR(100)` | `NULLABLE` | Device label chosen by the client, e.g. `"Chrome on Android"` |
 | `created_at` | `TIMESTAMPTZ` | `NOT NULL` | |
-| `revoked_at` | `TIMESTAMPTZ` | `NULLABLE` | Set on unlink, on logout (the client deletes its device binding), on a Telegram 403, on a push service 404/410, or *(N7)* on FCM `UNREGISTERED` / `SENDER_ID_MISMATCH` and a token refresh (`replaces_binding_id`) |
+| `revoked_at` | `TIMESTAMPTZ` | `NULLABLE` | Set on unlink, on logout (the client deletes its device binding), on a Telegram 403, on a push service 404/410 or an endpoint that fails the check at send time, when another user subscribes the same endpoint, or *(N7)* on FCM `UNREGISTERED` / `SENDER_ID_MISMATCH` and a token refresh (`replaces_binding_id`) |
 | `UNIQUE` | `(channel, address_hash) WHERE revoked_at IS NULL` | | Partial unique index `uq_notif_channel_bindings_active_address`: an active chat or endpoint belongs to one user. Moving it to another user revokes the old binding first |
 | `UNIQUE` | `(user_id) WHERE channel = 'telegram' AND revoked_at IS NULL` | | Partial unique index `uq_notif_channel_bindings_one_telegram`: one active Telegram chat per user |
 
 - `ck_notif_channel_bindings_config_revoked`: `(revoked_at IS NULL) = (config IS NOT NULL)`.
-- At most 10 active WebPush bindings per user (checked by the service, which locks the endpoint first); *(N7)* likewise at most 10 active mobile push bindings.
+- At most 10 active WebPush bindings per user (checked by the service under advisory locks on the user, then the endpoint); *(N7)* likewise at most 10 active mobile push bindings.
 
 ### Table: `notif_preferences`
 *(Only deviations from the defaults are stored; no row means the default of docs/API.md section 6.)*
@@ -280,7 +280,7 @@ Rows of `notif_link_codes` and `notif_link_attempts` older than 24 hours are del
 | `next_attempt_at` | `TIMESTAMPTZ` | `NOT NULL` | When a `PENDING` row is due |
 | `lease_until` | `TIMESTAMPTZ` | `NULLABLE` | Set while `SENDING`; an expired lease is claimed again |
 | `last_attempt_at` | `TIMESTAMPTZ` | `NULLABLE` | |
-| `error_code` | `VARCHAR(64)` | `NULLABLE` | Machine code of the last failure or skip reason. Skips: `DEMO_MODE`, `CHANNEL_NOT_ENABLED`, `USER_INACTIVE`, `NO_EMAIL`, `PREFERENCE_OFF`, `POST_RESOLVED`, `EMERGENCY_TOO_OLD`, `SUBJECT_NOT_FOUND`, `BINDING_REVOKED`. Failures: `SMTP_REJECTED`, `SMTP_AUTH_FAILED`, `SMTP_NOT_SUPPORTED`, `EMAIL_INVALID`, `TELEGRAM_BLOCKED`, `TELEGRAM_CHAT_NOT_FOUND` (both also revoke the binding), `TELEGRAM_BAD_REQUEST`, `TELEGRAM_AUTH_FAILED`, `LEASE_EXPIRED`, or the last retryable code (`SMTP_TEMPORARY`, `SMTP_UNAVAILABLE`, `TELEGRAM_RATE_LIMITED`, `TELEGRAM_UNAVAILABLE`, `CHANNEL_TIMEOUT`, `CHANNEL_ERROR`, `PREPARE_ERROR`) after 5 attempts. Never provider text |
+| `error_code` | `VARCHAR(64)` | `NULLABLE` | Machine code of the last failure or skip reason. Skips: `DEMO_MODE`, `CHANNEL_NOT_ENABLED`, `USER_INACTIVE`, `NO_EMAIL`, `PREFERENCE_OFF`, `POST_RESOLVED`, `EMERGENCY_TOO_OLD`, `SUBJECT_NOT_FOUND`, `BINDING_REVOKED`. Failures: `SMTP_REJECTED`, `SMTP_AUTH_FAILED`, `SMTP_NOT_SUPPORTED`, `EMAIL_INVALID`, `TELEGRAM_BLOCKED`, `TELEGRAM_CHAT_NOT_FOUND`, `WEBPUSH_GONE` (404/410), `WEBPUSH_ENDPOINT_REJECTED`, `WEBPUSH_INVALID_KEYS` (these five also revoke the binding), `TELEGRAM_BAD_REQUEST`, `TELEGRAM_AUTH_FAILED`, `WEBPUSH_AUTH_FAILED`, `WEBPUSH_PAYLOAD_TOO_LARGE`, `WEBPUSH_REJECTED`, `LEASE_EXPIRED`, or the last retryable code (`SMTP_TEMPORARY`, `SMTP_UNAVAILABLE`, `TELEGRAM_RATE_LIMITED`, `TELEGRAM_UNAVAILABLE`, `WEBPUSH_RATE_LIMITED`, `WEBPUSH_UNAVAILABLE`, `CHANNEL_TIMEOUT`, `CHANNEL_ERROR`, `PREPARE_ERROR`) after 5 attempts. Never provider text |
 | `trace_id` | `VARCHAR(32)` | `NULLABLE` | Trace of the request that caused the event |
 | `created_at` | `TIMESTAMPTZ` | `NOT NULL` | |
 | `sent_at` | `TIMESTAMPTZ` | `NULLABLE` | |

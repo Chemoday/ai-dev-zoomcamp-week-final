@@ -54,6 +54,8 @@ SENSITIVE_KEY_MARKERS: tuple[str, ...] = (
     "personal_code",
     "subject_hash",
     "chat_id",
+    "endpoint",  # a WebPush endpoint is a capability URL: whoever has it can push to the device
+    "p256dh",
 )
 
 # Free-text patterns masked inside any string value (log messages, URLs, exception texts).

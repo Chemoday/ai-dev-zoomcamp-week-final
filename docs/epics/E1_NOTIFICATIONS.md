@@ -1,6 +1,6 @@
 # E1. Notifications
 
-- **Phase:** 2. **Status:** N1, N1b, N2, N3 and N4 done (in-app notifications, the dispatcher, e-mail and Telegram in `develop`; external channels send nowhere until a real login, 10.10); N5 next. **Epic issue:** [#39](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/39).
+- **Phase:** 2. **Status:** N1, N1b, N2, N3, N4 and N5 done (in-app notifications, the dispatcher, e-mail, Telegram and WebPush in `develop`; external channels send nowhere until a real login, 10.10); N6 next. **Epic issue:** [#39](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/39).
 - **Goal:** one pluggable notification system that every module uses, instead of each feature
   sending its own messages. Reminders, emergency alerts and (later) voting all go through it.
 
@@ -226,6 +226,11 @@ uses its own (docs/BACKLOG.md B-8).
   allowlist of push services (`fcm.googleapis.com`, `updates.push.services.mozilla.com`,
   `*.notify.windows.com`, `web.push.apple.com`); anything else is rejected with 422.
 - A 404 or 410 from the push service revokes the binding.
+- Encryption RFC 8291 (`aes128gcm`, one record) and VAPID RFC 8292 (ES256 JWT), implemented on
+  `cryptography` and `pyjwt` and checked against the example of RFC 8291 Appendix A; no
+  `pywebpush` (synchronous, pulls `requests`, no control over redirects or the test transport).
+  The payload is JSON for the service worker without the e-mail footer (docs/API.md 6); `Topic` is
+  a hash of the collapse key, so the push service sees no post id.
 
 ### 6.4 Mobile push (`common.fcm_push`, task N7, planned)
 Owner decision 2026-10-31: the phone app is a native app or a wrapper of the Vue client (e.g.

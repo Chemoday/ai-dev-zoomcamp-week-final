@@ -75,7 +75,8 @@ async def test_a_message_goes_to_the_bot_api_as_plain_text(
         locale="en",
         event_type="EMERGENCY_PUBLISHED",
         subject="Emergency: Water off",
-        body="Riser.\n\n-- \nfooter",
+        body="Riser.",
+        footer="footer",
         deep_link="https://kyu.example.test",
     )
 
