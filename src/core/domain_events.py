@@ -173,6 +173,14 @@ class _Claimed:
     payload: dict[str, Any]
     occurred_at: datetime
     traceparent: str | None
+    attempts: int  # including this one
+
+
+def _log_gave_up(event_type: str, event_id: uuid.UUID, last_error: str | None) -> None:
+    _failed_events.add(1, {"event.name": event_type})
+    logger.error(
+        "domain_event_gave_up", event_name=event_type, event_id=str(event_id), last_error=last_error
+    )
 
 
 async def _claim(session: AsyncSession, now: datetime, batch: int) -> list[_Claimed]:
@@ -194,21 +202,24 @@ async def _claim(session: AsyncSession, now: datetime, batch: int) -> list[_Clai
     ).all()
     claimed: list[_Claimed] = []
     for row in rows:
+        # Normally a row is given up right after its last failed attempt (relay_once); this
+        # catches rows that reached the limit some other way.
         if row.publish_attempts >= MAX_PUBLISH_ATTEMPTS:
             row.failed_at = now
             row.last_error = row.last_error or "MAX_ATTEMPTS"
-            _failed_events.add(1, {"event.name": row.event_type})
-            logger.error(
-                "domain_event_gave_up",
-                event_name=row.event_type,
-                event_id=str(row.id),
-                last_error=row.last_error,
-            )
+            _log_gave_up(row.event_type, row.id, row.last_error)
             continue
         row.publish_attempts += 1
         row.next_attempt_at = now + retry_delay(row.publish_attempts)
         claimed.append(
-            _Claimed(row.id, row.event_type, dict(row.payload), row.occurred_at, row.traceparent)
+            _Claimed(
+                row.id,
+                row.event_type,
+                dict(row.payload),
+                row.occurred_at,
+                row.traceparent,
+                row.publish_attempts,
+            )
         )
     await session.commit()
     return claimed
@@ -232,15 +243,18 @@ async def _publish_claimed(item: _Claimed, bus: EventBus, registry: EventRegistr
         f"domain_event_relay {item.event_type}",
         context=parent,
         attributes={"event.name": item.event_type, "event.id": str(item.id)},
-    ):
+    ) as span:
         try:
             failed_handlers = await bus.publish(event)
         except Exception:
             logger.exception(
                 "domain_event_publish_failed", event_name=item.event_type, event_id=str(item.id)
             )
+            failed_handlers = ["<bus>"]
+        if failed_handlers:
+            span.set_status(trace.Status(trace.StatusCode.ERROR, "HANDLER_FAILED"))
             return "HANDLER_FAILED"
-    return "HANDLER_FAILED" if failed_handlers else None
+    return None
 
 
 async def relay_once(
@@ -259,34 +273,34 @@ async def relay_once(
     if not claimed:
         return 0
 
-    published: list[uuid.UUID] = []
-    errors: dict[uuid.UUID, str] = {}
+    published = 0
     for item in claimed:
         error = await _publish_claimed(item, bus, registry)
+        # Marked right away, one event at a time, so a slow batch never outlives its claim.
+        values: dict[str, Any]
         if error is None:
-            published.append(item.id)
+            published += 1
+            values = {"published_at": _utcnow(), "last_error": None}
         else:
-            errors[item.id] = error
-
-    async with session_factory() as session:
-        if published:
+            logger.warning(
+                "domain_event_relay_failed",
+                event_name=item.event_type,
+                event_id=str(item.id),
+                error=error,
+                attempt=item.attempts,
+            )
+            values = {"last_error": error}
+            if item.attempts >= MAX_PUBLISH_ATTEMPTS:
+                values["failed_at"] = _utcnow()
+                _log_gave_up(item.event_type, item.id, error)
+        async with session_factory() as session:
             await session.execute(
                 update(DomainEventRecord)
-                .where(
-                    DomainEventRecord.id.in_(published), DomainEventRecord.published_at.is_(None)
-                )
-                .values(published_at=_utcnow())
+                .where(DomainEventRecord.id == item.id, DomainEventRecord.published_at.is_(None))
+                .values(**values)
             )
-        for event_id, error in errors.items():
-            await session.execute(
-                update(DomainEventRecord)
-                .where(DomainEventRecord.id == event_id)
-                .values(last_error=error)
-            )
-        await session.commit()
-    if errors:
-        logger.warning("domain_event_relay_failures", failed_count=len(errors))
-    return len(published)
+            await session.commit()
+    return published
 
 
 async def purge_published_events(
@@ -331,8 +345,6 @@ async def run_relay_loop(
             if loop.time() >= next_purge:
                 await purge_published_events(session_factory, retention_days)
                 next_purge = loop.time() + PURGE_INTERVAL_SECONDS
-        except asyncio.CancelledError:
-            raise
-        except Exception:
+        except Exception:  # CancelledError is not an Exception, so cancelling still stops the loop
             logger.exception("domain_event_relay_pass_failed")
         await asyncio.sleep(RELAY_INTERVAL_SECONDS)

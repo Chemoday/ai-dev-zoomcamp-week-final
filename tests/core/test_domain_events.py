@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 from fastapi import Depends, FastAPI
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database import DbSession, get_event_outbox
@@ -90,15 +90,31 @@ def _samples() -> dict[str, DomainEvent]:
     }
 
 
+def _app_event_classes() -> set[type[DomainEvent]]:
+    """Every DomainEvent subclass defined in the application (not in tests)."""
+    import src.main  # noqa: F401  (imports every module, so all event classes exist)
+
+    found: set[type[DomainEvent]] = set()
+    pending = list(DomainEvent.__subclasses__())
+    while pending:
+        cls = pending.pop()
+        pending.extend(cls.__subclasses__())
+        if cls.__module__.startswith("src."):
+            found.add(cls)
+    return found
+
+
+def test_every_application_event_class_is_registered() -> None:
+    # An event class outside _MODULE_EVENT_MODULES would fail only at runtime, in outbox.add().
+    assert _app_event_classes() <= get_event_registry().classes()
+
+
 def test_every_module_event_is_registered_and_round_trips_through_json() -> None:
     registry = EventRegistry()
     for event in _samples().values():
         registry.register(type(event))
-    module_names = {
-        name for name in get_event_registry().names() if name not in {"SomethingStored"}
-    }
     # A new module event must be added to _samples(), so its stored form is tested too.
-    assert module_names - {"SomethingHappened"} == set(_samples())
+    assert {cls.__name__ for cls in _app_event_classes()} == set(_samples())
 
     for event in _samples().values():
         stored = json.loads(json.dumps(registry.encode(event)))
@@ -134,6 +150,7 @@ def test_a_second_class_cannot_take_a_registered_name() -> None:
 
     with pytest.raises(ValueError, match="already registered"):
         registry.register(SomethingStored2, "SomethingStored")
+    assert "SomethingStored2" not in registry.names(), "a conflict changes nothing"
 
 
 def test_an_alias_rebuilds_events_stored_under_an_old_name() -> None:
@@ -255,6 +272,25 @@ async def test_a_failing_handler_leaves_the_event_for_a_retry(
     assert row.next_attempt_at > row.occurred_at
 
 
+async def test_a_failing_mark_never_fails_the_committed_request(
+    events_app: FastAPI,
+    api_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    log_capture,
+) -> None:
+    async def broken(self, published, failed) -> None:
+        raise ConnectionError("database went away after the commit")
+
+    monkeypatch.setattr(DomainEventStore, "record_results", broken)
+    response = await api_client.post("/test/events", params={"fail": False})
+
+    assert response.status_code == 200
+    assert any(r["event"] == "domain_event_mark_failed" for r in log_capture.records)
+    row = await _record(db_session, uuid.UUID(response.json()["event_id"]))
+    assert row is not None and row.published_at is None, "left for the relay"
+
+
 # --- Relay ----------------------------------------------------------------------------------------
 
 
@@ -308,6 +344,7 @@ async def test_the_relay_publishes_an_event_a_crash_left_behind(
     assert [(e.event_id, e.name) for e in published_events] == [(event_id, "left behind")]
     row = await _record(db_session, event_id)
     assert row is not None and row.published_at is not None and row.publish_attempts == 1
+    assert row.last_error is None
     relay_spans = [
         s for s in span_exporter.get_finished_spans() if s.name.startswith("domain_event_relay")
     ]
@@ -315,6 +352,30 @@ async def test_the_relay_publishes_an_event_a_crash_left_behind(
     assert format(relay_spans[0].context.trace_id, "032x") == TRACEPARENT.split("-")[1], (
         "the relay continues the trace of the request that caused the event"
     )
+
+
+async def test_an_event_that_failed_in_the_request_is_relayed_once_it_is_due(
+    db_session: AsyncSession, session_factory, published_events
+) -> None:
+    event_id = await _store_unpublished(db_session, age=timedelta(minutes=5), attempts=1)
+    row = await db_session.get(DomainEventRecord, event_id)
+    assert row is not None
+    row.last_error = "HANDLER_FAILED"
+    row.next_attempt_at = _now() + timedelta(minutes=1)
+    await db_session.commit()
+
+    assert await relay_once(session_factory, event_bus) == 0, "not due yet"
+
+    row = await _record(db_session, event_id)
+    assert row is not None
+    row.next_attempt_at = _now() - timedelta(seconds=1)
+    await db_session.commit()
+    assert await relay_once(session_factory, event_bus) == 1
+
+    row = await _record(db_session, event_id)
+    assert row is not None and row.published_at is not None
+    assert row.publish_attempts == 2 and row.last_error is None
+    assert [e.event_id for e in published_events] == [event_id]
 
 
 async def test_the_relay_leaves_fresh_events_to_the_request(
@@ -364,19 +425,25 @@ async def test_a_poison_event_is_given_up_after_the_maximum_attempts(
     assert row is not None
     assert row.last_error == "UNKNOWN_EVENT_TYPE" and row.failed_at is None
 
-    row.publish_attempts = MAX_PUBLISH_ATTEMPTS
+    # The last allowed attempt fails: the row is given up at once, not one backoff later.
+    row.publish_attempts = MAX_PUBLISH_ATTEMPTS - 1
     row.next_attempt_at = _now() - timedelta(seconds=1)
     await db_session.commit()
     assert await relay_once(session_factory, event_bus) == 0
 
     row = await _record(db_session, event_id)
     assert row is not None and row.failed_at is not None and row.published_at is None
+    assert row.publish_attempts == MAX_PUBLISH_ATTEMPTS
     assert published_events == []
 
-    # Skipped from now on.
+    # Skipped from now on, even when due.
     row.next_attempt_at = _now() - timedelta(seconds=1)
+    failed_at = row.failed_at
     await db_session.commit()
     assert await relay_once(session_factory, event_bus) == 0
+    row = await _record(db_session, event_id)
+    assert row is not None
+    assert row.publish_attempts == MAX_PUBLISH_ATTEMPTS and row.failed_at == failed_at
 
 
 async def test_an_invalid_payload_is_reported_as_such(
@@ -412,3 +479,48 @@ async def test_retention_deletes_old_published_events_only(
     assert await _record(db_session, old_published) is None
     assert await _record(db_session, old_unpublished) is not None
     assert await _record(db_session, young_published) is not None
+
+
+# --- Two workers (real connections, committed data) -----------------------------------------------
+
+
+async def test_a_row_locked_by_one_worker_is_skipped_by_another(
+    db_engine, published_events
+) -> None:
+    """SKIP LOCKED: while one worker holds a row, another relay pass neither waits nor takes it."""
+
+    @asynccontextmanager
+    async def fresh_session() -> AsyncIterator[AsyncSession]:
+        async with AsyncSession(db_engine, expire_on_commit=False) as session:
+            yield session
+
+    occurred_at = _now() - timedelta(minutes=2)
+    event_id = uuid.uuid4()
+    async with fresh_session() as session:
+        session.add(
+            DomainEventRecord(
+                id=event_id,
+                event_type="SomethingStored",
+                payload={"name": "contended"},
+                occurred_at=occurred_at,
+                next_attempt_at=occurred_at,
+            )
+        )
+        await session.commit()
+    try:
+        async with db_engine.connect() as holder:
+            transaction = await holder.begin()
+            await holder.execute(
+                select(DomainEventRecord.id)
+                .where(DomainEventRecord.id == event_id)
+                .with_for_update()
+            )
+            assert await relay_once(fresh_session, event_bus) == 0
+            await transaction.rollback()
+
+        assert await relay_once(fresh_session, event_bus) == 1
+        assert [e.event_id for e in published_events] == [event_id]
+    finally:
+        async with fresh_session() as session:
+            await session.execute(delete(DomainEventRecord).where(DomainEventRecord.id == event_id))
+            await session.commit()
