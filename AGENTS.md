@@ -11,6 +11,7 @@ All AI coding, testing, and on-call agents operating in this repository MUST fol
 - [Frontend Integration Guide](docs/FRONTEND_GUIDE.md) and the [Frontend Git Workflow](docs/FRONTEND_GIT_WORKFLOW.md)
 - [Implementation Task Backlog](docs/TASKS.md)
 - [Product Backlog: known problems after the MVP](docs/BACKLOG.md)
+- [Epics after the MVP (design pages)](docs/epics/README.md) and [planning session records](docs/cli_planning/)
 - [Deployment, CD & Rollback](docs/DEPLOYMENT.md)
 - [Observability, Alerting & On-Call Agent](docs/OBSERVABILITY.md)
 
@@ -26,3 +27,12 @@ All AI coding, testing, and on-call agents operating in this repository MUST fol
 - **Precision:** Use `Decimal` / `Numeric(12, 3)` for all meter values. Never use `float`.
 - **Zero PII Leak:** Never return raw `User.full_name`, `email`, or `phone` in `communication` endpoints; always resolve through the privacy badge masker. Never log PII in OpenTelemetry spans or logs.
 - **Single-Command Execution:** All changes must keep `docker compose up --build` and `pytest` passing without manual intervention.
+
+## 4. Change Workflow
+- One issue, one branch, one pull request per task. While the course submission is under review,
+  `main` is frozen: branch from `develop` and open pull requests into `develop`.
+- **CTO review before merge:** when a task is done and `pytest` is green, a fresh reviewer agent
+  without the development context reviews only the branch commits (`git diff develop...HEAD`) and
+  the current code for quality, security, bugs and the guardrails above. The implementing agent
+  verifies every finding, fixes the confirmed ones in the same branch, and lists all findings
+  (fixed / rejected and why) in the pull request. The owner approves the merge.

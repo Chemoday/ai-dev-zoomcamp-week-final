@@ -67,15 +67,27 @@ Goal: Deliver a production-grade, extensible Modular Monolith implementing `prop
 
 ---
 
+Phases 2 and 3 are organised as epics: a design page in [docs/epics/](epics/README.md) and a GitHub
+issue with the `epic` label. Background: [docs/cli_planning/2026-10-31-post-course-epics.md](cli_planning/2026-10-31-post-course-epics.md).
+
 ## Phase 2: Billing, Cost Allocation & Notifications (NEXT)
-- Parent/Child expense distribution engine (allocating `Master Meter - Sum(Apartment Meters)` water losses).
-- Telegram Bot & WebPush plugins subscribed to `EmergencyAlertPublished` and `ReadingDeadlineApproaching` events.
-- Country plugin `ee/e_arve_xml` and accounting exports.
+- **E1 Notifications** (first): a `notifications` module that subscribes to domain events, with
+  channel plugins (e-mail, Telegram, WebPush), per-user preferences and reading deadline
+  reminders. See [E1_NOTIFICATIONS.md](epics/E1_NOTIFICATIONS.md).
+- **E2 Billing and accounting export:** tariffs, cost allocation (including
+  `Master Meter - Sum(Apartment Meters)` water losses) and charges per apartment; no own ledger,
+  export through plugins (`ee/e_arve_xml`, Merit Aktiva). See [E2_BILLING_EXPORT.md](epics/E2_BILLING_EXPORT.md).
+- **E4 IoT readings API:** a public, token-per-vendor contract for remote meter systems, writing
+  readings with source `IOT_WEBHOOK`.
+- **E5 Bulk import:** apartments, owners and memberships from CSV.
 - Forum moderation beyond the MVP (the MVP only lets the chairman delete a forum topic): authors edit or delete their own posts and comments; the board hides single comments; residents report abusive posts; a moderation log; purging soft-deleted content after a retention period (GDPR). Tracked in [#18](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/18) and docs/BACKLOG.md (B-2).
 
 ## Phase 3: Legal Governance, IoT & Managed Cloud
-- Cryptographic Voting (`governance`): Generates PDF ballots per choice (`POOLT` / `VASTU`), stores SHA-256 digests, and verifies uploaded `.asice` containers automatically.
+- **E3 Governance and voting:** country-agnostic voting in the core (options incl. abstain, quorum,
+  proxies, board decisions) and verified voting in country plugins; for Estonia the plugin
+  generates PDF ballots per choice (`POOLT` / `VASTU`), stores SHA-256 digests and verifies
+  uploaded `.asice` containers. See [E3_GOVERNANCE_VOTING.md](epics/E3_GOVERNANCE_VOTING.md).
 - Smart-ID / Web eID authentication plugin.
-- AI OCR meter reading from smartphone photos.
+- **E6 AI OCR** meter reading from smartphone photos.
 - Automated Managed Cloud provisioning plane (Caddy + Docker API).
 - Associations with several buildings and management companies serving many associations: see docs/BACKLOG.md (B-1).
