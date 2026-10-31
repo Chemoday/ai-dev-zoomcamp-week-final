@@ -15,7 +15,7 @@ In scope:
 - A built-in `in_app` channel (a notification feed in the UI).
 - Delivery channels as plugins: `common.email_smtp`, `common.telegram`, `common.webpush`.
 - Per-user preferences (event type x channel).
-- Background loops: a dispatcher (sends and retries) and a scheduler (reminders, reconciliation).
+- Background loops: a dispatcher (sends and retries) and a scheduler (reminders, clean-up).
 
 Out of scope (later epics or backlog):
 - Debt reminders: need payment data, see docs/BACKLOG.md B-6.
@@ -26,7 +26,7 @@ Out of scope (later epics or backlog):
 
 ```text
 business transaction commits
-  -> EventOutbox publishes the domain event (in memory)
+  -> the domain event is stored in core_domain_events and published after commit (or by the relay)
   -> notifications subscriber: resolve recipients, apply preferences,
      INSERT notif_deliveries (PENDING) -- never sends
   -> dispatcher loop (every few seconds): claim due rows with FOR UPDATE SKIP LOCKED,
@@ -58,15 +58,11 @@ section 10 wins.**
 
 ### 2.2 Reliability: what happens if the process dies
 
-Domain events live only in memory and are published after commit. If the process dies between the
-commit and the subscriber's insert, the event is lost. The accepted design:
-- **Mandatory events are reconciled.** Every scheduler tick asks communication for active
-  emergencies and creates the missing deliveries (exact rule in 10.5). The `dedup_key` makes this idempotent. A
-  lost emergency notification is repaired if the app runs within 30 minutes of the alert (10.10).
-- **Other events are best effort.** A lost "period in review" or "resolved" notification is an
-  accepted risk. Reading reminders are produced by the scheduler itself, so they are not affected.
-- A persistent core outbox (event rows written in the business transaction) would close the gap for
-  every event. It is not part of this epic; reconsider if more mandatory events appear.
+Domain events are stored in `core_domain_events` in the same transaction as the change, and a relay
+publishes any event a crash left unpublished (owner decision 2026-10-31, task N1b;
+docs/BACKEND_CONVENTIONS.md 2.B). An event reaches the subscriber at least once, and is retried
+until the subscriber's insert succeeds (a row is marked published only when every handler
+succeeded). The subscriber is idempotent through `dedup_key`.
 
 ## 3. Contracts with other modules (added in N1/N2)
 
@@ -77,7 +73,7 @@ notifications.
 - Migration: `core_users.locale` (nullable `et|ru|en`; `NULL` means the instance default
   `DEFAULT_LOCALE`).
 - `PropertyService.resolve_recipients(building_id, scope, entrance, apartment_ids)
-  -> list[RecipientDTO(user_id, locale, created_at)]`: target matching from one shared pure function (10.3).
+  -> list[RecipientDTO(user_id, locale)]`: target matching from one shared pure function (10.3).
 - `PropertyService.users_with_roles(building_id, roles) -> list[RecipientDTO]`.
 - `PropertyService.reading_submitters(apartment_ids) -> list[RecipientDTO]`: active members with
   `can_submit_readings`.
@@ -93,11 +89,9 @@ notifications.
 - `MetersService.apartments_missing_readings(period_id) -> list[uuid]`.
 
 `communication`:
-- `CommunicationService.active_emergencies() -> list[EmergencyRefDTO]` across all buildings, for
-  reconciliation.
 - `CommunicationService.get_emergency_ref(post_id) -> EmergencyRefDTO | None` regardless of status,
   for rendering and the send-time check.
-- `EmergencyRefDTO(post_id, building_id, author_user_id, is_active, created_at, target_scope, target_entrance,
+- `EmergencyRefDTO(post_id, building_id, author_user_id, is_active, target_scope, target_entrance,
   target_apartment_ids, title, category)`.
 
 ## 4. Data model (draft; final version in docs/SCHEMA.md, task N1)
@@ -202,8 +196,7 @@ call one tick directly).
 - **Dispatcher** (every 5 s): claims due rows with a lease (protocol in 10.2).
 - **Scheduler** (every 10 min): each tick runs in a short transaction under
   `pg_try_advisory_xact_lock`, so only one process works per tick. It
-  1. reconciles active emergencies (section 2.2);
-  2. publishes `ReadingDeadlineApproaching` for open periods whose `due_date` is within
+  1. publishes `ReadingDeadlineApproaching` for open periods whose `due_date` is within
      `READING_REMINDER_DAYS_BEFORE` (default 2). The `dedup_key` per period makes it once per
      period, also across restarts. `due_date` is stored in UTC; texts show it in the instance
      time zone `INSTANCE_TIMEZONE` (default `Europe/Tallinn`).
@@ -228,11 +221,12 @@ review before merge (see AGENTS.md).
 | # | Task | Done when |
 |---|---|---|
 | N1 | Contract: SCHEMA.md, API.md, ARCHITECTURE.md, including sections 3 and 10 (openapi.json is generated from code, so it follows in N2) | docs merged, API reviewed by the owner |
+| N1b | Durable domain events in core (`core_domain_events`, relay) | an event survives a crash between commit and publish; rolled-back changes leave no event; tests green |
 | N2 | Module, migrations (incl. `core_users.locale`), subscriber, recipients, `in_app` channel, preferences and feed API | an emergency alert creates in-app notifications for exactly the targeted users; resolved goes to the same users; tests green |
 | N3 | Dispatcher, retries, `common.email_smtp` | tests (demo mode off, test JWT) with a local SMTP test server: the alert e-mail arrives with the same `trace_id`; a failing SMTP retries on schedule; demo mode sends nothing |
 | N4 | `common.telegram` with webhook linking | tests with a fake Telegram API: alert reaches a linked private chat; group chats and reused codes are rejected; demo mode links nothing |
 | N5 | `common.webpush` (backend) | tests with a fake push service: push to every device of a user; non-allowlisted endpoints rejected; 410 revokes; demo mode subscribes nothing |
-| N6 | Scheduler: reading reminders and emergency reconciliation | one reminder per period and user, also after a restart; a dropped emergency event younger than 30 minutes is repaired by the next tick (one tick at startup) |
+| N6 | Scheduler: reading reminders and clean-up | one reminder per period and user, also after a restart; old deliveries and link codes are deleted |
 
 ## 10. Decisions settled before N1
 
@@ -274,19 +268,19 @@ priority 0, so a burst of reminders never delays an emergency.
 
 ### 10.4 Contracts
 See section 3 (already updated): `EmergencyRefDTO` with `author_user_id`, `is_active` and
-`building_id`; `get_emergency_ref(post_id)` regardless of status; `active_emergencies()` across
-buildings; `DuePeriodRefDTO` instead of `PeriodDTO`.
+`building_id`; `get_emergency_ref(post_id)` regardless of status; `DuePeriodRefDTO` instead of
+`PeriodDTO`.
 
-### 10.5 Send-time checks and reconciliation
+### 10.5 Send-time checks
 Before sending, the dispatcher re-checks and marks the row `SKIPPED` with an `error_code` when:
 - the delivery is for `emergency:{post_id}` and the post is no longer active;
 - the binding is revoked, the user is inactive, or the e-mail is gone;
 - the preference was turned off (non-mandatory events only).
 
-Reconciliation (owner decision: no late alerts on external channels): a tick creates deliveries
-only for users who have **no row at all** for `emergency:{post_id}`, and only on bindings created
-before the post. Users who join, link a channel or add a device during an emergency see it as the
-banner in the app.
+Users who join, link a channel or add a device during an emergency see it as the banner in the
+app; recipients are resolved when the event is processed (normally seconds after it happened). An
+`EMERGENCY_PUBLISHED` event processed more than 1 hour late (after an outage) creates `in_app`
+notifications only, which keeps the owner rule "no late alerts on external channels".
 
 "Resolved" goes to users whose `emergency:{post_id}` delivery reached `SENT` on that channel. If
 none did (for example the alert was resolved before any delivery), nobody gets "resolved".
@@ -318,9 +312,6 @@ none did (for example the alert was resolved before any delivery), nobody gets "
 ### 10.10 Refined by the contract review (N1)
 The contract (docs/SCHEMA.md 5, docs/API.md 6, docs/ARCHITECTURE.md 3) is binding; it refines this
 page as follows:
-- Repairs only touch emergencies younger than 30 minutes, recipients created before the alert and
-  bindings created before it, so no channel (e-mail included) gets a late alert, and retention cannot
-  re-send one.
 - The claim only takes rows with `attempts < 5`; an expired lease at 5 attempts becomes `FAILED`.
 - Demo mode (`DEMO_MODE_ENABLED=true`) delivers `in_app` only; external linking is refused.
 - The app refuses to start with an external channel enabled but its secrets or `PUBLIC_BASE_URL`
@@ -329,11 +320,12 @@ page as follows:
 - Addresses and codes are hashed with a keyed HMAC (`NOTIFICATIONS_HASH_SECRET`).
 - The locale is stored on each delivery; `period_review` keys use the event id; reminders are sent
   between 09:00 and 21:00 local time.
-- `RecipientDTO` and `EmergencyRefDTO` carry `created_at`; `InboundChannel` is split into
-  `verify()` and `parse_inbound()`.
+- `InboundChannel` is split into `verify()` and `parse_inbound()`.
 - **Owner decision on external channels:** nowhere for now. Every environment runs in demo mode,
   which delivers `in_app` only, with no override; e-mail, Telegram and WebPush are accepted by
   automated tests with demo mode off. Real use needs a real login (docs/BACKLOG.md B-7).
 - The dispatcher's result update is fenced on `status` and `attempts`; the lease is 5 minutes;
   linking and subscribing lock the user before the address.
-- One scheduler tick runs at startup; repairs cover alerts younger than 30 minutes.
+- **Durable domain events (owner decision, after N1):** events are stored in `core_domain_events`
+  with the change and relayed after a crash (task N1b). This replaced the earlier emergency
+  reconciliation (30-minute window, "created before" rules, startup tick), which is gone.

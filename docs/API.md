@@ -448,7 +448,7 @@ Seeded at startup by `src/core/seed.py` when `SEED_DEMO_DATA=true` (local Docker
 - **History:** `2026-07`, `2026-08`, `2026-09` are `LOCKED` with readings for every meter. Readings of apartments without app users were entered by the chairman (`ADMIN_OVERRIDE`); Apt 13 in `2026-08` is `AUTO_ESTIMATED`. The master meters show a small loss over the apartments. Apt 14's cold water reading of `2026-09` was corrected once, so its history has two entries.
 - **October (`2026-10`, `OPEN_FOR_RESIDENTS`):** Apt 1 submitted both meters and Apt 2 its cold water. Apt 15's hot water is a confirmed anomaly (31 m³, a leaking tap). **Apt 14 has submitted nothing**, so the demo can start there; a normal value is its previous value plus about 4.8 m³ (cold) or 2.2 m³ (hot). A delta above 3 × its 3-month average (about 14.4 m³ cold, 6.5 m³ hot) or above the meter limit (25 / 15 m³) triggers the two popups.
 - **Communication:** an active `EMERGENCY` (hot water off) targeted at entrance 2, so Apt 14 sees the banner and Apt 2 does not; an `OFFICIAL_NOTICE` without comments; two forum topics with comments from several residents.
-- Seeding publishes no domain events, so no notifications are sent. The seeded emergency is two hours old, older than the 30-minute repair window of the planned notifications (section 6), so it is never sent later either.
+- Seeding publishes and stores no domain events, so no notifications are sent, now or later.
 
 ## 6. Notifications (`notifications`): planned, epic E1
 
@@ -479,9 +479,10 @@ Seeded at startup by `src/core/seed.py` when `SEED_DEMO_DATA=true` (local Docker
 
 - Users who join, link a channel or add a device while an emergency is active see it as the banner
   (`GET /api/v1/communication/emergencies/active`); old alerts are not sent to them on any channel.
-  (Technically: lost events are repaired only for alerts younger than 30 minutes, only for user
-  accounts created before the alert and only on devices linked before it. An existing account that
-  joins an apartment inside those 30 minutes may still get it.)
+  Recipients are resolved when the event is processed, normally seconds after it happened. If an
+  `EMERGENCY_PUBLISHED` event is processed more than 1 hour after the alert (e.g. after an outage),
+  only `in_app` notifications are created and nothing is sent outside the app; a resolved alert is
+  skipped.
 - **Demo mode.** While `DEMO_MODE_ENABLED=true` anyone can act as any user, so only `in_app`
   works: e-mail, Telegram and WebPush are listed as unavailable (`DEMO_MODE`), linking and the VAPID
   key return `404 CHANNEL_NOT_ENABLED`, the webhook ignores updates (`200 {}`), and nothing is sent

@@ -218,3 +218,31 @@ notifications only, and the external channels are verified by automated tests.
 - An environment without demo mode, with its own Telegram bot and secrets
   (`TELEGRAM_WEBHOOK_SECRET`, `NOTIFICATIONS_HASH_SECRET`, VAPID keys, SMTP).
 
+## B-8. Installer and e-mail for self-hosting
+
+- **Status:** open, design notes. Related to B-7 (real login). Raised 2026-10-31.
+
+### Installer
+`deploy/bootstrap.sh` already sets up the user, directories, database secrets and Caddy with HTTPS.
+It can grow into a wizard that asks a few questions and does the rest:
+- generates every secret itself (`JWT_SECRET_KEY`, `NOTIFICATIONS_HASH_SECRET`,
+  `TELEGRAM_WEBHOOK_SECRET`) and the VAPID key pair for WebPush;
+- asks for the domain, optional SMTP settings and an optional Telegram bot token;
+- Telegram bots cannot be created automatically (it is a one-minute chat with @BotFather): the
+  person pastes the token, and the script calls `setWebhook` itself.
+
+The app container only needs outgoing connections (SMTP provider, Telegram API, push services) and
+the incoming HTTPS that Caddy already serves (Telegram webhooks accept ports 443, 80, 88 and 8443).
+
+### E-mail
+- **No own mail server**, neither in a container nor next to it. Mail from a fresh VPS ends up in
+  spam (no IP reputation, PTR, SPF/DKIM/DMARC), and many VPS providers block outgoing port 25.
+- The app is only an **SMTP client** of an external provider on port 587 (STARTTLS) or 465 (TLS),
+  using a transactional e-mail service with a free tier, or a regular mailbox with an app password for a small building.
+- Good delivery needs mail from an own domain, with the SPF/DKIM records the provider gives;
+  `sslip.io` hostnames cannot carry them, so real e-mail needs a domain (a mailbox account works
+  without one).
+
+### Several associations on one server (Phase 3 managed cloud)
+One SMTP account and one Telegram bot shared by all instances (a shared delivery service) instead
+of one per association.
