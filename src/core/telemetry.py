@@ -53,6 +53,7 @@ SENSITIVE_KEY_MARKERS: tuple[str, ...] = (
     "national_id",
     "personal_code",
     "subject_hash",
+    "chat_id",
 )
 
 # Free-text patterns masked inside any string value (log messages, URLs, exception texts).
@@ -60,6 +61,8 @@ _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+(?:@|%40)[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
 _PHONE_RE = re.compile(r"\+\d{1,3}[\s-]?\d[\d\s-]{5,}\d")
 # Estonian personal identification code: gender/century digit, YYMMDD, 4 more digits.
 _EE_ID_CODE_RE = re.compile(r"\b[1-6]\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{4}\b")
+# A Telegram bot token ("123456789:AA..."), e.g. inside a Bot API URL in an exception text.
+_TELEGRAM_TOKEN_RE = re.compile(r"\d{5,}:[A-Za-z0-9_-]{30,}")
 
 _tracer_provider: TracerProvider | None = None
 _meter_provider: MeterProvider | None = None
@@ -76,6 +79,7 @@ def is_sensitive_key(key: str) -> bool:
 
 def mask_pii_text(text: str) -> str:
     text = _EMAIL_RE.sub(REDACTED, text)
+    text = _TELEGRAM_TOKEN_RE.sub(REDACTED, text)
     text = _PHONE_RE.sub(REDACTED, text)
     return _EE_ID_CODE_RE.sub(REDACTED, text)
 
@@ -339,6 +343,9 @@ def configure_logging(
         uvicorn_logger.handlers = []
         uvicorn_logger.propagate = True
     logging.getLogger("uvicorn.access").disabled = True
+    # httpx logs every request URL at INFO; Bot API URLs carry the bot token.
+    for name in ("httpx", "httpcore"):
+        logging.getLogger(name).setLevel(logging.WARNING)
 
 
 # --- Request middleware ------------------------------------------------------------------------

@@ -42,7 +42,7 @@ src/
 
 Design and the reasoning behind it: [docs/epics/E1_NOTIFICATIONS.md](epics/E1_NOTIFICATIONS.md). Tables: docs/SCHEMA.md section 5. API: docs/API.md section 6.
 
-**Status:** the module, the subscriber, the in-app channel, the feed and preferences exist since task N2 (`src/modules/notifications/`); the dispatcher and the e-mail channel since N3. `NotificationChannel`, `OutgoingMessage` and `DeliveryResult` (3.2) are in `src/plugins/registry.py` since N7's stub together with `register_channel` / `channel` / `channels` (`InboundChannel` and `InboundLink` come with N4); the Telegram, WebPush and FCM plugins and the scheduler (3.2, 3.3) are planned for N4-N7. Clients poll for in-app notifications; there is no WebSocket (docs/epics/E1_NOTIFICATIONS.md 6.5).
+**Status:** the module, the subscriber, the in-app channel, the feed and preferences exist since task N2 (`src/modules/notifications/`); the dispatcher and the e-mail channel since N3; Telegram linking, the webhook and `common.telegram` since N4. `NotificationChannel`, `OutgoingMessage` and `DeliveryResult` (3.2) are in `src/plugins/registry.py` since N7's stub together with `register_channel` / `channel` / `channels`, and `InboundChannel` / `InboundLink` since N4; the WebPush and FCM plugins and the scheduler (3.2, 3.3) are planned for N5-N7. Clients poll for in-app notifications; there is no WebSocket (docs/epics/E1_NOTIFICATIONS.md 6.5).
 
 ### 3.1 Place in the system
 - It **only consumes**: it subscribes to domain events and calls other modules' system-level service methods (3.4). No other module imports it, so `NOTIFICATIONS_ENABLED=false` removes it (no subscriber, no loops, no routes) and everything else works unchanged.
@@ -63,9 +63,11 @@ class InboundChannel(Protocol):  # optional; implemented by common.telegram
     def verify(self, headers: Mapping[str, str]) -> bool: ...  # False -> 404
 
     def parse_inbound(self, body: bytes) -> InboundLink | None: ...  # None -> ignored, 200
+
+    async def reply(self, chat_id: int, text: str) -> DeliveryResult: ...  # the bot's answer
 ```
 
-- `InboundLink(chat_id, chat_type, code)`: a `/start <code>` message; any other update is `None`.
+- `InboundLink(chat_id, chat_type, code)`: a `/start <code>` message (`code` is `""` for a bare `/start`); any other update is `None`.
 - Registry additions: `register_channel(channel)`, `channel(name) -> NotificationChannel | None`,
   `channels()`; a plugin that also implements `InboundChannel` is found through `channel(name)`.
 
@@ -111,6 +113,7 @@ System-level methods (no `CurrentUserDTO`), returning DTOs, used only by notific
 | `property` | `with_delivery_email(user_ids)` | `set[UUID]`: who of them has an e-mail address, for the subscriber (one query per event) |
 | `property` | `get_delivery_contact(user_id)` | `DeliveryContactDTO(email)` or `None` (inactive users get `None`) |
 | `property` | `is_user_active(user_id)` | `bool` (send-time check) |
+| `property` | `get_recipient(user_id)` | `RecipientDTO` of an active user or `None`: who redeems a Telegram link code, and the language of the bot's reply |
 | `meters` | *(N6)* `open_periods_due_within(until)` | `list[DuePeriodRefDTO(period_id, building_id, period_code, due_date)]` |
 | `meters` | *(N6)* `apartments_missing_readings(period_id)` | `list[UUID]`: apartments with an active meter and no reading |
 | `communication` | `get_emergency_ref(post_id, lock_for_share=False)` | `EmergencyRefDTO` regardless of status, or `None`. The subscriber reads it with a share lock and notifies nobody about an alert that is already resolved: events are unordered, and the lock makes a concurrent resolve wait until the "published" rows are stored |
@@ -138,4 +141,4 @@ System-level methods (no `CurrentUserDTO`), returning DTOs, used only by notific
 | `FCM_PROJECT_ID`, `FCM_SERVICE_ACCOUNT_FILE` | | `common.fcm_push` *(N7)*: the Firebase project and the path of a mounted service account key file (never the key itself in the environment) |
 
 ### 3.6 Privacy and observability
-No names, e-mails, phones, chat ids, endpoints, FCM tokens or message bodies in logs or spans. Spans carry `event_type`, `channel`, `status`, `delivery_id`; the send span `notifications.deliver` joins the trace of the request that caused the event (`notif_deliveries.trace_id`). Metrics: `notifications.deliveries` (counter by `channel` and `status`: sent, failed, skipped, retry), revoked bindings.
+No names, e-mails, phones, chat ids, endpoints, FCM tokens, link codes, bot tokens or message bodies in logs or spans (httpx request logs are silenced because Bot API URLs carry the token, and the scrubber masks token patterns). Spans carry `event_type`, `channel`, `status`, `delivery_id`; the send span `notifications.deliver` joins the trace of the request that caused the event (`notif_deliveries.trace_id`). Metrics: `notifications.deliveries` (counter by `channel` and `status`: sent, failed, skipped, retry), revoked bindings.

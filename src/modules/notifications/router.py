@@ -1,16 +1,23 @@
 """Thin HTTP layer of the notifications module (docs/API.md, section 6)."""
 
 import uuid
-from typing import Annotated
+from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, Depends, Query
+import structlog
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, Response
 
-from src.core.exceptions import AUTH_ERRORS, error_responses
+from src.core.config import Settings
+from src.core.database import DbSession
+from src.core.exceptions import AUTH_ERRORS, DomainError, error_responses
 from src.core.security import get_current_user
+from src.modules.notifications.linking import ChannelLinking, LinkingChannel
 from src.modules.notifications.schemas import (
     FEED_OFFSET_MAX,
     FEED_PAGE_DEFAULT,
     FEED_PAGE_MAX,
+    BindingView,
+    Channel,
+    LinkCodeResponse,
     NotificationView,
     PreferencesResponse,
     PreferencesUpdateRequest,
@@ -97,3 +104,113 @@ async def update_preferences(
 ) -> PreferencesResponse:
     """Only the listed combinations change, all or nothing."""
     return await service.update_preferences(user, body)
+
+
+# --- Linking external channels (task N4) --------------------------------------------------------
+
+
+def get_channel_linking(request: Request, session: DbSession) -> ChannelLinking:
+    return ChannelLinking(
+        session, settings=request.app.state.settings, plugins=request.app.state.plugin_registry
+    )
+
+
+@router.post(
+    "/telegram/link-code",
+    status_code=201,
+    response_model=LinkCodeResponse,
+    responses=error_responses({404: ["CHANNEL_NOT_ENABLED"], 429: ["RATE_LIMITED"]}),
+)
+async def telegram_link_code(
+    user: CurrentUserDTO = Depends(get_current_user),
+    linking: ChannelLinking = Depends(get_channel_linking),
+) -> LinkCodeResponse:
+    """A one-time code (10 minutes) for "/start <code>" in the bot; at most 5 per hour."""
+    return await linking.create_telegram_code(user)
+
+
+@router.get("/bindings", response_model=list[BindingView])
+async def list_bindings(
+    user: CurrentUserDTO = Depends(get_current_user),
+    linking: ChannelLinking = Depends(get_channel_linking),
+) -> list[BindingView]:
+    """The caller's linked chats and devices (addresses are never returned)."""
+    return await linking.list_bindings(user)
+
+
+@router.delete(
+    "/bindings/{binding_id}",
+    status_code=204,
+    responses=error_responses({404: ["BINDING_NOT_FOUND"], 422: ["VALIDATION_ERROR"]}),
+)
+async def delete_binding(
+    binding_id: uuid.UUID,
+    user: CurrentUserDTO = Depends(get_current_user),
+    linking: ChannelLinking = Depends(get_channel_linking),
+) -> Response:
+    """Unlink a chat or device; queued messages for it are skipped."""
+    await linking.delete_binding(user, binding_id)
+    return Response(status_code=204)
+
+
+# Called by Telegram, not by the frontend: no user authentication, a shared secret instead.
+webhook_router = APIRouter(
+    prefix="/api/v1/notifications",
+    tags=["notifications"],
+    responses=error_responses({500: ["INTERNAL_SERVER_ERROR"]}),
+)
+WEBHOOK_BODY_LIMIT = 64 * 1024
+logger = structlog.get_logger(__name__)
+
+
+def _not_found() -> DomainError:
+    # The same body as an unknown route: without the secret nothing tells whether the bot is on.
+    return DomainError(status_code=404, error_code="NOT_FOUND", message="Not Found")
+
+
+def _telegram(request: Request) -> LinkingChannel | None:
+    """The enabled Telegram plugin, regardless of demo mode (the secret is checked first)."""
+    plugins = request.app.state.plugin_registry
+    return cast(LinkingChannel | None, plugins.channel(Channel.TELEGRAM.value))
+
+
+async def _read_limited(request: Request, limit: int) -> bytes | None:
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > limit:
+            return None
+    return bytes(body)
+
+
+async def _reply(channel: LinkingChannel, chat_id: int, text: str) -> None:
+    result = await channel.reply(chat_id, text)
+    if not result.ok:
+        logger.warning("telegram_reply_failed", error_code=result.error_code)
+
+
+@webhook_router.post(
+    "/telegram/webhook",
+    responses=error_responses({404: ["NOT_FOUND"]}),
+)
+async def telegram_webhook(
+    request: Request,
+    background: BackgroundTasks,
+    linking: ChannelLinking = Depends(get_channel_linking),
+) -> dict[str, Any]:
+    """Updates from the Telegram Bot API. A valid secret always gets 200 {} (no retries)."""
+    channel = _telegram(request)
+    if channel is None or not channel.verify(request.headers):
+        raise _not_found()
+    settings: Settings = request.app.state.settings
+    if settings.DEMO_MODE_ENABLED:
+        return {}  # demo mode links nothing
+    body = await _read_limited(request, WEBHOOK_BODY_LIMIT)
+    link = channel.parse_inbound(body) if body is not None else None
+    if link is None:
+        return {}
+    reply = await linking.redeem_telegram(link)
+    if reply:
+        # Sent after the response, when the session has already committed the binding.
+        background.add_task(_reply, channel, link.chat_id, reply)
+    return {}

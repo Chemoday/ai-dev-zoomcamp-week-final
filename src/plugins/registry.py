@@ -95,6 +95,32 @@ class NotificationChannel(Protocol):
     async def send(self, message: OutgoingMessage) -> DeliveryResult: ...
 
 
+@dataclass(frozen=True)
+class InboundLink:
+    """A "/start <code>" message to the bot: a request to link this chat (docs/ARCHITECTURE.md
+    3.2); `code` is "" for a bare "/start". `chat_id` is personal data: never log it."""
+
+    chat_id: int = field(repr=False)
+    chat_type: str  # "private", "group", "supergroup", "channel"
+    code: str = field(repr=False)
+
+
+class InboundChannel(Protocol):
+    """Optional second face of a channel plugin that receives webhooks (common.telegram)."""
+
+    def verify(self, headers: Mapping[str, str]) -> bool:
+        """Whether the request really comes from the provider; False -> 404."""
+        ...
+
+    def parse_inbound(self, body: bytes) -> InboundLink | None:
+        """The link request in the update, or None for anything else (ignored, 200)."""
+        ...
+
+    async def reply(self, chat_id: int, text: str) -> DeliveryResult:
+        """Answer the chat (e.g. "linked"); best effort."""
+        ...
+
+
 class PluginRegistry:
     def __init__(self, settings: Settings | None = None) -> None:
         # Plugins read their own settings from here in register(); incomplete ones raise there,

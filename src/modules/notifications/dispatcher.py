@@ -33,13 +33,14 @@ from src.core.config import Settings
 from src.core.domain_events import SessionFactory
 from src.modules.communication.service import CommunicationService
 from src.modules.notifications.messages import compose, default_catalog
-from src.modules.notifications.models import Delivery
+from src.modules.notifications.models import ChannelBinding, Delivery
 from src.modules.notifications.policies import (
     CHANNEL_PLUGINS,
     DISPATCH_BATCH_SIZE,
     EMERGENCY_MAX_AGE,
     LEASE_DURATION,
     MAX_ATTEMPTS,
+    MIN_HASH_SECRET_BYTES,
     OTHER_MESSAGE_TTL,
     emergency_too_old,
     is_enabled,
@@ -62,6 +63,10 @@ _meter = metrics.get_meter(__name__)
 _deliveries = _meter.create_counter(
     "notifications.deliveries",
     description="Outcomes of external notification deliveries (sent, failed, skipped, retry)",
+)
+_revoked_bindings = _meter.create_counter(
+    "notifications.revoked_bindings",
+    description="Chats and devices unlinked because the provider reported them gone",
 )
 
 DISPATCH_INTERVAL_SECONDS = 5.0
@@ -89,12 +94,18 @@ class Claimed:
     attempts: int  # after the claim's increment: the fence of the result update
     created_at: datetime
     trace_id: str | None
+    binding_id: uuid.UUID | None = None
 
 
 @dataclass(frozen=True)
 class Outcome:
     status: str  # "SENT", "FAILED", "SKIPPED" or "RETRY"
     error_code: str | None = None
+    revoke_binding: bool = False  # e.g. the user blocked the bot
+
+
+# External channels the dispatcher can send on today (WebPush: N5).
+_SENDABLE = (Channel.EMAIL, Channel.TELEGRAM)
 
 
 @dataclass
@@ -114,6 +125,13 @@ def validate_channel_settings(settings: Settings, plugins: PluginRegistry) -> No
         return
     if not settings.PUBLIC_BASE_URL:
         raise RuntimeError(f"PUBLIC_BASE_URL is required with {', '.join(enabled)}")
+    hashing = [name for name in enabled if name in ("common.telegram", "common.webpush")]
+    secret = settings.NOTIFICATIONS_HASH_SECRET.get_secret_value().encode()
+    if hashing and len(secret) < MIN_HASH_SECRET_BYTES:
+        raise RuntimeError(
+            f"NOTIFICATIONS_HASH_SECRET of at least {MIN_HASH_SECRET_BYTES} bytes is required "
+            f"with {', '.join(hashing)}"
+        )
     default_catalog()
 
 
@@ -235,6 +253,7 @@ class Dispatcher:
                     attempts=row.attempts,
                     created_at=row.created_at,
                     trace_id=row.trace_id,
+                    binding_id=row.binding_id,
                 )
             )
         await session.flush()
@@ -260,8 +279,8 @@ class Dispatcher:
 
         if self._settings.DEMO_MODE_ENABLED:
             return skip("DEMO_MODE")
-        if row.channel != Channel.EMAIL or self._plugins.channel(row.channel.value) is None:
-            return skip("CHANNEL_NOT_ENABLED")  # telegram/webpush come with N4/N5
+        if row.channel not in _SENDABLE or self._plugins.channel(row.channel.value) is None:
+            return skip("CHANNEL_NOT_ENABLED")
         if emergency_too_old(row.event_type, row.created_at, now):
             return skip("EMERGENCY_TOO_OLD")
         properties = PropertyService(session)
@@ -281,9 +300,9 @@ class Dispatcher:
                 return skip("POST_RESOLVED")
             title, body = ref.title, ref.body
 
-        contact = await properties.get_delivery_contact(row.user_id)
-        if contact is None:
-            return skip("NO_EMAIL")
+        address = await self._address(session, properties, row)
+        if isinstance(address, str):
+            return skip(address)
 
         rendered = compose(
             row.event_type,
@@ -300,7 +319,7 @@ class Dispatcher:
             else OTHER_MESSAGE_TTL
         )
         message = OutgoingMessage(
-            address={"email": contact.email},
+            address=address,
             locale=row.locale,
             event_type=row.event_type.value,
             subject=rendered.subject,
@@ -312,6 +331,24 @@ class Dispatcher:
             trace_id=row.trace_id,
         )
         return _Prepared(row=row, message=message)
+
+    async def _address(
+        self, session: AsyncSession, properties: PropertyService, row: Claimed
+    ) -> dict[str, object] | str:
+        """Where to send, read right before sending; a skip code when it is gone."""
+        if row.channel == Channel.EMAIL:
+            contact = await properties.get_delivery_contact(row.user_id)
+            return {"email": contact.email} if contact else "NO_EMAIL"
+        binding = await session.scalar(
+            select(ChannelBinding).where(
+                ChannelBinding.id == row.binding_id,
+                ChannelBinding.user_id == row.user_id,
+                ChannelBinding.revoked_at.is_(None),
+            )
+        )
+        if binding is None or not binding.config:
+            return "BINDING_REVOKED"  # unlinked, replaced, or blocked meanwhile
+        return dict(binding.config)
 
     async def _send(self, item: _Prepared) -> Outcome:
         row, message = item.row, item.message
@@ -372,6 +409,14 @@ class Dispatcher:
             # Another worker took the row over after our lease expired: its result wins.
             logger.info("notification_result_dropped", delivery_id=str(row.id))
             return
+        if outcome.revoke_binding and row.binding_id is not None:
+            # The provider says this chat or device is gone: stop using it (docs/SCHEMA.md 5).
+            await session.execute(
+                update(ChannelBinding)
+                .where(ChannelBinding.id == row.binding_id, ChannelBinding.revoked_at.is_(None))
+                .values(revoked_at=now, config=None)
+            )
+            _revoked_bindings.add(1, {"channel": row.channel.value})
         _deliveries.add(1, {"channel": row.channel.value, "status": status.lower()})
         if status in ("FAILED", "RETRY"):
             logger.warning(
@@ -387,7 +432,8 @@ class Dispatcher:
 def _outcome(result: DeliveryResult) -> Outcome:
     if result.ok:
         return Outcome("SENT")
-    return Outcome("RETRY" if result.retryable else "FAILED", result.error_code)
+    status = "RETRY" if result.retryable else "FAILED"
+    return Outcome(status, result.error_code, revoke_binding=result.revoke_binding)
 
 
 async def run_dispatcher_loop(dispatcher: Dispatcher) -> None:

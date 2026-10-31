@@ -61,6 +61,16 @@ class Settings(BaseSettings):
     # starttls: port 587; tls: implicit TLS, port 465; none: only for a local test server.
     SMTP_TLS: Literal["starttls", "tls", "none"] = "starttls"
 
+    # Key of the HMAC over chat ids, push endpoints and link codes (at least 32 bytes); required
+    # with common.telegram or common.webpush. Never rotate it without rehashing the bindings.
+    NOTIFICATIONS_HASH_SECRET: SecretStr = SecretStr("")
+
+    # Telegram (plugin common.telegram): one bot per environment; updates arrive by webhook.
+    TELEGRAM_BOT_TOKEN: SecretStr = SecretStr("")
+    TELEGRAM_BOT_USERNAME: str = ""
+    # Telegram sends it back in X-Telegram-Bot-Api-Secret-Token: 32+ characters of [A-Za-z0-9_-].
+    TELEGRAM_WEBHOOK_SECRET: SecretStr = SecretStr("")
+
     # Durable domain events (docs/BACKEND_CONVENTIONS.md 2.B): the relay that publishes events a
     # crash or a failing handler left behind, and how long published events are kept (0 = always).
     DOMAIN_EVENTS_RELAY_ENABLED: bool = True

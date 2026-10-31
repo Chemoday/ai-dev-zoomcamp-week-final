@@ -2167,6 +2167,249 @@
         ]
       }
     },
+    "/api/v1/notifications/telegram/link-code": {
+      "post": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "Telegram Link Code",
+        "description": "A one-time code (10 minutes) for \"/start <code>\" in the bot; at most 5 per hour.",
+        "operationId": "telegram_link_code_api_v1_notifications_telegram_link_code_post",
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkCodeResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated. error_code: `NOT_AUTHENTICATED`, `INVALID_TOKEN`, `UNKNOWN_USER`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error. error_code: `INTERNAL_SERVER_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (or not visible to the caller). error_code: `CHANNEL_NOT_ENABLED`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests (see retry_after_seconds and the Retry-After header). error_code: `RATE_LIMITED`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/v1/notifications/bindings": {
+      "get": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "List Bindings",
+        "description": "The caller's linked chats and devices (addresses are never returned).",
+        "operationId": "list_bindings_api_v1_notifications_bindings_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/BindingView"
+                  },
+                  "type": "array",
+                  "title": "Response List Bindings Api V1 Notifications Bindings Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated. error_code: `NOT_AUTHENTICATED`, `INVALID_TOKEN`, `UNKNOWN_USER`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error. error_code: `INTERNAL_SERVER_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/v1/notifications/bindings/{binding_id}": {
+      "delete": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "Delete Binding",
+        "description": "Unlink a chat or device; queued messages for it are skipped.",
+        "operationId": "delete_binding_api_v1_notifications_bindings__binding_id__delete",
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "binding_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Binding Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Not authenticated. error_code: `NOT_AUTHENTICATED`, `INVALID_TOKEN`, `UNKNOWN_USER`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error. error_code: `INTERNAL_SERVER_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (or not visible to the caller). error_code: `BINDING_NOT_FOUND`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input. error_code: `VALIDATION_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/notifications/telegram/webhook": {
+      "post": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "Telegram Webhook",
+        "description": "Updates from the Telegram Bot API. A valid secret always gets 200 {} (no retries).",
+        "operationId": "telegram_webhook_api_v1_notifications_telegram_webhook_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Telegram Webhook Api V1 Notifications Telegram Webhook Post"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error. error_code: `INTERNAL_SERVER_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (or not visible to the caller). error_code: `NOT_FOUND`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/demo/users": {
       "get": {
         "tags": [
@@ -2252,6 +2495,43 @@
           "role_badge"
         ],
         "title": "AuthorBadgeDTO"
+      },
+      "BindingView": {
+        "properties": {
+          "binding_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Binding Id"
+          },
+          "channel": {
+            "$ref": "#/components/schemas/Channel"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "binding_id",
+          "channel",
+          "label",
+          "created_at"
+        ],
+        "title": "BindingView",
+        "description": "A linked chat or device; the address itself (chat id, endpoint) is never returned."
       },
       "BuildingResponse": {
         "properties": {
@@ -2920,6 +3200,31 @@
           "changed_by"
         ],
         "title": "HistoryEntry"
+      },
+      "LinkCodeResponse": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At"
+          },
+          "deep_link": {
+            "type": "string",
+            "title": "Deep Link"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "expires_at",
+          "deep_link"
+        ],
+        "title": "LinkCodeResponse",
+        "description": "A one-time Telegram link code; shown once, only its hash is stored."
       },
       "Locale": {
         "type": "string",

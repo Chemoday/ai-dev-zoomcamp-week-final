@@ -197,7 +197,7 @@ All tables use `UUID` primary keys (`uuid4`), UTC timestamps (`TIMESTAMPTZ`), an
 
 ## 5. Module: `notifications` (epic E1)
 
-*Design: [docs/epics/E1_NOTIFICATIONS.md](epics/E1_NOTIFICATIONS.md). `notif_channel_bindings`, `notif_preferences` and `notif_deliveries` exist since task N2 (migration 006); `notif_link_codes` and `notif_link_attempts` come with Telegram (N4).*
+*Design: [docs/epics/E1_NOTIFICATIONS.md](epics/E1_NOTIFICATIONS.md). `notif_channel_bindings`, `notif_preferences` and `notif_deliveries` exist since task N2 (migration 006); `notif_link_codes` and `notif_link_attempts` since Telegram (N4, migration 007).*
 
 Shared enums (each has a named `CHECK (… IN (…))`):
 - `channel`: `in_app`, `email`, `telegram`, `webpush`; *(planned, N7)* `mobile_push` (push to the
@@ -280,7 +280,7 @@ Rows of `notif_link_codes` and `notif_link_attempts` older than 24 hours are del
 | `next_attempt_at` | `TIMESTAMPTZ` | `NOT NULL` | When a `PENDING` row is due |
 | `lease_until` | `TIMESTAMPTZ` | `NULLABLE` | Set while `SENDING`; an expired lease is claimed again |
 | `last_attempt_at` | `TIMESTAMPTZ` | `NULLABLE` | |
-| `error_code` | `VARCHAR(64)` | `NULLABLE` | Machine code of the last failure or skip reason. Skips: `DEMO_MODE`, `CHANNEL_NOT_ENABLED`, `USER_INACTIVE`, `NO_EMAIL`, `PREFERENCE_OFF`, `POST_RESOLVED`, `EMERGENCY_TOO_OLD`, `SUBJECT_NOT_FOUND`, *(N4/N5)* `BINDING_REVOKED`. Failures: `SMTP_REJECTED`, `SMTP_AUTH_FAILED`, `SMTP_NOT_SUPPORTED`, `EMAIL_INVALID`, `LEASE_EXPIRED`, or the last retryable code (`SMTP_TEMPORARY`, `SMTP_UNAVAILABLE`, `CHANNEL_TIMEOUT`, `CHANNEL_ERROR`, `PREPARE_ERROR`) after 5 attempts. Never provider text |
+| `error_code` | `VARCHAR(64)` | `NULLABLE` | Machine code of the last failure or skip reason. Skips: `DEMO_MODE`, `CHANNEL_NOT_ENABLED`, `USER_INACTIVE`, `NO_EMAIL`, `PREFERENCE_OFF`, `POST_RESOLVED`, `EMERGENCY_TOO_OLD`, `SUBJECT_NOT_FOUND`, `BINDING_REVOKED`. Failures: `SMTP_REJECTED`, `SMTP_AUTH_FAILED`, `SMTP_NOT_SUPPORTED`, `EMAIL_INVALID`, `TELEGRAM_BLOCKED`, `TELEGRAM_CHAT_NOT_FOUND` (both also revoke the binding), `TELEGRAM_BAD_REQUEST`, `TELEGRAM_AUTH_FAILED`, `LEASE_EXPIRED`, or the last retryable code (`SMTP_TEMPORARY`, `SMTP_UNAVAILABLE`, `TELEGRAM_RATE_LIMITED`, `TELEGRAM_UNAVAILABLE`, `CHANNEL_TIMEOUT`, `CHANNEL_ERROR`, `PREPARE_ERROR`) after 5 attempts. Never provider text |
 | `trace_id` | `VARCHAR(32)` | `NULLABLE` | Trace of the request that caused the event |
 | `created_at` | `TIMESTAMPTZ` | `NOT NULL` | |
 | `sent_at` | `TIMESTAMPTZ` | `NULLABLE` | |

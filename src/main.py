@@ -24,6 +24,7 @@ from src.modules.notifications.dispatcher import (
     validate_channel_settings,
 )
 from src.modules.notifications.router import router as notifications_router
+from src.modules.notifications.router import webhook_router as notifications_webhook_router
 from src.modules.notifications.service import NotificationsSubscriber
 from src.modules.property.router import router as property_router
 from src.plugins.registry import build_plugin_registry
@@ -78,6 +79,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     if settings.NOTIFICATIONS_ENABLED:
         validate_channel_settings(settings, plugins)
         app.include_router(notifications_router)
+        app.include_router(notifications_webhook_router)
         # The subscriber and the dispatcher read the factory on every use, so tests can swap it
         # after create_app.
         app.state.notifications_session_factory = async_session_factory

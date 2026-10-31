@@ -246,3 +246,9 @@ not of the feed.
 - **Texts:** the feed returns codes (`event_type`, `params`), not texts; render them per locale,
   like `error_code`. Load the post (`subject_id`) if the title is needed.
 - The emergency banner keeps its own polling (section 8); an emergency also appears in the feed.
+- **Linking Telegram** (settings page; only when `GET /notifications/preferences` lists
+  `telegram` without `CHANNEL_NOT_ENABLED` or `DEMO_MODE`): `POST /notifications/telegram/link-code`
+  returns a one-time `code` and a `deep_link`; show the link (and the code for typing
+  `/start <code>`), valid 10 minutes. `429 RATE_LIMITED` carries `retry_after_seconds`. After the
+  user pressed Start in Telegram, reload `GET /notifications/bindings`; "Unlink" is
+  `DELETE /notifications/bindings/{binding_id}`. Chat ids are never shown or sent.

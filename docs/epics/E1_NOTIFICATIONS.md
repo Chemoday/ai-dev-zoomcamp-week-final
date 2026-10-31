@@ -1,6 +1,6 @@
 # E1. Notifications
 
-- **Phase:** 2. **Status:** N1, N1b, N2 and N3 done (in-app notifications, the dispatcher and e-mail in `develop`; e-mail sends nowhere until a real login, 10.10); N4 next. **Epic issue:** [#39](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/39).
+- **Phase:** 2. **Status:** N1, N1b, N2, N3 and N4 done (in-app notifications, the dispatcher, e-mail and Telegram in `develop`; external channels send nowhere until a real login, 10.10); N5 next. **Epic issue:** [#39](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/39).
 - **Goal:** one pluggable notification system that every module uses, instead of each feature
   sending its own messages. Reminders, emergency alerts and (later) voting all go through it.
 
@@ -423,7 +423,8 @@ none did (for example the alert was resolved before any delivery), nobody gets "
   at most 10 `/start` attempts per `chat_id` per hour.
 - Webhook: the secret header is compared in constant time; 404 when the plugin is disabled; 200 for
   every update with a valid secret (otherwise Telegram retries); body size limit 64 KB;
-  `setWebhook` is an admin command, not run on startup; dev and prod use separate bots.
+  `setWebhook` is an admin command (`python -m src.plugins.common.telegram set-webhook`), not run
+  on startup; dev and prod use separate bots.
 - WebPush endpoint check: parse with `urllib`; `https` only; no userinfo, no IP literals, default
   port; host equals an allowlisted host or ends with `"." + host` for wildcard entries; no
   redirects; 10 s timeout. The device binding is revoked on logout.

@@ -111,3 +111,20 @@ class PreferencesUpdateRequest(BaseModel):
         if len(keys) != len(set(keys)):
             raise ValueError("each event_type and channel combination may appear only once")
         return self
+
+
+class LinkCodeResponse(BaseModel):
+    """A one-time Telegram link code; shown once, only its hash is stored."""
+
+    code: str
+    expires_at: datetime
+    deep_link: str
+
+
+class BindingView(BaseModel):
+    """A linked chat or device; the address itself (chat id, endpoint) is never returned."""
+
+    binding_id: uuid.UUID
+    channel: Channel
+    label: str | None
+    created_at: datetime
