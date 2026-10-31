@@ -23,7 +23,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.core.database import Base, uuid_pk, varchar_enum
-from src.modules.property.schemas import BuildingRole, DisplayMode, RelationType
+from src.modules.property.schemas import BuildingRole, DisplayMode, Locale, RelationType
 
 
 class Building(Base):
@@ -66,6 +66,10 @@ class User(Base):
         nullable=False,
         default=lambda: datetime.now(UTC),
         server_default=func.now(),
+    )
+    # Language of notifications sent outside the app; NULL = Settings.DEFAULT_LOCALE.
+    locale: Mapped[Locale | None] = mapped_column(
+        varchar_enum(Locale, "ck_core_users_locale", length=5), nullable=True
     )
 
 

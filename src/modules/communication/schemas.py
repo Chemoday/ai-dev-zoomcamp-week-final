@@ -12,7 +12,10 @@ from typing import Annotated
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StrictBool, StrictInt
 
 from src.core.validation import safe_text
-from src.modules.property.schemas import AuthorBadgeDTO
+from src.modules.property.schemas import (
+    AuthorBadgeDTO,
+    TargetScope,  # noqa: F401  (shared with notifications)
+)
 
 
 class PostType(StrEnum):
@@ -26,12 +29,6 @@ class PostCategory(StrEnum):
     WATER_SHUTOFF = "WATER_SHUTOFF"
     MAINTENANCE = "MAINTENANCE"
     MARKETPLACE = "MARKETPLACE"
-
-
-class TargetScope(StrEnum):
-    ALL_BUILDING = "ALL_BUILDING"
-    ENTRANCE = "ENTRANCE"
-    APARTMENT_LIST = "APARTMENT_LIST"
 
 
 TITLE_MAX_LENGTH = 255  # VARCHAR(255)

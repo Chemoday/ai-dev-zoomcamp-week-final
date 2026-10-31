@@ -1,7 +1,8 @@
 """Public enums and DTOs of the property module (API payloads and inter-module contracts).
 
 None of these DTOs carries a raw full name, email or phone: identity leaves the module only as
-an AuthorBadgeDTO, already masked according to the user's privacy display mode.
+an AuthorBadgeDTO, already masked according to the user's privacy display mode. (Planned
+exception, docs/ARCHITECTURE.md 3.4: a delivery contact DTO for the notifications dispatcher.)
 """
 
 import uuid
@@ -29,6 +30,23 @@ class DisplayMode(StrEnum):
     APARTMENT_ONLY = "APARTMENT_ONLY"
     INITIALS = "INITIALS"
     FULL_NAME = "FULL_NAME"
+
+
+class Locale(StrEnum):
+    """Language of notifications sent outside the app (the API itself is English only)."""
+
+    ET = "et"
+    RU = "ru"
+    EN = "en"
+
+
+class TargetScope(StrEnum):
+    """Who an alert or notice is meant for. Communication posts and notification recipients
+    share this enum and the matching rule `property.policies.apartment_in_target`."""
+
+    ALL_BUILDING = "ALL_BUILDING"
+    ENTRANCE = "ENTRANCE"
+    APARTMENT_LIST = "APARTMENT_LIST"
 
 
 class RoleBadge(StrEnum):
@@ -99,7 +117,26 @@ class MeResponse(BaseModel):
     building_id: uuid.UUID
     building_role: BuildingRole
     privacy_display_mode: DisplayMode
+    # Language of notifications sent outside the app; None = the instance default.
+    locale: Locale | None
     memberships: list[MembershipView]
+
+
+class LocaleUpdate(BaseModel):
+    """Request and response of PATCH /api/v1/property/me/locale."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    locale: Locale | None
+
+
+class RecipientDTO(BaseModel):
+    """A notification recipient: an id and a language, never contact data."""
+
+    model_config = ConfigDict(frozen=True)
+
+    user_id: uuid.UUID
+    locale: Locale | None
 
 
 # An area in m2 in a response: a string with exactly 2 decimals ("329.20"), never a JSON number.

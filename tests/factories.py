@@ -2,12 +2,12 @@
 
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.modules.meters.models import MeterDevice, MeterReading, ReadingPeriod
+from src.modules.meters.policies import period_due_date
 from src.modules.meters.schemas import PeriodStatus, ReadingSource, ResourceType
 from src.modules.property.models import Apartment, ApartmentMembership, Building, User
 from src.modules.property.schemas import BuildingRole, DisplayMode, RelationType
@@ -150,15 +150,11 @@ async def create_period(
     period_code: str = "2026-10",
     status: PeriodStatus = PeriodStatus.OPEN_FOR_RESIDENTS,
 ) -> ReadingPeriod:
-    year, month = (int(part) for part in period_code.split("-"))
-    due_year, due_month = (year + 1, 1) if month == 12 else (year, month + 1)
     period = ReadingPeriod(
         building_id=building.id,
         period_code=period_code,
         status=status,
-        due_date=datetime(
-            due_year, due_month, building.reading_deadline_day, 23, 59, 59, tzinfo=UTC
-        ),
+        due_date=period_due_date(period_code, building.reading_deadline_day, "Europe/Tallinn"),
     )
     session.add(period)
     await session.flush()

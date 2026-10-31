@@ -1,10 +1,12 @@
-"""Pure privacy-masking rules (no database access; unit-tested directly).
+"""Pure rules of the property module (no database access; unit-tested directly): privacy
+masking and the targeting rule shared with communication and notifications.
 
 Badge texts are English, like everything the backend returns (see docs/API.md,
 "Author badge rules").
 """
 
-from collections.abc import Iterable
+import uuid
+from collections.abc import Collection, Iterable
 
 from src.modules.property.schemas import (
     AuthorBadgeDTO,
@@ -12,6 +14,7 @@ from src.modules.property.schemas import (
     DisplayMode,
     RelationType,
     RoleBadge,
+    TargetScope,
 )
 
 APARTMENT_LABEL = "Apt."
@@ -88,3 +91,23 @@ def format_author_badge(
         display_label=label,
         role_badge=resolve_role_badge(relation_type, building_role),
     )
+
+
+def apartment_in_target(
+    scope: TargetScope,
+    target_entrance: int | None,
+    target_apartment_ids: Collection[uuid.UUID],
+    *,
+    apartment_id: uuid.UUID,
+    entrance: int,
+) -> bool:
+    """Whether an apartment is in the target of an alert or notice.
+
+    The one rule for who is targeted: notification recipients use it directly, and the SQL filter
+    of communication's post visibility is kept equal to it by tests.
+    """
+    if scope == TargetScope.ALL_BUILDING:
+        return True
+    if scope == TargetScope.ENTRANCE:
+        return target_entrance is not None and entrance == target_entrance
+    return apartment_id in target_apartment_ids

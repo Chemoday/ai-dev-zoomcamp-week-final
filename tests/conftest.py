@@ -18,6 +18,7 @@ import asyncio
 import io
 import json
 from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager
 
 import pytest
 from alembic import command
@@ -29,7 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from src.core.config import get_settings
 from src.core.database import build_engine, get_db_session, transaction
-from src.core.event_bus import DomainEvent, event_bus
+from src.core.event_bus import DomainEvent, EventBus
 from src.core.migrations import alembic_config
 from src.core.telemetry import (
     PIIScrubbingSpanExporter,
@@ -108,13 +109,25 @@ def db_app(app: FastAPI, db_session: AsyncSession) -> Iterator[FastAPI]:
         finally:
             db_session.expunge_all()
 
+    @asynccontextmanager
+    async def subscriber_session() -> AsyncIterator[AsyncSession]:
+        # Event handlers (e.g. notifications) write inside the test transaction too.
+        yield db_session
+
     app.dependency_overrides[get_db_session] = override_db_session
+    app.state.notifications_session_factory = subscriber_session
     yield app
     app.dependency_overrides.pop(get_db_session, None)
 
 
 @pytest.fixture
-def published_events() -> Iterator[list[DomainEvent]]:
+def event_bus(app: FastAPI) -> EventBus:
+    """The test app's own event bus (one per app instance)."""
+    return app.state.event_bus
+
+
+@pytest.fixture
+def published_events(event_bus: EventBus) -> Iterator[list[DomainEvent]]:
     """Every domain event published on the app's bus during the test, in order."""
     received: list[DomainEvent] = []
 
