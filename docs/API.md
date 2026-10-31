@@ -479,9 +479,10 @@ Seeded at startup by `src/core/seed.py` when `SEED_DEMO_DATA=true` (local Docker
 
 - Users who join, link a channel or add a device while an emergency is active see it as the banner
   (`GET /api/v1/communication/emergencies/active`); old alerts are not sent to them on any channel.
-  Recipients are resolved when the event is processed, normally seconds after it happened. After an
-  outage, a stored event is processed late (docs/BACKEND_CONVENTIONS.md 2.B): an alert that is still
-  active is then sent to the recipients of that moment, and a resolved one is skipped.
+  Recipients are resolved when the event is processed, normally seconds after it happened. If an
+  `EMERGENCY_PUBLISHED` event is processed more than 1 hour after the alert (e.g. after an outage),
+  only `in_app` notifications are created and nothing is sent outside the app; a resolved alert is
+  skipped.
 - **Demo mode.** While `DEMO_MODE_ENABLED=true` anyone can act as any user, so only `in_app`
   works: e-mail, Telegram and WebPush are listed as unavailable (`DEMO_MODE`), linking and the VAPID
   key return `404 CHANNEL_NOT_ENABLED`, the webhook ignores updates (`200 {}`), and nothing is sent

@@ -232,13 +232,13 @@ It can grow into a wizard that asks a few questions and does the rest:
   person pastes the token, and the script calls `setWebhook` itself.
 
 The app container only needs outgoing connections (SMTP provider, Telegram API, push services) and
-the incoming HTTPS that Caddy already serves (Telegram webhooks accept port 8443).
+the incoming HTTPS that Caddy already serves (Telegram webhooks accept ports 443, 80, 88 and 8443).
 
 ### E-mail
 - **No own mail server**, neither in a container nor next to it. Mail from a fresh VPS ends up in
   spam (no IP reputation, PTR, SPF/DKIM/DMARC), and many VPS providers block outgoing port 25.
-- The app is only an **SMTP client** of an external provider on port 587 (a transactional e-mail
-  service with a free tier, or a regular mailbox with an app password for a small building).
+- The app is only an **SMTP client** of an external provider on port 587 (STARTTLS) or 465 (TLS),
+  using a transactional e-mail service with a free tier, or a regular mailbox with an app password for a small building.
 - Good delivery needs mail from an own domain, with the SPF/DKIM records the provider gives;
   `sslip.io` hostnames cannot carry them, so real e-mail needs a domain (a mailbox account works
   without one).
@@ -246,4 +246,3 @@ the incoming HTTPS that Caddy already serves (Telegram webhooks accept port 8443
 ### Several associations on one server (Phase 3 managed cloud)
 One SMTP account and one Telegram bot shared by all instances (a shared delivery service) instead
 of one per association.
-

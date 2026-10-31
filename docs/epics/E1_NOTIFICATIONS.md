@@ -26,7 +26,7 @@ Out of scope (later epics or backlog):
 
 ```text
 business transaction commits
-  -> EventOutbox publishes the domain event (in memory)
+  -> the domain event is stored in core_domain_events and published after commit (or by the relay)
   -> notifications subscriber: resolve recipients, apply preferences,
      INSERT notif_deliveries (PENDING) -- never sends
   -> dispatcher loop (every few seconds): claim due rows with FOR UPDATE SKIP LOCKED,
@@ -60,8 +60,9 @@ section 10 wins.**
 
 Domain events are stored in `core_domain_events` in the same transaction as the change, and a relay
 publishes any event a crash left unpublished (owner decision 2026-10-31, task N1b;
-docs/BACKEND_CONVENTIONS.md 2.B). So no event is lost, for any event type. Delivery is at least once;
-the subscriber is idempotent through `dedup_key`.
+docs/BACKEND_CONVENTIONS.md 2.B). An event reaches the subscriber at least once, and is retried
+until the subscriber's insert succeeds (a row is marked published only when every handler
+succeeded). The subscriber is idempotent through `dedup_key`.
 
 ## 3. Contracts with other modules (added in N1/N2)
 
@@ -277,7 +278,9 @@ Before sending, the dispatcher re-checks and marks the row `SKIPPED` with an `er
 - the preference was turned off (non-mandatory events only).
 
 Users who join, link a channel or add a device during an emergency see it as the banner in the
-app; recipients are resolved when the event is processed (normally seconds after it happened).
+app; recipients are resolved when the event is processed (normally seconds after it happened). An
+`EMERGENCY_PUBLISHED` event processed more than 1 hour late (after an outage) creates `in_app`
+notifications only, which keeps the owner rule "no late alerts on external channels".
 
 "Resolved" goes to users whose `emergency:{post_id}` delivery reached `SENT` on that channel. If
 none did (for example the alert was resolved before any delivery), nobody gets "resolved".

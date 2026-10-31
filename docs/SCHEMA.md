@@ -308,14 +308,17 @@ Rows of `notif_link_codes` and `notif_link_attempts` older than 24 hours are del
 | :--- | :--- | :--- | :--- |
 | `id` | `UUID` | `PK` | The event's `event_id` |
 | `event_type` | `VARCHAR(64)` | `NOT NULL` | Class name, e.g. `EmergencyAlertPublished`; resolved through the event type registry |
-| `building_id` | `UUID` | `NULLABLE` | Building of the event when it has one (no FK: kept for statistics even after building data changes) |
+| `building_id` | `UUID` | `NULLABLE` | Building of the event when it has one (no FK: kept for statistics even after building data changes). N1b adds `building_id` to `MeterReadingSubmitted`, so every current event has one |
 | `payload` | `JSONB` | `NOT NULL` | The event's fields; UUIDs, `Decimal` values and timestamps as strings, enums as their values |
-| `trace_id` | `VARCHAR(32)` | `NULLABLE` | Trace of the request that caused the event |
+| `traceparent` | `VARCHAR(64)` | `NULLABLE` | W3C trace context of the request that caused the event; the relay continues that trace, so deliveries keep the request's `trace_id` |
 | `occurred_at` | `TIMESTAMPTZ` | `NOT NULL` | The event's `occurred_at` |
-| `published_at` | `TIMESTAMPTZ` | `NULLABLE` | Set once the event was handed to the bus; `NULL` = still to publish |
-| `publish_attempts` | `INTEGER` | `NOT NULL, DEFAULT 0` | Relay attempts so far |
+| `published_at` | `TIMESTAMPTZ` | `NULLABLE` | Set once every handler succeeded; `NULL` = still to publish |
+| `publish_attempts` | `INTEGER` | `NOT NULL, DEFAULT 0` | Failed or claimed attempts so far (at most 10) |
+| `next_attempt_at` | `TIMESTAMPTZ` | `NOT NULL` | When the relay may take the row (`occurred_at` at first); moved forward on every claim, which also keeps other workers away |
+| `failed_at` | `TIMESTAMPTZ` | `NULLABLE` | Set after 10 attempts; the row is skipped from then on (poison row, alerted) |
+| `last_error` | `VARCHAR(64)` | `NULLABLE` | Machine code, e.g. `UNKNOWN_EVENT_TYPE`, `PAYLOAD_INVALID`, `HANDLER_FAILED`; never exception text |
 
-- `ix_core_domain_events_unpublished`: partial index `(occurred_at) WHERE published_at IS NULL`, for the relay.
+- `ix_core_domain_events_unpublished`: partial index `(next_attempt_at) WHERE published_at IS NULL AND failed_at IS NULL`, for the relay.
 - `ix_core_domain_events_building_time`: `(building_id, occurred_at)`, for statistics.
-- **Retention:** rows older than `DOMAIN_EVENTS_RETENTION_DAYS` (default 365; `0` keeps them forever) are deleted, published ones only.
+- **Retention:** the relay deletes published rows older than `DOMAIN_EVENTS_RETENTION_DAYS` (default 365; `0` keeps them forever). Unpublished and failed rows are kept for investigation.
 - Seeding (`src/core/seed.py`) writes no events.
