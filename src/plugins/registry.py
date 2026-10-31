@@ -53,6 +53,10 @@ class ReadingExporter(Protocol):
         ...
 
 
+# The standard e-mail signature delimiter, between a message's text and its footer.
+SIGNATURE_SEPARATOR = "\n\n-- \n"
+
+
 @dataclass(frozen=True, eq=False)
 class OutgoingMessage:
     """One message to one address on one external channel (docs/ARCHITECTURE.md 3.2).
@@ -68,8 +72,11 @@ class OutgoingMessage:
     locale: str
     event_type: str  # e.g. "EMERGENCY_PUBLISHED"; push channels pass it to the app
     subject: str = field(repr=False)
-    body: str = field(repr=False)
+    body: str = field(repr=False)  # the text without the footer
     deep_link: str = field(repr=False)
+    # The fixed system text with a link to the site; e-mail and Telegram append it after
+    # SIGNATURE_SEPARATOR (full_text), push channels leave it out (a click opens deep_link).
+    footer: str = field(default="", repr=False)
     urgent: bool = False  # emergencies: high priority on push channels
     # "post:{id}" or "{event_type}:{period_id}": a newer push with the same key replaces the older.
     collapse_key: str | None = None
@@ -77,6 +84,11 @@ class OutgoingMessage:
     expires_at: datetime | None = None
     # The trace of the request that caused the event; e-mail carries it as X-Trace-Id.
     trace_id: str | None = None
+
+    @property
+    def full_text(self) -> str:
+        """The body followed by the footer, for channels that show both (e-mail, Telegram)."""
+        return f"{self.body}{SIGNATURE_SEPARATOR}{self.footer}" if self.footer else self.body
 
 
 @dataclass(frozen=True)

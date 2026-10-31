@@ -71,7 +71,7 @@ class TelegramChannel:
     # --- Outbound -------------------------------------------------------------------------------
 
     async def send(self, message: OutgoingMessage) -> DeliveryResult:
-        text = f"{message.subject}\n\n{message.body}"
+        text = f"{message.subject}\n\n{message.full_text}"
         return await self._send_text(int(message.address["chat_id"]), text)
 
     async def reply(self, chat_id: int, text: str) -> DeliveryResult:

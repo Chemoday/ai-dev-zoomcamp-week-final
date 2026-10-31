@@ -90,6 +90,7 @@ LINK_CODES_PER_HOUR = 5
 LINK_ATTEMPTS_PER_HOUR = 10
 LINK_WINDOW = timedelta(hours=1)
 MIN_HASH_SECRET_BYTES = 32
+MAX_PUSH_DEVICES = 10  # active WebPush bindings per user (docs/SCHEMA.md 5)
 
 
 def new_link_code() -> str:

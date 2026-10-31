@@ -104,8 +104,8 @@ class Outcome:
     revoke_binding: bool = False  # e.g. the user blocked the bot
 
 
-# External channels the dispatcher can send on today (WebPush: N5).
-_SENDABLE = (Channel.EMAIL, Channel.TELEGRAM)
+# External channels the dispatcher can send on (mobile push: N7).
+_SENDABLE = (Channel.EMAIL, Channel.TELEGRAM, Channel.WEBPUSH)
 
 
 @dataclass
@@ -323,7 +323,8 @@ class Dispatcher:
             locale=row.locale,
             event_type=row.event_type.value,
             subject=rendered.subject,
-            body=rendered.body,
+            body=rendered.text,
+            footer=rendered.footer,
             deep_link=self._settings.PUBLIC_BASE_URL,
             urgent=row.priority == 0,
             collapse_key=_collapse_key(row),

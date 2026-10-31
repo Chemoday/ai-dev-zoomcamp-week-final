@@ -24,6 +24,8 @@ from src.modules.notifications.schemas import (
     ReadAllResponse,
     ReadResponse,
     UnreadCountResponse,
+    VapidPublicKeyResponse,
+    WebPushSubscriptionRequest,
 )
 from src.modules.notifications.service import NotificationsService, get_notifications_service
 from src.modules.property.schemas import CurrentUserDTO
@@ -127,6 +129,47 @@ async def telegram_link_code(
 ) -> LinkCodeResponse:
     """A one-time code (10 minutes) for "/start <code>" in the bot; at most 5 per hour."""
     return await linking.create_telegram_code(user)
+
+
+@router.get(
+    "/webpush/vapid-public-key",
+    response_model=VapidPublicKeyResponse,
+    responses=error_responses({404: ["CHANNEL_NOT_ENABLED"]}),
+)
+async def webpush_vapid_public_key(
+    user: CurrentUserDTO = Depends(get_current_user),
+    linking: ChannelLinking = Depends(get_channel_linking),
+) -> VapidPublicKeyResponse:
+    """The application server key for `pushManager.subscribe`."""
+    return linking.vapid_public_key()
+
+
+@router.post(
+    "/webpush/subscriptions",
+    status_code=201,
+    response_model=BindingView,
+    responses={
+        200: {"model": BindingView, "description": "The endpoint was already this user's device"},
+        **error_responses(
+            {
+                404: ["CHANNEL_NOT_ENABLED"],
+                409: ["DEVICE_LIMIT_REACHED"],
+                422: ["VALIDATION_ERROR", "INVALID_PUSH_ENDPOINT"],
+            }
+        ),
+    },
+)
+async def webpush_subscribe(
+    body: WebPushSubscriptionRequest,
+    response: Response,
+    user: CurrentUserDTO = Depends(get_current_user),
+    linking: ChannelLinking = Depends(get_channel_linking),
+) -> BindingView:
+    """Register this browser for pushes (`PushSubscription.toJSON()` plus a label)."""
+    view, created = await linking.subscribe_webpush(user, body)
+    if not created:
+        response.status_code = 200
+    return view
 
 
 @router.get("/bindings", response_model=list[BindingView])
