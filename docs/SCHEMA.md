@@ -298,7 +298,7 @@ Rows of `notif_link_codes` and `notif_link_attempts` older than 24 hours are del
 
 ---
 
-## 6. Core infrastructure (`src/core`): durable domain events (planned, task E1/N1b)
+## 6. Core infrastructure (`src/core`): durable domain events
 
 *`src/core/` holds no domain models, but it owns this infrastructure table: the persistent part of the event outbox (docs/BACKEND_CONVENTIONS.md 2.B). Its model lives in `src/core/` and is listed in `src/core/models_registry.py`.*
 
