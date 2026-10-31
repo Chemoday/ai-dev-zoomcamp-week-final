@@ -452,11 +452,12 @@ Seeded at startup by `src/core/seed.py` when `SEED_DEMO_DATA=true` (local Docker
 
 ## 6. Notifications (`notifications`), epic E1
 
-> **Status.** Implemented (task N2, in `docs/openapi.json`): in-app notifications for emergencies,
-> resolved emergencies and periods in review; the feed, preferences and the notification language.
-> **Planned** (marked below; not in `docs/openapi.json` yet): e-mail (N3), Telegram (N4),
-> WebPush (N5), reading reminders (N6) and push to the native phone app (N7). Until then only the
-> `in_app` channel delivers; the others are reported unavailable. Design: [docs/epics/E1_NOTIFICATIONS.md](epics/E1_NOTIFICATIONS.md).
+> **Status.** Implemented (in `docs/openapi.json`): in-app notifications for emergencies,
+> resolved emergencies and periods in review; the feed, preferences and the notification language
+> (N2); e-mail (N3); Telegram linking, the webhook and the bindings API (N4). **Planned** (marked
+> below; not in `docs/openapi.json` yet): WebPush (N5), reading reminders (N6) and push to the
+> native phone app (N7). Every current environment runs in demo mode, so only `in_app` delivers
+> there and the other channels are reported unavailable. Design: [docs/epics/E1_NOTIFICATIONS.md](epics/E1_NOTIFICATIONS.md).
 
 ### How notifications reach people
 - Notifications are created from domain events: a published or resolved emergency, a reading
@@ -581,11 +582,11 @@ Only the listed combinations change. Response: the same body as the `GET`.
 (Module `property`.) Request `{"locale": "ru"}`; `"et"`, `"ru"`, `"en"` or `null` for the instance
 default. Response `{"locale": "ru"}`. Anything else: `422 VALIDATION_ERROR`.
 
-### `GET /api/v1/notifications/bindings` *(planned, N4/N5/N7)*
+### `GET /api/v1/notifications/bindings`
 The caller's active bindings: `[{"binding_id": "uuid", "channel": "webpush", "label": "Chrome on
 Android", "created_at": "..."}]`. Chat ids, endpoints and FCM tokens are never returned.
 
-### `DELETE /api/v1/notifications/bindings/{binding_id}` *(planned, N4/N5/N7)*
+### `DELETE /api/v1/notifications/bindings/{binding_id}`
 Unlinks a chat or device (`revoked_at` is set, the stored address is wiped). Response
 `204 No Content`; queued messages for it are skipped. Someone else's, unknown or already revoked:
 `404 BINDING_NOT_FOUND`. **The client deletes its own WebPush binding on logout** and also calls
@@ -594,7 +595,7 @@ if the token has already expired (the push service then answers 410 and the bind
 The phone app does the same with its mobile push binding and also deletes its FCM token
 (`deleteToken`).
 
-### Telegram linking *(planned, N4)*
+### Telegram linking
 #### `POST /api/v1/notifications/telegram/link-code`
 Response `201 Created`:
 ```json
@@ -606,7 +607,11 @@ Response `201 Created`:
   `Retry-After` header.
 - Plugin `common.telegram` not enabled: `404 CHANNEL_NOT_ENABLED`.
 - The user opens the deep link (or sends `/start <code>` to the bot). On success the bot replies
-  and the binding appears in `GET …/bindings`.
+  and the binding appears in `GET …/bindings` with the label `Telegram`. The bot's replies
+  ("linked", "already linked", "wrong, used or expired code") are system texts in the user's
+  language (the instance default for a wrong code); group chats and chats over the attempt limit
+  get no reply at all. A bare `/start` (the bot opened without the link) gets a hint to create a
+  code on the site and does not count as an attempt.
 - **One Telegram chat per user.** Redeeming a code runs in one transaction that takes advisory
   locks in a fixed order, first the user, then the chat, so two chats redeeming codes of the same
   user at once are serialized. A unique-index conflict that still happens becomes a bot reply, and
@@ -629,8 +634,11 @@ Called by Telegram, **not by the frontend**; no user authentication.
 - Body limit 64 KB. Only private chats (`chat.type == "private"`) can link; group chats get no
   binding. At most 10 `/start` attempts per chat per hour; a wrong, used or expired code links
   nothing.
-- The webhook is registered with Telegram by an admin command (`setWebhook`), not on startup.
-  Dev and prod use different bots.
+- The webhook is registered with Telegram by an admin command, not on startup:
+  `uv run python -m src.plugins.common.telegram set-webhook` (in the backend container) calls
+  `setWebhook` with `PUBLIC_BASE_URL` + this path, `secret_token` = `TELEGRAM_WEBHOOK_SECRET` and
+  `allowed_updates: ["message"]`; `webhook-info` shows Telegram's view. Dev and prod use different
+  bots.
 
 ### WebPush *(planned, N5)*
 #### `GET /api/v1/notifications/webpush/vapid-public-key`
@@ -690,8 +698,8 @@ Called by the phone app after login, with the FCM registration token of the devi
 - FCM answering `UNREGISTERED` or `SENDER_ID_MISMATCH` revokes the binding.
 
 ### Error codes of this section
-`NOTIFICATION_NOT_FOUND` and `PREFERENCE_MANDATORY` are live (and in the table of section 0); the
-others come with N4/N5/N7.
+`NOTIFICATION_NOT_FOUND`, `PREFERENCE_MANDATORY`, `CHANNEL_NOT_ENABLED`, `BINDING_NOT_FOUND` and
+`RATE_LIMITED` are live; `DEVICE_LIMIT_REACHED` and `INVALID_PUSH_ENDPOINT` come with N5/N7.
 | Status | `error_code` |
 | :--- | :--- |
 | 404 | `NOTIFICATION_NOT_FOUND`, `BINDING_NOT_FOUND`, `CHANNEL_NOT_ENABLED` |
