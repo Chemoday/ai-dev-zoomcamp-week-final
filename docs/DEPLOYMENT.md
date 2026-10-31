@@ -114,6 +114,11 @@ over on dev, the dev database has to be emptied; prod is never reset by a deploy
 
 - `DEMO_MODE_ENABLED=true` in both environments, so reviewers can switch roles with
   `X-Demo-User-Id`. The deployed databases contain seeded demo data only.
+- **E-mail:** the backend is only an SMTP client of an external provider; no mail server runs in
+  the image or on the VPS, and environments share nothing. When e-mail goes live (after a real
+  login, docs/BACKLOG.md B-7), each environment gets its own `SMTP_*` values, `SMTP_FROM`,
+  `PUBLIC_BASE_URL` and `common.email_smtp` in `ENABLED_PLUGINS` in its `.env`
+  (docs/epics/E1_NOTIFICATIONS.md 6.1).
 - Troubleshooting (as root on the VPS):
   `docker compose -p aap-dev logs -f backend`, `cat /opt/aap/dev/history`,
   `docker logs aap-edge-caddy-1`.

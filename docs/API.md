@@ -470,10 +470,13 @@ Seeded at startup by `src/core/seed.py` when `SEED_DEMO_DATA=true` (local Docker
   server-sent events channel (owner decision 2026-10-31). A user whose app is closed is reached by
   the external channels.
 - **Texts:** the in-app feed returns codes and parameters, and the frontend renders localized
-  texts by `event_type` (like it does for `error_code`). For e-mail, Telegram and push the server
-  renders the text in the user's `locale`. What leaves the system on external channels: the event
-  type, the emergency title (written by the board), the target (e.g. "entrance 2"), the period code
-  and due date, and a link into the app. Post bodies, comments and author names never do.
+  texts by `event_type` (like it does for `error_code`). On e-mail, Telegram and push an emergency
+  is the post's title and body as the board wrote them; everything else (subject lines, "resolved",
+  reminders, "period in review", the target line and a fixed footer with a link to the site) is a
+  fixed system text in the user's `locale`. The chairman cannot change system texts. What leaves
+  the system on external channels: the event type, the emergency title and body (written by the
+  board), the target (e.g. "entrance 2"), the period code and due date, and a link to the site.
+  Comments, forum posts and author names never do.
 - **Who gets what:**
 
 | `event_type` | Recipients | Mandatory |
