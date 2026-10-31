@@ -34,7 +34,7 @@ src/
 
 **Database foreign keys vs. ORM relationships:** PostgreSQL enforces foreign keys across tables (e.g., `meters.apartment_id -> property_apartments.id`). SQLAlchemy `relationship()` across module boundaries is FORBIDDEN. Cross-module data is fetched via public Service methods returning DTOs.
 
-**In-memory async event bus:** Side effects (e.g., sending notifications on emergency alerts, logging anomalies) are decoupled via domain events. Services add them to the request's `EventOutbox`; they are published on the event bus only after the request's transaction commits (see docs/BACKEND_CONVENTIONS.md, section 2.B). Events live only in memory: a process that dies right after a commit loses them, so a consumer that must not miss an event reconciles from the source of truth (see section 3.3).
+**In-memory async event bus:** Side effects (e.g., sending notifications on emergency alerts, logging anomalies) are decoupled via domain events. Services add them to the request's `EventOutbox`; they are published on the event bus only after the request's transaction commits (see docs/BACKEND_CONVENTIONS.md, section 2.B). Events are also stored in `core_domain_events` in the same transaction (planned, task E1/N1b; docs/SCHEMA.md section 6), and a relay publishes any event that a crash left unpublished. So no event is lost, delivery is at least once, and every subscriber is idempotent. The table doubles as the event history of the building.
 
 **Plugins** receive plain DTOs defined in `src/plugins/registry.py`, never ORM models, and have **no database access**. Which plugins run is configuration (`ENABLED_PLUGINS`), so a self-hosted instance enables its country adapters without code changes.
 
@@ -91,7 +91,6 @@ Both start in the app lifespan, stop on shutdown, and have switches (`NOTIFICATI
   3. A second transaction records `SENT`, `FAILED`, `SKIPPED` or the next retry, **fenced**: `UPDATE … WHERE id = :id AND status = 'SENDING' AND attempts = :claimed_attempts`. Zero updated rows means another worker took over after the lease expired, and the result is dropped. Every move out of `SENDING` sets `lease_until = NULL`. A retryable failure on the fifth attempt becomes `FAILED`, never `PENDING`.
   An expired lease is claimed again, so delivery is at least once. Retry backoff: 1 min, 5 min, 30 min, 2 h (5 attempts in total).
 - **Scheduler** (every 10 min), each tick in a short transaction under `pg_try_advisory_xact_lock`:
-  - **repairs lost emergency events:** for active emergencies **created less than 30 minutes ago**, it creates the missing deliveries, only for recipients created before the alert (`RecipientDTO.created_at`) who have no row at all for it, and only on bindings created before it. Older alerts, the seeded alert, and alerts already active (and older than 30 minutes) when the module is first deployed are never sent late; retention cannot re-trigger them either. `RecipientDTO.created_at` is `core_users.created_at` (memberships have no timestamp), so an existing user who joins an apartment inside the window can still get the repaired alert, which is accepted. **One tick runs at startup**, so the guarantee is: a lost emergency event is repaired if the app runs within 30 minutes of the alert; after a longer outage only the banner shows it;
   - publishes reading reminders inside the 09:00–21:00 local window;
   - deletes deliveries older than the retention period, and link codes and link attempts older than 24 hours.
 
@@ -100,17 +99,16 @@ System-level methods (no `CurrentUserDTO`), returning DTOs, used only by notific
 
 | Module | Method | Returns |
 | :--- | :--- | :--- |
-| `property` | `resolve_recipients(building_id, scope, entrance, apartment_ids)` | `list[RecipientDTO(user_id, locale, created_at)]`: active users with a membership in a targeted apartment |
+| `property` | `resolve_recipients(building_id, scope, entrance, apartment_ids)` | `list[RecipientDTO(user_id, locale)]`: active users with a membership in a targeted apartment |
 | `property` | `users_with_roles(building_id, roles)` | `list[RecipientDTO]` |
 | `property` | `reading_submitters(apartment_ids)` | `list[RecipientDTO]`: active members with `can_submit_readings` |
 | `property` | `get_delivery_contact(user_id)` | `DeliveryContactDTO(email)` or `None` |
 | `property` | `is_user_active(user_id)` | `bool` (send-time check) |
 | `meters` | `open_periods_due_within(until)` | `list[DuePeriodRefDTO(period_id, building_id, period_code, due_date)]` |
 | `meters` | `apartments_missing_readings(period_id)` | `list[UUID]`: apartments with an active meter and no reading |
-| `communication` | `active_emergencies()` | `list[EmergencyRefDTO]` across all buildings |
 | `communication` | `get_emergency_ref(post_id)` | `EmergencyRefDTO` regardless of status, or `None` |
 
-- `EmergencyRefDTO`: `post_id`, `building_id`, `author_user_id`, `is_active`, `created_at`, `target_scope`, `target_entrance`, `target_apartment_ids`, `title`, `category`.
+- `EmergencyRefDTO`: `post_id`, `building_id`, `author_user_id`, `is_active`, `target_scope`, `target_entrance`, `target_apartment_ids`, `title`, `category`.
 - **Locale** is resolved when a delivery row is inserted (`RecipientDTO.locale`, else `DEFAULT_LOCALE`) and stored on the row, so the dispatcher needs no extra lookup.
 - **Shared targeting rule.** Whether an apartment matches `ALL_BUILDING` / `ENTRANCE` / `APARTMENT_LIST` is one pure predicate. Property uses it for recipients; communication's visibility stays a SQL filter, and tests assert that both select the same apartments.
 - **Staff without an apartment** are not recipients through targeting, even for `ALL_BUILDING` (visibility differs on purpose: an accountant without an apartment can read `ALL_BUILDING` posts in the feed). They are notified only through role rules: the chairman and board for emergencies, the chairman and accountants for `PERIOD_REVIEW`.

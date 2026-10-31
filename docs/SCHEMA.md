@@ -294,4 +294,28 @@ Rows of `notif_link_codes` and `notif_link_attempts` older than 24 hours are del
 - `ix_notif_deliveries_feed`: `(user_id, created_at DESC) WHERE channel = 'in_app'` for the feed.
 - **Claiming never breaks the `attempts` check.** The claim takes `PENDING` rows that are due and `SENDING` rows whose lease expired, both only with `attempts < 5`. In the same transaction, an expired `SENDING` row with `attempts = 5` becomes `FAILED` with `error_code = 'LEASE_EXPIRED'`.
 - `in_app` rows are inserted as `SENT` with `attempts = 0` and `next_attempt_at = sent_at = created_at`, and never go through the dispatcher.
-- **Retention:** rows older than `NOTIFICATIONS_RETENTION_DAYS` (default 180) are deleted by the scheduler. This cannot re-send an old emergency: repairs only look at alerts younger than 30 minutes.
+- **Retention:** rows older than `NOTIFICATIONS_RETENTION_DAYS` (default 180) are deleted by the scheduler.
+
+---
+
+## 6. Core infrastructure (`src/core`): durable domain events (planned, task E1/N1b)
+
+*`src/core/` holds no domain models, but it owns this infrastructure table: the persistent part of the event outbox (docs/BACKEND_CONVENTIONS.md 2.B). Its model lives in `src/core/` and is listed in `src/core/models_registry.py`.*
+
+### Table: `core_domain_events`
+*(Every domain event, written in the same transaction as the change that caused it. Payloads carry ids, codes and values only, never names, e-mails, phones, titles or bodies.)*
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PK` | The event's `event_id` |
+| `event_type` | `VARCHAR(64)` | `NOT NULL` | Class name, e.g. `EmergencyAlertPublished`; resolved through the event type registry |
+| `building_id` | `UUID` | `NULLABLE` | Building of the event when it has one (no FK: kept for statistics even after building data changes) |
+| `payload` | `JSONB` | `NOT NULL` | The event's fields; UUIDs, `Decimal` values and timestamps as strings, enums as their values |
+| `trace_id` | `VARCHAR(32)` | `NULLABLE` | Trace of the request that caused the event |
+| `occurred_at` | `TIMESTAMPTZ` | `NOT NULL` | The event's `occurred_at` |
+| `published_at` | `TIMESTAMPTZ` | `NULLABLE` | Set once the event was handed to the bus; `NULL` = still to publish |
+| `publish_attempts` | `INTEGER` | `NOT NULL, DEFAULT 0` | Relay attempts so far |
+
+- `ix_core_domain_events_unpublished`: partial index `(occurred_at) WHERE published_at IS NULL`, for the relay.
+- `ix_core_domain_events_building_time`: `(building_id, occurred_at)`, for statistics.
+- **Retention:** rows older than `DOMAIN_EVENTS_RETENTION_DAYS` (default 365; `0` keeps them forever) are deleted, published ones only.
+- Seeding (`src/core/seed.py`) writes no events.
