@@ -200,3 +200,21 @@ so we do not have them.
 - Read balances from the accounting software API (country plugin, e.g. Merit Aktiva).
 
 Delivery itself reuses epic E1 (a new event type, e.g. `PaymentOverdue`).
+
+## B-7. Real login before external notifications
+
+- **Status:** open. Blocks real use of e-mail, Telegram and WebPush (epic E1). Raised 2026-10-31.
+
+### Problem
+There is no login: users act through `X-Demo-User-Id` (demo mode) or a Bearer JWT that only an
+operator can mint. Every environment (docker compose, dev, prod) runs in demo mode, where anyone
+can act as the chairman. External notifications there would let anyone broadcast fake emergencies
+to real Telegram chats, devices and mailboxes. So, by owner decision, demo mode delivers in-app
+notifications only, and the external channels are verified by automated tests.
+
+### Needed before external channels go live
+- A real login (e-mail magic link or password first; Smart-ID / Web eID later, see
+  `core_user_identities`).
+- An environment without demo mode, with its own Telegram bot and secrets
+  (`TELEGRAM_WEBHOOK_SECRET`, `NOTIFICATIONS_HASH_SECRET`, VAPID keys, SMTP).
+

@@ -71,22 +71,27 @@ class InboundChannel(Protocol):  # optional; implemented by common.telegram
 - The notifications service owns every table: bindings, link codes, deliveries. Plugins only verify, format and send.
 - Plugins: `common.email_smtp`, `common.telegram`, `common.webpush`. `in_app` is built in.
 - **Startup checks.** With any external channel enabled, the app refuses to start without
-  `PUBLIC_BASE_URL` and `NOTIFICATIONS_HASH_SECRET` (at least 32 bytes), and each plugin without its
+  `PUBLIC_BASE_URL`; with `common.telegram` or `common.webpush` also without
+  `NOTIFICATIONS_HASH_SECRET` (at least 32 bytes; e-mail hashes nothing). Each plugin also needs its
   own settings: SMTP host and sender; bot token, bot username and a webhook secret of at least
   32 characters in `[A-Za-z0-9_-]`; the VAPID keys and subject.
-- **Demo mode.** While `DEMO_MODE_ENABLED=true` (anyone can act as anyone), external channels are
-  treated as unavailable: no linking, and the dispatcher never calls an external plugin. Only
-  `in_app` works.
+- **Demo mode (owner decision).** While `DEMO_MODE_ENABLED=true` (anyone can act as anyone),
+  external channels are treated as unavailable: no linking, and the dispatcher never calls an
+  external plugin. Only `in_app` works. There is no override. Every environment today (docker
+  compose, dev, prod) runs in demo mode and keeps the external plugins disabled, so the startup
+  checks never fire there. E-mail, Telegram and WebPush are verified by automated tests that run
+  with `DEMO_MODE_ENABLED=false` and a test JWT (`JWT_SECRET_KEY` set in the test). Using them for
+  real needs a real login first (docs/BACKLOG.md B-7).
 
 ### 3.3 Background loops
 Both start in the app lifespan, stop on shutdown, and have switches (`NOTIFICATIONS_DISPATCHER_ENABLED`, `NOTIFICATIONS_SCHEDULER_ENABLED`); tests turn them off and call one tick directly.
 - **Dispatcher** (every 5 s), lease protocol:
-  1. A short transaction claims up to 10 rows: `(status = 'PENDING' AND next_attempt_at <= now()) OR (status = 'SENDING' AND lease_until < now())`, both with `attempts < 5`, `ORDER BY priority, next_attempt_at FOR UPDATE SKIP LOCKED`. It sets `SENDING`, `lease_until = now() + 2 min`, `attempts = attempts + 1`. In the same transaction, expired `SENDING` rows with `attempts = 5` become `FAILED` (`LEASE_EXPIRED`).
+  1. A short transaction claims up to 10 rows: `(status = 'PENDING' AND next_attempt_at <= now()) OR (status = 'SENDING' AND lease_until < now())`, both with `attempts < 5`, `ORDER BY priority, next_attempt_at FOR UPDATE SKIP LOCKED`. It sets `SENDING`, `lease_until = now() + 5 min`, `attempts = attempts + 1`. In the same transaction, expired `SENDING` rows with `attempts = 5` become `FAILED` (`LEASE_EXPIRED`, `lease_until = NULL`), also selected with `SKIP LOCKED`.
   2. Send-time checks (`SKIPPED` with an `error_code`): the alert was resolved, the binding is revoked, the user is inactive, the e-mail is gone, a non-mandatory preference was switched off, demo mode. Then the sends run one after another with no transaction open, each with a 10 s timeout (WebPush: no redirects), so a batch fits in the lease.
-  3. A second transaction records `SENT`, `FAILED`, `SKIPPED` or the next retry.
+  3. A second transaction records `SENT`, `FAILED`, `SKIPPED` or the next retry, **fenced**: `UPDATE … WHERE id = :id AND status = 'SENDING' AND attempts = :claimed_attempts`. Zero updated rows means another worker took over after the lease expired, and the result is dropped. Every move out of `SENDING` sets `lease_until = NULL`. A retryable failure on the fifth attempt becomes `FAILED`, never `PENDING`.
   An expired lease is claimed again, so delivery is at least once. Retry backoff: 1 min, 5 min, 30 min, 2 h (5 attempts in total).
 - **Scheduler** (every 10 min), each tick in a short transaction under `pg_try_advisory_xact_lock`:
-  - **repairs lost emergency events:** for active emergencies **created less than 30 minutes ago**, it creates the missing deliveries, only for recipients created before the alert (`RecipientDTO.created_at`) who have no row at all for it, and only on bindings created before it. Older alerts, the seeded alert, and alerts already active when the module is first deployed are never sent late; retention cannot re-trigger them either;
+  - **repairs lost emergency events:** for active emergencies **created less than 30 minutes ago**, it creates the missing deliveries, only for recipients created before the alert (`RecipientDTO.created_at`) who have no row at all for it, and only on bindings created before it. Older alerts, the seeded alert, and alerts already active (and older than 30 minutes) when the module is first deployed are never sent late; retention cannot re-trigger them either. `RecipientDTO.created_at` is `core_users.created_at` (memberships have no timestamp), so an existing user who joins an apartment inside the window can still get the repaired alert, which is accepted. **One tick runs at startup**, so the guarantee is: a lost emergency event is repaired if the app runs within 30 minutes of the alert; after a longer outage only the banner shows it;
   - publishes reading reminders inside the 09:00–21:00 local window;
   - deletes deliveries older than the retention period, and link codes and link attempts older than 24 hours.
 
@@ -117,11 +122,11 @@ System-level methods (no `CurrentUserDTO`), returning DTOs, used only by notific
 | `NOTIFICATIONS_ENABLED` | `true` | The whole module |
 | `NOTIFICATIONS_DISPATCHER_ENABLED` / `NOTIFICATIONS_SCHEDULER_ENABLED` | `true` | The loops |
 | `NOTIFICATIONS_RETENTION_DAYS` | `180` | Deletion of old deliveries |
-| `READING_REMINDER_DAYS_BEFORE` | `2` | Reminder lead time; sent from 09:00 local time |
+| `READING_REMINDER_DAYS_BEFORE` | `2` | Reminder lead time; sent between 09:00 and 21:00 local time |
 | `INSTANCE_TIMEZONE` | `Europe/Tallinn` | Local time for `due_date` and texts |
 | `DEFAULT_LOCALE` | `et` | Language when `core_users.locale` is `NULL` |
 | `PUBLIC_BASE_URL` | empty | Base of deep links in external messages; required when an external channel is enabled |
-| `NOTIFICATIONS_HASH_SECRET` | empty | Key of the HMAC for chat ids, endpoints and link codes; required when an external channel is enabled |
+| `NOTIFICATIONS_HASH_SECRET` | empty | Key of the HMAC for chat ids, endpoints and link codes; required with `common.telegram` or `common.webpush`. Never rotate it without rehashing: active addresses would lose their uniqueness and open link codes would stop working |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_STARTTLS` | | `common.email_smtp` |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`, `TELEGRAM_WEBHOOK_SECRET` | | `common.telegram` (one bot per environment) |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | | `common.webpush` |

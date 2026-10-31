@@ -62,7 +62,7 @@ Domain events live only in memory and are published after commit. If the process
 commit and the subscriber's insert, the event is lost. The accepted design:
 - **Mandatory events are reconciled.** Every scheduler tick asks communication for active
   emergencies and creates the missing deliveries (exact rule in 10.5). The `dedup_key` makes this idempotent. A
-  lost emergency notification is therefore delayed by at most one tick, never lost.
+  lost emergency notification is repaired if the app runs within 30 minutes of the alert (10.10).
 - **Other events are best effort.** A lost "period in review" or "resolved" notification is an
   accepted risk. Reading reminders are produced by the scheduler itself, so they are not affected.
 - A persistent core outbox (event rows written in the business transaction) would close the gap for
@@ -77,7 +77,7 @@ notifications.
 - Migration: `core_users.locale` (nullable `et|ru|en`; `NULL` means the instance default
   `DEFAULT_LOCALE`).
 - `PropertyService.resolve_recipients(building_id, scope, entrance, apartment_ids)
-  -> list[RecipientDTO(user_id, locale)]`: target matching from one shared pure function (10.3).
+  -> list[RecipientDTO(user_id, locale, created_at)]`: target matching from one shared pure function (10.3).
 - `PropertyService.users_with_roles(building_id, roles) -> list[RecipientDTO]`.
 - `PropertyService.reading_submitters(apartment_ids) -> list[RecipientDTO]`: active members with
   `can_submit_readings`.
@@ -97,14 +97,14 @@ notifications.
   reconciliation.
 - `CommunicationService.get_emergency_ref(post_id) -> EmergencyRefDTO | None` regardless of status,
   for rendering and the send-time check.
-- `EmergencyRefDTO(post_id, building_id, author_user_id, is_active, target_scope, target_entrance,
+- `EmergencyRefDTO(post_id, building_id, author_user_id, is_active, created_at, target_scope, target_entrance,
   target_apartment_ids, title, category)`.
 
 ## 4. Data model (draft; final version in docs/SCHEMA.md, task N1)
 
 `notif_channel_bindings`: where a user can be reached on an external channel.
 - `id`, `user_id`, `channel` (`telegram|webpush`), `config` (JSONB: Telegram `chat_id`; WebPush
-  `endpoint`, `p256dh`, `auth`), `address_hash` (SHA-256 of the chat id or endpoint),
+  `endpoint`, `p256dh`, `auth`), `address_hash` (keyed HMAC-SHA-256 of the chat id or endpoint),
   `created_at`, `revoked_at`. On revoke, `config` is wiped.
 - Partial unique index on `(channel, address_hash) WHERE revoked_at IS NULL`: an active chat or
   endpoint belongs to one user (re-subscribing a shared browser moves it); a user may have several
@@ -160,9 +160,9 @@ class NotificationChannel(Protocol):
 
 
 class InboundChannel(Protocol):  # optional, implemented by telegram
-    async def parse_inbound(
-        self, headers: Mapping[str, str], body: bytes
-    ) -> InboundLink | None: ...
+    def verify(self, headers: Mapping[str, str]) -> bool: ...
+
+    def parse_inbound(self, body: bytes) -> InboundLink | None: ...
 ```
 
 - `OutgoingMessage`: address (from the binding or the delivery contact), locale, subject, body,
@@ -173,14 +173,15 @@ class InboundChannel(Protocol):  # optional, implemented by telegram
 - Enabled through `ENABLED_PLUGINS`, e.g. `common.csv_export,common.email_smtp,common.telegram`.
 
 ### 6.1 E-mail (`common.email_smtp`)
-SMTP settings from env. Local development uses Mailpit in docker compose.
+SMTP settings from env. Verified by automated tests against a local SMTP test server (owner
+decision: no external channel runs in the current demo-mode environments, see 10.10).
 
 ### 6.2 Telegram (`common.telegram`): linking
 - Updates arrive by **webhook** `POST /api/v1/notifications/telegram/webhook`. The plugin checks the
   `X-Telegram-Bot-Api-Secret-Token` header (secret from env) and returns an `InboundLink`.
   No long polling (it would need exactly one runner).
 - The user requests a link code in the UI: 8 characters, valid 10 minutes, single use, stored only
-  as a SHA-256 hash, at most 5 codes per user per hour.
+  as a keyed HMAC, at most 5 codes per user per hour.
 - The user sends `/start <code>` to the bot. Only `chat.type == "private"` is accepted, so alerts
   never go to a group chat.
 - Unlinking in the UI revokes the binding. A Telegram 403 ("bot was blocked") revokes it too.
@@ -228,10 +229,10 @@ review before merge (see AGENTS.md).
 |---|---|---|
 | N1 | Contract: SCHEMA.md, API.md, ARCHITECTURE.md, including sections 3 and 10 (openapi.json is generated from code, so it follows in N2) | docs merged, API reviewed by the owner |
 | N2 | Module, migrations (incl. `core_users.locale`), subscriber, recipients, `in_app` channel, preferences and feed API | an emergency alert creates in-app notifications for exactly the targeted users; resolved goes to the same users; tests green |
-| N3 | Dispatcher, retries, `common.email_smtp`, Mailpit in compose | alert e-mail visible in Mailpit with the same `trace_id`; a failing SMTP retries on schedule |
-| N4 | `common.telegram` with webhook linking | alert arrives in a linked private chat; group chats and reused codes are rejected |
-| N5 | `common.webpush` (backend) | push sent to every device of a user; non-allowlisted endpoints rejected; 410 revokes |
-| N6 | Scheduler: reading reminders and emergency reconciliation | one reminder per period and user, also after a restart; a dropped emergency event is delivered on the next tick |
+| N3 | Dispatcher, retries, `common.email_smtp` | tests (demo mode off, test JWT) with a local SMTP test server: the alert e-mail arrives with the same `trace_id`; a failing SMTP retries on schedule; demo mode sends nothing |
+| N4 | `common.telegram` with webhook linking | tests with a fake Telegram API: alert reaches a linked private chat; group chats and reused codes are rejected; demo mode links nothing |
+| N5 | `common.webpush` (backend) | tests with a fake push service: push to every device of a user; non-allowlisted endpoints rejected; 410 revokes; demo mode subscribes nothing |
+| N6 | Scheduler: reading reminders and emergency reconciliation | one reminder per period and user, also after a restart; a dropped emergency event younger than 30 minutes is repaired by the next tick (one tick at startup) |
 
 ## 10. Decisions settled before N1
 
@@ -294,7 +295,7 @@ none did (for example the alert was resolved before any delivery), nobody gets "
 - `meters_periods.due_date` means the **end of the local deadline day** in `INSTANCE_TIMEZONE`
   (default `Europe/Tallinn`), stored as UTC. N1 fixes the SCHEMA.md example; N2 fixes the seed
   (today it stores 23:59:59 UTC, which is already the next day in Tallinn).
-- Reminders go out from 09:00 local time on the day `READING_REMINDER_DAYS_BEFORE` (default 2)
+- Reminders go out between 09:00 and 21:00 local time, starting on the day `READING_REMINDER_DAYS_BEFORE` (default 2)
   before the deadline, never at night.
 
 ### 10.7 Telegram and WebPush hardening
@@ -328,3 +329,11 @@ page as follows:
 - Addresses and codes are hashed with a keyed HMAC (`NOTIFICATIONS_HASH_SECRET`).
 - The locale is stored on each delivery; `period_review` keys use the event id; reminders are sent
   between 09:00 and 21:00 local time.
+- `RecipientDTO` and `EmergencyRefDTO` carry `created_at`; `InboundChannel` is split into
+  `verify()` and `parse_inbound()`.
+- **Owner decision on external channels:** nowhere for now. Every environment runs in demo mode,
+  which delivers `in_app` only, with no override; e-mail, Telegram and WebPush are accepted by
+  automated tests with demo mode off. Real use needs a real login (docs/BACKLOG.md B-7).
+- The dispatcher's result update is fenced on `status` and `attempts`; the lease is 5 minutes;
+  linking and subscribing lock the user before the address.
+- One scheduler tick runs at startup; repairs cover alerts younger than 30 minutes.

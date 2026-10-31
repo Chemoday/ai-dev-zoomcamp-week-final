@@ -479,11 +479,14 @@ Seeded at startup by `src/core/seed.py` when `SEED_DEMO_DATA=true` (local Docker
 
 - Users who join, link a channel or add a device while an emergency is active see it as the banner
   (`GET /api/v1/communication/emergencies/active`); old alerts are not sent to them on any channel.
-  (Technically: lost events are repaired only for alerts younger than 30 minutes, only for users
-  created before the alert and only on devices linked before it.)
+  (Technically: lost events are repaired only for alerts younger than 30 minutes, only for user
+  accounts created before the alert and only on devices linked before it. An existing account that
+  joins an apartment inside those 30 minutes may still get it.)
 - **Demo mode.** While `DEMO_MODE_ENABLED=true` anyone can act as any user, so only `in_app`
-  works: e-mail, Telegram and WebPush are listed as unavailable (`DEMO_MODE`), linking returns
-  `404 CHANNEL_NOT_ENABLED`, and nothing is sent outside the app.
+  works: e-mail, Telegram and WebPush are listed as unavailable (`DEMO_MODE`), linking and the VAPID
+  key return `404 CHANNEL_NOT_ENABLED`, the webhook ignores updates (`200 {}`), and nothing is sent
+  outside the app. All current environments (local, dev, prod) run in demo mode, so the frontend
+  will see only `in_app` until a real login exists.
 - Delivery is **at least once**: after a crash a message may arrive twice, but is not lost.
 
 **Default preferences** (`mandatory` events cannot be switched off):
@@ -587,7 +590,10 @@ Response `201 Created`:
 - Plugin `common.telegram` not enabled: `404 CHANNEL_NOT_ENABLED`.
 - The user opens the deep link (or sends `/start <code>` to the bot). On success the bot replies
   and the binding appears in `GET …/bindings`.
-- **One Telegram chat per user.** Redeeming a code, in one transaction that locks the chat:
+- **One Telegram chat per user.** Redeeming a code runs in one transaction that takes advisory
+  locks in a fixed order, first the user, then the chat, so two chats redeeming codes of the same
+  user at once are serialized. A unique-index conflict that still happens becomes a bot reply, and
+  the webhook still answers `200`.
   - the chat is already linked to this user: the code is used up, the binding stays, the bot
     replies "already linked";
   - the user has another chat linked: that binding is revoked, the new chat is linked;
@@ -624,9 +630,9 @@ Request: the browser's `PushSubscription.toJSON()` plus a label:
   `keys` and `label`.
 - If the endpoint is active for another user, that binding is revoked and the endpoint moves to the
   caller.
-- Runs in one transaction under a lock on the endpoint, so two concurrent subscriptions of the same
-  endpoint end with one active binding and never with an error.
-- At most 10 active devices per user: `409 DEVICE_LIMIT_REACHED`.
+- Runs in one transaction under advisory locks, first the user, then the endpoint, so concurrent
+  subscriptions end with one active binding per endpoint and never with an error.
+- At most 10 active devices per user, checked under the user lock: `409 DEVICE_LIMIT_REACHED`.
 - Limits: `endpoint` at most 2048 characters; `keys.p256dh` base64url of 65 bytes, `keys.auth`
   base64url of 16 bytes; otherwise `422 VALIDATION_ERROR`.
 - **Endpoint check** (`422 INVALID_PUSH_ENDPOINT`): `https` only, no user info, default port, no IP
