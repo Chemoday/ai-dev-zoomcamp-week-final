@@ -25,7 +25,7 @@ from src.core.domain_events import (
     purge_published_events,
     relay_once,
 )
-from src.core.event_bus import DomainEvent, EventOutbox, InMemoryEventBus, event_bus
+from src.core.event_bus import DomainEvent, EventOutbox, InMemoryEventBus
 from src.core.events_registry import EventRegistry, UnknownEventTypeError, get_event_registry
 from src.modules.communication.events import EmergencyAlertPublished, EmergencyAlertResolved
 from src.modules.communication.schemas import PostCategory, TargetScope
@@ -252,7 +252,7 @@ async def test_a_rolled_back_request_stores_no_event(
 
 
 async def test_a_failing_handler_leaves_the_event_for_a_retry(
-    events_app: FastAPI, api_client: AsyncClient, db_session: AsyncSession
+    events_app: FastAPI, api_client: AsyncClient, db_session: AsyncSession, event_bus
 ) -> None:
     async def broken(event: SomethingStored) -> None:
         raise RuntimeError("subscriber is down")
@@ -334,7 +334,7 @@ async def _store_unpublished(
 
 
 async def test_the_relay_publishes_an_event_a_crash_left_behind(
-    db_session: AsyncSession, session_factory, published_events, span_exporter
+    db_session: AsyncSession, session_factory, published_events, span_exporter, event_bus
 ) -> None:
     event_id = await _store_unpublished(db_session, age=timedelta(minutes=2))
 
@@ -355,7 +355,7 @@ async def test_the_relay_publishes_an_event_a_crash_left_behind(
 
 
 async def test_an_event_that_failed_in_the_request_is_relayed_once_it_is_due(
-    db_session: AsyncSession, session_factory, published_events
+    db_session: AsyncSession, session_factory, published_events, event_bus
 ) -> None:
     event_id = await _store_unpublished(db_session, age=timedelta(minutes=5), attempts=1)
     row = await db_session.get(DomainEventRecord, event_id)
@@ -379,7 +379,7 @@ async def test_an_event_that_failed_in_the_request_is_relayed_once_it_is_due(
 
 
 async def test_the_relay_leaves_fresh_events_to_the_request(
-    db_session: AsyncSession, session_factory, published_events
+    db_session: AsyncSession, session_factory, published_events, event_bus
 ) -> None:
     event_id = await _store_unpublished(db_session, age=timedelta(seconds=5))
 
@@ -390,7 +390,7 @@ async def test_the_relay_leaves_fresh_events_to_the_request(
 
 
 async def test_a_relayed_event_with_a_failing_handler_is_retried_later(
-    db_session: AsyncSession, session_factory
+    db_session: AsyncSession, session_factory, event_bus
 ) -> None:
     event_id = await _store_unpublished(db_session, age=timedelta(minutes=2))
 
@@ -414,7 +414,7 @@ async def test_a_relayed_event_with_a_failing_handler_is_retried_later(
 
 
 async def test_a_poison_event_is_given_up_after_the_maximum_attempts(
-    db_session: AsyncSession, session_factory, published_events
+    db_session: AsyncSession, session_factory, published_events, event_bus
 ) -> None:
     event_id = await _store_unpublished(
         db_session, age=timedelta(minutes=2), event_type="RemovedLongAgo", payload={}
@@ -447,7 +447,7 @@ async def test_a_poison_event_is_given_up_after_the_maximum_attempts(
 
 
 async def test_an_invalid_payload_is_reported_as_such(
-    db_session: AsyncSession, session_factory
+    db_session: AsyncSession, session_factory, event_bus
 ) -> None:
     event_id = await _store_unpublished(
         db_session, age=timedelta(minutes=2), payload={"unexpected": True}
@@ -485,7 +485,7 @@ async def test_retention_deletes_old_published_events_only(
 
 
 async def test_a_row_locked_by_one_worker_is_skipped_by_another(
-    db_engine, published_events
+    db_engine, published_events, event_bus
 ) -> None:
     """SKIP LOCKED: while one worker holds a row, another relay pass neither waits nor takes it."""
 

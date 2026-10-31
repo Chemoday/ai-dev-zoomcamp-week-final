@@ -4,13 +4,17 @@ import uuid
 from collections.abc import Iterable
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database import DbSession
 from src.core.exceptions import DomainError
 from src.modules.property.models import Apartment, ApartmentMembership, Building, User
-from src.modules.property.policies import format_author_badge, most_private_display_mode
+from src.modules.property.policies import (
+    apartment_in_target,
+    format_author_badge,
+    most_private_display_mode,
+)
 from src.modules.property.schemas import (
     ApartmentDTO,
     ApartmentMembershipDTO,
@@ -19,10 +23,14 @@ from src.modules.property.schemas import (
     BuildingRole,
     CurrentUserDTO,
     DisplayMode,
+    Locale,
+    LocaleUpdate,
     MembershipView,
     MeResponse,
     PrivacyUpdateResponse,
+    RecipientDTO,
     RoleBadge,
+    TargetScope,
 )
 
 # Shown when a post or comment outlives its author's account.
@@ -60,11 +68,13 @@ class PropertyService:
 
     async def get_me(self, current_user: CurrentUserDTO) -> MeResponse:
         full_name = await self._full_name_of(current_user.id)
+        locale = await self.session.scalar(select(User.locale).where(User.id == current_user.id))
         return MeResponse(
             user_id=current_user.id,
             building_id=current_user.building_id,
             building_role=current_user.building_role,
             privacy_display_mode=current_user.privacy_display_mode,
+            locale=locale,
             memberships=[
                 MembershipView(
                     **membership.model_dump(),
@@ -107,6 +117,68 @@ class PropertyService:
         return PrivacyUpdateResponse(
             membership_id=membership.id, privacy_display_mode=mode, preview_badge=badge
         )
+
+    async def update_locale(
+        self, current_user: CurrentUserDTO, locale: Locale | None
+    ) -> LocaleUpdate:
+        """Language of the caller's notifications sent outside the app (None = instance default)."""
+        await self.session.execute(
+            update(User).where(User.id == current_user.id).values(locale=locale)
+        )
+        return LocaleUpdate(locale=locale)
+
+    # --- Notification recipients (system-level, used by the notifications module) ---------------
+
+    async def resolve_recipients(
+        self,
+        building_id: uuid.UUID,
+        scope: TargetScope,
+        entrance: int | None,
+        apartment_ids: Iterable[uuid.UUID],
+    ) -> list[RecipientDTO]:
+        """Active users with a membership in a targeted apartment of the building, once each.
+
+        Staff without an apartment are not reached through targeting (docs/ARCHITECTURE.md 3.4);
+        the caller adds them by role (`users_with_roles`).
+        """
+        targeted = frozenset(apartment_ids)
+        rows = await self.session.execute(
+            select(User.id, User.locale, Apartment.id, Apartment.entrance)
+            .join(ApartmentMembership, ApartmentMembership.user_id == User.id)
+            .join(Apartment, Apartment.id == ApartmentMembership.apartment_id)
+            .where(
+                User.building_id == building_id,
+                User.is_active.is_(True),
+                Apartment.building_id == building_id,
+            )
+        )
+        recipients: dict[uuid.UUID, RecipientDTO] = {}
+        for user_id, locale, apartment_id, apartment_entrance in rows.all():
+            if user_id not in recipients and apartment_in_target(
+                scope, entrance, targeted, apartment_id=apartment_id, entrance=apartment_entrance
+            ):
+                recipients[user_id] = RecipientDTO(user_id=user_id, locale=locale)
+        return sorted(recipients.values(), key=lambda r: str(r.user_id))
+
+    async def users_with_roles(
+        self, building_id: uuid.UUID, roles: Iterable[BuildingRole]
+    ) -> list[RecipientDTO]:
+        """Active users of the building with one of the building roles."""
+        rows = await self.session.execute(
+            select(User.id, User.locale)
+            .where(
+                User.building_id == building_id,
+                User.is_active.is_(True),
+                User.building_role.in_(list(roles)),
+            )
+            .order_by(User.id)
+        )
+        return [RecipientDTO(user_id=user_id, locale=locale) for user_id, locale in rows.all()]
+
+    async def has_delivery_email(self, user_id: uuid.UUID) -> bool:
+        """Whether the user can be reached by e-mail (the address itself never leaves)."""
+        email = await self.session.scalar(select(User.email).where(User.id == user_id))
+        return bool(email)
 
     # --- Building details -----------------------------------------------------------------------
 

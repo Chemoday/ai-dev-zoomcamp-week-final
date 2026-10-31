@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 
 import structlog
+from fastapi import Request
 from opentelemetry import trace
 
 logger = structlog.get_logger(__name__)
@@ -187,9 +188,9 @@ class EventOutbox:
             logger.exception("domain_event_mark_failed", event_count=len(events))
 
 
-event_bus = InMemoryEventBus()
+def get_event_bus(request: Request) -> EventBus:
+    """FastAPI dependency: the event bus of this app (`app.state.event_bus`, set in create_app).
 
-
-def get_event_bus() -> EventBus:
-    """FastAPI dependency returning the process-wide event bus."""
-    return event_bus
+    One bus per app instance, so handlers subscribed by one app (or test) never leak into another.
+    """
+    return request.app.state.event_bus

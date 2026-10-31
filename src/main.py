@@ -11,13 +11,15 @@ from src.core.config import Settings, get_settings
 from src.core.database import async_session_factory, engine
 from src.core.demo import router as demo_router
 from src.core.domain_events import run_relay_loop
-from src.core.event_bus import get_event_bus
+from src.core.event_bus import InMemoryEventBus
 from src.core.exceptions import register_exception_handlers
 from src.core.frontend import mount_frontend
 from src.core.health import router as health_router
 from src.core.telemetry import configure_logging, setup_telemetry, shutdown_tracing
 from src.modules.communication.router import router as communication_router
 from src.modules.meters.router import router as meters_router
+from src.modules.notifications.router import router as notifications_router
+from src.modules.notifications.service import NotificationsSubscriber
 from src.modules.property.router import router as property_router
 from src.plugins.registry import build_plugin_registry
 
@@ -30,7 +32,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         relay = asyncio.create_task(
             run_relay_loop(
                 async_session_factory,
-                get_event_bus(),
+                app.state.event_bus,
                 retention_days=settings.DOMAIN_EVENTS_RETENTION_DAYS,
             ),
             name="domain-event-relay",
@@ -50,11 +52,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(title=settings.APP_NAME, version=settings.APP_VERSION, lifespan=lifespan)
     app.state.settings = settings
+    # One event bus per app instance: handlers subscribed here never leak into another app.
+    app.state.event_bus = InMemoryEventBus()
     register_exception_handlers(app)
     app.include_router(health_router)
     app.include_router(property_router)
     app.include_router(meters_router)
     app.include_router(communication_router)
+    if settings.NOTIFICATIONS_ENABLED:
+        app.include_router(notifications_router)
+        # The subscriber reads the factory on every event, so tests can swap it after create_app.
+        app.state.notifications_session_factory = async_session_factory
+        NotificationsSubscriber(
+            lambda: app.state.notifications_session_factory, settings.DEFAULT_LOCALE
+        ).subscribe(app.state.event_bus)
     app.include_router(demo_router)
     # After every API route: the client only gets paths that nothing else answered.
     mount_frontend(app, settings.FRONTEND_DIST_DIR)

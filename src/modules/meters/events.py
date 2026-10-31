@@ -1,4 +1,4 @@
-"""Domain events of the meters module, published on core.event_bus.
+"""Domain events of the meters module, published on the app's event bus and stored durably.
 
 Payloads carry ids, codes and Decimal values only: never names, emails or phones.
 """

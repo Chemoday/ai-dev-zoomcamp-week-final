@@ -38,14 +38,16 @@ src/
 
 **Plugins** receive plain DTOs defined in `src/plugins/registry.py`, never ORM models, and have **no database access**. Which plugins run is configuration (`ENABLED_PLUGINS`), so a self-hosted instance enables its country adapters without code changes.
 
-## 3. Module `notifications` (planned, epic E1)
+## 3. Module `notifications` (epic E1)
 
 Design and the reasoning behind it: [docs/epics/E1_NOTIFICATIONS.md](epics/E1_NOTIFICATIONS.md). Tables: docs/SCHEMA.md section 5. API: docs/API.md section 6.
 
+**Status:** the module, the subscriber, the in-app channel, the feed and preferences exist since task N2 (`src/modules/notifications/`). The dispatcher, the channel plugins and the scheduler (3.2, 3.3) are planned for N3-N6.
+
 ### 3.1 Place in the system
 - It **only consumes**: it subscribes to domain events and calls other modules' system-level service methods (3.4). No other module imports it, so `NOTIFICATIONS_ENABLED=false` removes it (no subscriber, no loops, no routes) and everything else works unchanged.
-- **Per-app event bus (E1/N2).** The bus moves from the process-global `event_bus` to `app.state.event_bus`; `get_event_bus(request)` reads it from there. Notifications subscribes in `create_app` on that app's bus, so a test app never inherits handlers of another app. The module registers one database-using handler per event type: in tests all handlers share one session and the bus runs handlers concurrently.
-- The subscriber, the dispatcher and the scheduler receive a session factory and the plugin registry from `create_app`, not the request-scoped dependencies; tests override both.
+- **Per-app event bus.** The bus lives on `app.state.event_bus` (created in `create_app`); `get_event_bus(request)` reads it from there, and the domain event relay uses the same bus. Notifications subscribes in `create_app` on that app's bus, so a test app never inherits handlers of another app. The module registers one database-using handler per event type: in tests all handlers share one session and the bus runs handlers concurrently.
+- The subscriber reads its session factory from `app.state.notifications_session_factory` on every event (default: the app's `async_session_factory`); `tests/conftest.py::db_app` points it at the test session. The dispatcher and the scheduler will get theirs the same way.
 
 ### 3.2 Channel plugins
 New protocols in `src/plugins/registry.py`, next to `ReadingExporter`:
@@ -101,12 +103,13 @@ System-level methods (no `CurrentUserDTO`), returning DTOs, used only by notific
 | :--- | :--- | :--- |
 | `property` | `resolve_recipients(building_id, scope, entrance, apartment_ids)` | `list[RecipientDTO(user_id, locale)]`: active users with a membership in a targeted apartment |
 | `property` | `users_with_roles(building_id, roles)` | `list[RecipientDTO]` |
-| `property` | `reading_submitters(apartment_ids)` | `list[RecipientDTO]`: active members with `can_submit_readings` |
-| `property` | `get_delivery_contact(user_id)` | `DeliveryContactDTO(email)` or `None` |
-| `property` | `is_user_active(user_id)` | `bool` (send-time check) |
-| `meters` | `open_periods_due_within(until)` | `list[DuePeriodRefDTO(period_id, building_id, period_code, due_date)]` |
-| `meters` | `apartments_missing_readings(period_id)` | `list[UUID]`: apartments with an active meter and no reading |
-| `communication` | `get_emergency_ref(post_id)` | `EmergencyRefDTO` regardless of status, or `None` |
+| `property` | `has_delivery_email(user_id)` | `bool`, for the channel list of the preferences (the address never leaves) |
+| `property` | *(N6)* `reading_submitters(apartment_ids)` | `list[RecipientDTO]`: active members with `can_submit_readings` |
+| `property` | *(N3)* `get_delivery_contact(user_id)` | `DeliveryContactDTO(email)` or `None` |
+| `property` | *(N3)* `is_user_active(user_id)` | `bool` (send-time check) |
+| `meters` | *(N6)* `open_periods_due_within(until)` | `list[DuePeriodRefDTO(period_id, building_id, period_code, due_date)]` |
+| `meters` | *(N6)* `apartments_missing_readings(period_id)` | `list[UUID]`: apartments with an active meter and no reading |
+| `communication` | `get_emergency_ref(post_id, lock_for_share=False)` | `EmergencyRefDTO` regardless of status, or `None`. The subscriber reads it with a share lock and notifies nobody about an alert that is already resolved: events are unordered, and the lock makes a concurrent resolve wait until the "published" rows are stored |
 
 - `EmergencyRefDTO`: `post_id`, `building_id`, `author_user_id`, `is_active`, `target_scope`, `target_entrance`, `target_apartment_ids`, `title`, `category`.
 - **Locale** is resolved when a delivery row is inserted (`RecipientDTO.locale`, else `DEFAULT_LOCALE`) and stored on the row, so the dispatcher needs no extra lookup.

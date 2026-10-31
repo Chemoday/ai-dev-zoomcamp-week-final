@@ -12,7 +12,10 @@ from typing import Annotated
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StrictBool, StrictInt
 
 from src.core.validation import safe_text
-from src.modules.property.schemas import AuthorBadgeDTO
+from src.modules.property.schemas import (
+    AuthorBadgeDTO,
+    TargetScope,
+)
 
 
 class PostType(StrEnum):
@@ -26,12 +29,6 @@ class PostCategory(StrEnum):
     WATER_SHUTOFF = "WATER_SHUTOFF"
     MAINTENANCE = "MAINTENANCE"
     MARKETPLACE = "MARKETPLACE"
-
-
-class TargetScope(StrEnum):
-    ALL_BUILDING = "ALL_BUILDING"
-    ENTRANCE = "ENTRANCE"
-    APARTMENT_LIST = "APARTMENT_LIST"
 
 
 TITLE_MAX_LENGTH = 255  # VARCHAR(255)
@@ -136,3 +133,22 @@ class AcknowledgeResponse(BaseModel):
 class ResolveResponse(BaseModel):
     post_id: uuid.UUID
     is_active: bool
+
+
+class EmergencyRefDTO(BaseModel):
+    """An emergency as the notifications module sees it (system-level; no author name, no body).
+
+    `author_user_id` is only compared, never shown: notifications skip the author.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    post_id: uuid.UUID
+    building_id: uuid.UUID
+    author_user_id: uuid.UUID
+    is_active: bool
+    target_scope: TargetScope
+    target_entrance: int | None
+    target_apartment_ids: tuple[uuid.UUID, ...]
+    title: str
+    category: PostCategory

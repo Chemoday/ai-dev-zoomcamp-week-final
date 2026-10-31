@@ -1,6 +1,8 @@
 """Application settings loaded from environment variables (and an optional .env file)."""
 
 from functools import lru_cache
+from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -39,6 +41,13 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     LOG_JSON: bool = True
 
+    # Notifications (docs/ARCHITECTURE.md section 3): the whole module, the language of messages
+    # sent outside the app when a user chose none, and the local time zone of the building
+    # (reading deadlines end at local midnight).
+    NOTIFICATIONS_ENABLED: bool = True
+    DEFAULT_LOCALE: Literal["et", "ru", "en"] = "et"
+    INSTANCE_TIMEZONE: str = "Europe/Tallinn"
+
     # Durable domain events (docs/BACKEND_CONVENTIONS.md 2.B): the relay that publishes events a
     # crash or a failing handler left behind, and how long published events are kept (0 = always).
     DOMAIN_EVENTS_RELAY_ENABLED: bool = True
@@ -47,6 +56,15 @@ class Settings(BaseSettings):
     OTEL_SERVICE_NAME: str = "apartment-platform-backend"
     # OTLP/HTTP collector base URL, e.g. "http://otel-collector:4318". Empty disables export.
     OTEL_EXPORTER_OTLP_ENDPOINT: str = ""
+
+    @field_validator("INSTANCE_TIMEZONE")
+    @classmethod
+    def _timezone_exists(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError(f"unknown INSTANCE_TIMEZONE {value!r}") from exc
+        return value
 
     @field_validator("JWT_SECRET_KEY")
     @classmethod

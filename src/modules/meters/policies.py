@@ -5,8 +5,10 @@ Rules: docs/ROADMAP_MVP.md, section C "Two-Step Anomaly Confirmation".
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
+from zoneinfo import ZoneInfo
 
 from src.modules.meters.schemas import (
     METER_PRECISION,
@@ -162,3 +164,15 @@ def apartment_submission_status(meter_statuses: Iterable[SubmissionStatus]) -> S
     """The most urgent status among the apartment's meters."""
     statuses = set(meter_statuses)
     return next((status for status in _URGENCY if status in statuses), SubmissionStatus.MISSING)
+
+
+def period_due_date(period_code: str, deadline_day: int, timezone: str) -> datetime:
+    """End of the local deadline day in the month after the period, in UTC.
+
+    "2026-10" with day 4 in Europe/Tallinn is 2026-11-04 23:59:59 local = 21:59:59 UTC
+    (docs/SCHEMA.md, meters_periods.due_date).
+    """
+    year, month = (int(part) for part in period_code.split("-"))
+    year, month = (year + 1, 1) if month == 12 else (year, month + 1)
+    local = datetime(year, month, deadline_day, 23, 59, 59, tzinfo=ZoneInfo(timezone))
+    return local.astimezone(UTC)

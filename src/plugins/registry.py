@@ -67,6 +67,10 @@ class PluginRegistry:
         except KeyError:
             raise LookupError(f"no exporter {name!r}; enabled: {sorted(self._exporters)}") from None
 
+    def is_enabled(self, plugin_name: str) -> bool:
+        """Whether a plugin (e.g. "common.email_smtp") is loaded in this app."""
+        return plugin_name in self._loaded
+
     def load(self, plugin_names: Iterable[str]) -> None:
         """Import src.plugins.<name> and call its register(); loading twice is a no-op."""
         for name in plugin_names:
