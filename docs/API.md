@@ -454,16 +454,21 @@ Seeded at startup by `src/core/seed.py` when `SEED_DEMO_DATA=true` (local Docker
 
 > **Status.** Implemented (task N2, in `docs/openapi.json`): in-app notifications for emergencies,
 > resolved emergencies and periods in review; the feed, preferences and the notification language.
-> **Planned** (marked below; not in `docs/openapi.json` yet): e-mail (N3), Telegram (N4), WebPush
-> (N5) and reading reminders (N6). Until then only the `in_app` channel delivers; the others are
-> reported unavailable. Design: [docs/epics/E1_NOTIFICATIONS.md](epics/E1_NOTIFICATIONS.md).
+> **Planned** (marked below; not in `docs/openapi.json` yet): e-mail (N3), Telegram (N4),
+> WebPush (N5), reading reminders (N6) and push to the native phone app (N7). Until then only the
+> `in_app` channel delivers; the others are reported unavailable. Design: [docs/epics/E1_NOTIFICATIONS.md](epics/E1_NOTIFICATIONS.md).
 
 ### How notifications reach people
 - Notifications are created from domain events: a published or resolved emergency, a reading
   deadline that is close, a period sent to review. Nobody creates them through the API.
 - **Channels:** `in_app` (the feed below, always available), `email` (when the user has an
-  e-mail address), `telegram` and `webpush` (after linking, see below). External channels are
-  plugins; a channel whose plugin is not in `ENABLED_PLUGINS` is listed as unavailable.
+  e-mail address), `telegram`, `webpush` and *(planned, N7)* `mobile_push` (after linking, see
+  below). External channels are plugins; a channel whose plugin is not in `ENABLED_PLUGINS` is
+  listed as unavailable.
+- **How the client learns about new notifications:** it polls `GET …/unread-count` (every 60 s
+  while the tab is visible; details in docs/FRONTEND_GUIDE.md section 11). There is no WebSocket or
+  server-sent events channel (owner decision 2026-10-31). A user whose app is closed is reached by
+  the external channels.
 - **Texts:** the in-app feed returns codes and parameters, and the frontend renders localized
   texts by `event_type` (like it does for `error_code`). For e-mail, Telegram and push the server
   renders the text in the user's `locale`. What leaves the system on external channels: the event
@@ -485,9 +490,9 @@ Seeded at startup by `src/core/seed.py` when `SEED_DEMO_DATA=true` (local Docker
   only `in_app` notifications are created and nothing is sent outside the app; a resolved alert is
   skipped.
 - **Demo mode.** While `DEMO_MODE_ENABLED=true` anyone can act as any user, so only `in_app`
-  works: e-mail, Telegram and WebPush are listed as unavailable (`DEMO_MODE`), linking and the VAPID
-  key return `404 CHANNEL_NOT_ENABLED`, the webhook ignores updates (`200 {}`), and nothing is sent
-  outside the app. All current environments (local, dev, prod) run in demo mode, so the frontend
+  works: e-mail, Telegram, WebPush and mobile push are listed as unavailable (`DEMO_MODE`); linking,
+  device registration and the VAPID key return `404 CHANNEL_NOT_ENABLED`; the webhook ignores
+  updates (`200 {}`); and nothing is sent outside the app. All current environments (local, dev, prod) run in demo mode, so the frontend
   will see only `in_app` until a real login exists.
 - Delivery is **at least once**: after a crash a message may arrive twice, but is not lost.
 
@@ -499,6 +504,8 @@ Seeded at startup by `src/core/seed.py` when `SEED_DEMO_DATA=true` (local Docker
 | `EMERGENCY_RESOLVED` | on | off | on | on |
 | `READING_DEADLINE` | on | on | on | on |
 | `PERIOD_REVIEW` | on | on | off | off |
+
+*(Planned, N7:)* `mobile_push` takes the same defaults as `webpush`.
 
 ### Notification object (`NotificationView`)
 ```json
@@ -525,7 +532,9 @@ The caller's in-app notifications as a JSON array of `NotificationView`, newest 
 `NOTIFICATIONS_RETENTION_DAYS` (default 180) are deleted.
 
 ### `GET /api/v1/notifications/unread-count`
-`{"unread": 3}`, for the badge on the bell icon.
+`{"unread": 3}`, for the badge on the bell icon. This is the endpoint the client polls (every 60 s
+while the tab is visible, plus once when it becomes visible again); it is one indexed count, so
+polling is cheap.
 
 ### `POST /api/v1/notifications/feed/{notification_id}/read`
 Marks one notification read. Idempotent: the first `read_at` is kept. Response
@@ -551,8 +560,9 @@ The full matrix with defaults filled in, plus which channels can reach the calle
 }
 ```
 - `reason` when not available, first match wins: `DEMO_MODE`, `CHANNEL_NOT_ENABLED`, then `NO_EMAIL`
-  (e-mail) or `NOT_LINKED` (Telegram, WebPush).
-- `preferences` always has all 16 combinations of `event_type` and `channel`.
+  (e-mail) or `NOT_LINKED` (Telegram, WebPush, mobile push).
+- `preferences` always has all 16 combinations of `event_type` and `channel` (20 once
+  `mobile_push` exists, N7).
 
 ### `PUT /api/v1/notifications/preferences`
 Request: `{"preferences": [{"event_type": "PERIOD_REVIEW", "channel": "telegram", "enabled": true}]}`.
@@ -568,16 +578,18 @@ Only the listed combinations change. Response: the same body as the `GET`.
 (Module `property`.) Request `{"locale": "ru"}`; `"et"`, `"ru"`, `"en"` or `null` for the instance
 default. Response `{"locale": "ru"}`. Anything else: `422 VALIDATION_ERROR`.
 
-### `GET /api/v1/notifications/bindings` *(planned, N4/N5)*
+### `GET /api/v1/notifications/bindings` *(planned, N4/N5/N7)*
 The caller's active bindings: `[{"binding_id": "uuid", "channel": "webpush", "label": "Chrome on
-Android", "created_at": "..."}]`. Chat ids and endpoints are never returned.
+Android", "created_at": "..."}]`. Chat ids, endpoints and FCM tokens are never returned.
 
-### `DELETE /api/v1/notifications/bindings/{binding_id}` *(planned, N4/N5)*
+### `DELETE /api/v1/notifications/bindings/{binding_id}` *(planned, N4/N5/N7)*
 Unlinks a chat or device (`revoked_at` is set, the stored address is wiped). Response
 `204 No Content`; queued messages for it are skipped. Someone else's, unknown or already revoked:
 `404 BINDING_NOT_FOUND`. **The client deletes its own WebPush binding on logout** and also calls
 `PushSubscription.unsubscribe()`, so a shared browser stops receiving the previous user's alerts even
 if the token has already expired (the push service then answers 410 and the binding is revoked).
+The phone app does the same with its mobile push binding and also deletes its FCM token
+(`deleteToken`).
 
 ### Telegram linking *(planned, N4)*
 #### `POST /api/v1/notifications/telegram/link-code`
@@ -643,9 +655,40 @@ Request: the browser's `PushSubscription.toJSON()` plus a label:
   matches sub-domains only at a dot boundary). `label` 1..100 characters, safe text.
 - A push service answering `404` or `410` revokes the binding.
 
+### Mobile push *(planned, N7)*
+Push to the native phone app (a native app or a wrapper of the Vue client, e.g. Capacitor) through
+Firebase Cloud Messaging (FCM); FCM reaches iOS through APNs. A PWA uses WebPush instead. Plugin
+`common.fcm_push`, channel `mobile_push`. Design: docs/epics/E1_NOTIFICATIONS.md 6.4.
+
+#### `POST /api/v1/notifications/mobile-push/devices`
+Called by the phone app after login, with the FCM registration token of the device:
+```json
+{ "token": "dQw4w9WgXcQ:APA91b...", "platform": "android", "label": "Pixel 8", "replaces_binding_id": null }
+```
+- `platform`: `android` or `ios`. On iOS the app sends the **FCM** token (from the Firebase
+  Messaging SDK, e.g. `@capacitor-firebase/messaging`; the stock `@capacitor/push-notifications`
+  returns the raw APNs device token, which does not work).
+- Response `201 Created` with the binding (`binding_id`, `channel`, `label`, `created_at`); the same
+  token again for the same user returns `200` with the existing binding and the new `label`.
+- If the token is active for another user (a shared phone), that binding is revoked and the token
+  moves to the caller. The same advisory lock order as WebPush (user, then token).
+- **Token refresh:** FCM may rotate the token. The app registers the new token with
+  `replaces_binding_id` set to its previous binding (it keeps `binding_id` locally). That binding is
+  revoked in the same transaction before the device limit is checked, so a user at the limit keeps
+  receiving pushes. Only the caller's own active `mobile_push` binding is replaced; any other id
+  (someone else's, another channel, unknown or already revoked) is ignored, and a malformed UUID is
+  `422 VALIDATION_ERROR`.
+  A stale token is revoked anyway when FCM answers `UNREGISTERED`.
+- At most 10 active mobile devices per user: `409 DEVICE_LIMIT_REACHED`.
+- `token` 1..4096 characters of `[A-Za-z0-9_:-]`; `label` 1..100 characters, safe text; otherwise
+  `422 VALIDATION_ERROR`. The token is opaque data, never a URL: the server only ever calls the
+  fixed FCM host, so no endpoint check is needed.
+- Plugin `common.fcm_push` not enabled or demo mode: `404 CHANNEL_NOT_ENABLED`.
+- FCM answering `UNREGISTERED` or `SENDER_ID_MISMATCH` revokes the binding.
+
 ### Error codes of this section
 `NOTIFICATION_NOT_FOUND` and `PREFERENCE_MANDATORY` are live (and in the table of section 0); the
-others come with N4/N5.
+others come with N4/N5/N7.
 | Status | `error_code` |
 | :--- | :--- |
 | 404 | `NOTIFICATION_NOT_FOUND`, `BINDING_NOT_FOUND`, `CHANNEL_NOT_ENABLED` |

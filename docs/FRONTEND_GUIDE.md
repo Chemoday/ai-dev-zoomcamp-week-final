@@ -177,7 +177,7 @@ any level ──► 422 READING_BELOW_PREVIOUS  → show previous_value, no popu
 - **Banner:** `GET /communication/emergencies/active` returns the alerts that target the caller.
   Show the sticky red banner for items with `acknowledged_at: null`; "Acknowledge" is
   `POST /emergencies/{id}/acknowledge` (idempotent, per user). Poll the endpoint (e.g. every
-  30-60 s and on window focus); there are no push notifications in the MVP.
+  30-60 s and on window focus). The notification bell polls separately (section 11).
 - The chairman and the board see **every** active emergency, including those targeted at another
   entrance; show the target ("Entrance 2") in their banner.
 - **Resolve** (`POST /emergencies/{id}/resolve`, board) ends it for everyone; it stays readable in
@@ -220,3 +220,29 @@ any level ──► 422 READING_BELOW_PREVIOUS  → show previous_value, no popu
   ids are fine).
 - Do not cache other users' data across a role switch: clear the client cache when the acting
   user changes.
+
+## 11. Notifications: the bell and the feed
+
+Contract: docs/API.md section 6. The backend creates notifications from events; the client only
+reads them. There is **no WebSocket and no server-sent events** (owner decision 2026-10-31): the
+client polls, which is enough for a building and needs no extra infrastructure. Reaching a user
+whose app is closed is the job of the external channels (e-mail, Telegram, WebPush, mobile push),
+not of the feed.
+
+- **Badge:** `GET /notifications/unread-count` every **60 s** while the tab is visible
+  (`document.visibilityState === "visible"`). Stop the timer while the tab is hidden, and poll at
+  once when it becomes visible again and after a role switch (the acting user changed). The user's
+  own actions never notify that user, so they need no extra poll. One timer per tab, no parallel
+  requests: skip a tick while the previous request is still running.
+- **Feed:** load `GET /notifications/feed` when the bell is opened and when the count changed while
+  it is open; page with `limit`/`offset`. Do not poll the feed itself.
+- **Errors:** on a network error or `5xx` keep the last count and retry on the next tick; do not
+  shorten the interval. `404` on these routes means the module is switched off
+  (`NOTIFICATIONS_ENABLED=false`): hide the bell.
+- **Read:** `POST /notifications/feed/{id}/read` when an item is opened, "mark all read" with
+  `POST /notifications/feed/read-all`. Neither response contains the count: after "read all" set the
+  badge to 0; after a single read subtract 1 only if the item was unread in the client's list (the
+  call is idempotent), or simply fetch `unread-count` again.
+- **Texts:** the feed returns codes (`event_type`, `params`), not texts; render them per locale,
+  like `error_code`. Load the post (`subject_id`) if the title is needed.
+- The emergency banner keeps its own polling (section 8); an emergency also appears in the feed.

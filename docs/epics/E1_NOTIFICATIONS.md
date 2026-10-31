@@ -1,6 +1,6 @@
 # E1. Notifications
 
-- **Phase:** 2. **Status:** contract written (N1), implementation next. **Epic issue:** [#39](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/39).
+- **Phase:** 2. **Status:** N1, N1b and N2 done (in-app notifications live in `develop`); N3 next. **Epic issue:** [#39](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/39).
 - **Goal:** one pluggable notification system that every module uses, instead of each feature
   sending its own messages. Reminders, emergency alerts and (later) voting all go through it.
 
@@ -13,7 +13,8 @@ In scope:
 - A new module `src/modules/notifications/` (the standard vertical slice: `models.py`,
   `schemas.py`, `policies.py`, `service.py`, `router.py`, `events.py`).
 - A built-in `in_app` channel (a notification feed in the UI).
-- Delivery channels as plugins: `common.email_smtp`, `common.telegram`, `common.webpush`.
+- Delivery channels as plugins: `common.email_smtp`, `common.telegram`, `common.webpush`, and
+  `common.fcm_push` for the native phone app (planned, N7, 6.4).
 - Per-user preferences (event type x channel).
 - Background loops: a dispatcher (sends and retries) and a scheduler (reminders, clean-up).
 
@@ -21,6 +22,7 @@ Out of scope (later epics or backlog):
 - Debt reminders: need payment data, see docs/BACKLOG.md B-6.
 - SMS (a paid provider; can be one more channel plugin later).
 - Quiet hours (not in this epic).
+- Live updates of the in-app feed (WebSocket, server-sent events): the client polls (6.5).
 
 ## 2. How it works
 
@@ -148,7 +150,7 @@ New protocols in `src/plugins/registry.py`, next to `ReadingExporter`:
 
 ```python
 class NotificationChannel(Protocol):
-    name: str  # "email", "telegram", "webpush"
+    name: str  # "email", "telegram", "webpush", "mobile_push"
 
     async def send(self, message: OutgoingMessage) -> DeliveryResult: ...
 
@@ -159,8 +161,9 @@ class InboundChannel(Protocol):  # optional, implemented by telegram
     def parse_inbound(self, body: bytes) -> InboundLink | None: ...
 ```
 
-- `OutgoingMessage`: address (from the binding or the delivery contact), locale, subject, body,
-  deep link. Built at send time, never stored or logged.
+- `OutgoingMessage`: address (from the binding or the delivery contact), locale, event type,
+  subject, body, deep link, plus `urgent`, `collapse_key` and `expires_at` for push channels. Built
+  at send time, never stored or logged.
 - `DeliveryResult`: `ok`, `retryable`, `error_code`, `revoke_binding` (no provider text in logs).
 - Plugins have no database access. The notifications service owns bindings, codes and deliveries;
   plugins only format, verify and send.
@@ -187,6 +190,91 @@ decision: no external channel runs in the current demo-mode environments, see 10
   `*.notify.windows.com`, `web.push.apple.com`); anything else is rejected with 422.
 - A 404 or 410 from the push service revokes the binding.
 
+### 6.4 Mobile push (`common.fcm_push`, task N7, planned)
+Owner decision 2026-10-31: the phone app is a native app or a wrapper of the Vue client (e.g.
+Capacitor with a Firebase Messaging plugin such as `@capacitor-firebase/messaging`; the stock
+`@capacitor/push-notifications` returns the raw APNs token on iOS), and its pushes go through
+**Firebase Cloud Messaging (FCM HTTP v1)**. FCM delivers to Android directly and to iOS through
+APNs, so the backend talks to one service. A PWA keeps using
+WebPush (6.3). Only a stub exists so far (`src/plugins/common/fcm_push.py`, it refuses to load).
+
+**Device registration.** The app gets an FCM registration token from the Firebase Messaging SDK (on
+iOS the FCM token, not the raw APNs token) and sends it to
+`POST /api/v1/notifications/mobile-push/devices` (docs/API.md 6). It becomes a binding of channel
+`mobile_push`: `config = {"token", "platform"}`, `address_hash = HMAC(token)`, the same move-to-the-
+new-user rule and lock order as WebPush, at most 10 active devices per user. On a token refresh the
+app registers the new token with `replaces_binding_id` (its previous binding, revoked in the same
+transaction before the device limit is checked, so a user at the limit keeps receiving pushes); on
+logout it deletes the binding and calls `deleteToken`.
+
+**Sending.** `POST https://fcm.googleapis.com/v1/projects/{FCM_PROJECT_ID}/messages:send` with an
+OAuth 2 access token of a service account (scope `https://www.googleapis.com/auth/firebase.messaging`,
+via `google-auth`, cached until it expires). The service account key is a mounted secret file
+(`FCM_SERVICE_ACCOUNT_FILE`), never an environment value or a log line. One request per device, 10 s
+timeout, no redirects. The message:
+- `notification`: title and body rendered in the delivery's locale (the same texts as Telegram);
+- `data`: `event_type` and `link` (the deep link, which already names the post or period), so the
+  app opens the right screen; both come from `OutgoingMessage`;
+- **emergencies** (`EMERGENCY_PUBLISHED`, `urgent`): Android `priority: HIGH` on the notification
+  channel `emergency` (created by the app), APNs `apns-priority: 10` and `interruption-level:
+  time-sensitive`;
+- **everything else**: Android normal priority on the channel `general`, APNs priority 5;
+- **expiry** from `OutgoingMessage.expires_at`, set on both platforms: `android.ttl` (seconds left)
+  and the APNs header `apns-expiration` (UNIX time); the Android TTL alone does not reach iOS.
+  Emergencies expire 1 hour after the delivery row was created, so a retry sends only the time
+  left. The dispatcher skips an emergency delivery whose hour is up on every external channel
+  (`SKIPPED`, `EMERGENCY_TOO_OLD`, docs/ARCHITECTURE.md 3.3), so the retry backoff cannot bring an
+  alert late. The row itself is created at most 1 hour after the alert (late-event rule), so
+  nothing goes out later than about 2 hours after it. Other events expire after 24 hours;
+- **replacing:** the key `post:{post_id}` for both emergency events (a resolved alert replaces the
+  published one) and `{event_type}:{period_id}` for period events (a deadline reminder and a review
+  notice do not replace each other). It is sent as `android.notification.tag` (replaces a shown
+  notification), `android.collapse_key` (collapses queued ones) and `apns-collapse-id`.
+
+**FCM errors** (`DeliveryResult`, error codes stored without provider text). The mapping reads
+`error.details[].errorCode` of the type `google.firebase.fcm.v1.FcmError`, not the gRPC
+`error.status`:
+
+| `errorCode` | HTTP | Result |
+|---|---|---|
+| `UNREGISTERED` | 404 | revoke the binding, `FCM_UNREGISTERED` |
+| `SENDER_ID_MISMATCH` | 403 | revoke the binding, `FCM_SENDER_MISMATCH` |
+| `QUOTA_EXCEEDED`, `UNAVAILABLE`, `INTERNAL` | 429, 503, 500 | retryable (the dispatcher's backoff; FCM's `Retry-After` is not used yet, a `retry_after` in `DeliveryResult` can come with N7) |
+| `INVALID_ARGUMENT` | 400 | failed, no retry, `FCM_INVALID_ARGUMENT` (the payload is built by us, so this is a bug or an invalid token; not revoked) |
+| `THIRD_PARTY_AUTH_ERROR` | 401 | failed, no retry, `FCM_AUTH_ERROR`: the APNs key in Firebase is wrong; counted in a metric for an alert |
+| `UNAUTHENTICATED` (no `errorCode`) | 401 | the access token expired early or the clock is off: refresh the credentials and retry once, then retryable; a mandatory emergency must not be dropped for this |
+| service account file unreadable | | failed at startup (startup check), never per message |
+| timeout, connection error | | retryable |
+
+**Privacy.** Unlike WebPush, an FCM notification is not end-to-end encrypted: Google (and Apple for
+iOS) can read it. It therefore carries exactly what the other external channels may carry (section
+5: event type, emergency title, target, period code, link), never post bodies, comments or names.
+Tokens never appear in logs, spans or API responses.
+
+**Done when (N7):** a migration adds `mobile_push` to the channel checks (`notif_channel_bindings`,
+`notif_deliveries`, the preference matrix grows to 20 combinations, defaults as `webpush`); the
+device endpoint and the plugin exist; tests with a fake FCM server: a push reaches every device of a
+user; emergencies are sent with high priority and with both `android.ttl` and `apns-expiration`
+counting down from 1 hour; a retry after the hour is skipped; `UNREGISTERED` revokes; a retryable
+error is retried; `UNAUTHENTICATED` refreshes the credentials; a token refresh at the device limit
+works through `replaces_binding_id`; demo mode registers nothing; no token in logs.
+
+**Needs first:** N3 (dispatcher), a real login (docs/BACKLOG.md B-7), and on the app side a Firebase
+project, an APNs key uploaded to Firebase and a store build (frontend repository, not this one).
+
+### 6.5 How clients get in-app notifications (owner decision 2026-10-31)
+No WebSocket and no server-sent events. The client polls `GET /api/v1/notifications/unread-count`
+every 60 s while the tab is visible and loads the feed when the count changes or the bell is opened
+(docs/FRONTEND_GUIDE.md section 11). Reasons:
+- the load is tiny (one indexed count; 200 residents polling once a minute is about 3 requests per
+  second);
+- a socket would need long-lived connections through Caddy, reconnect handling and, with more than
+  one worker, a shared pub/sub (e.g. Redis) to fan out events;
+- a socket only helps while the tab is open; a closed app is reached by e-mail, Telegram, WebPush
+  or mobile push anyway, and the emergency banner already polls.
+If live updates are ever needed, server-sent events on the same feed are the next step, not a
+WebSocket.
+
 ## 7. Background loops
 
 Both start in the app lifespan, stop gracefully on shutdown, and can be switched off with
@@ -208,8 +296,8 @@ Tests override both, so handlers write inside the test transaction and use fake 
 
 ## 8. Privacy and observability
 
-- No names, e-mails, phones, chat ids, endpoints or message bodies in logs or spans. Spans carry
-  `event_type`, `channel`, `status`, `delivery_id`.
+- No names, e-mails, phones, chat ids, endpoints, FCM tokens or message bodies in logs or spans.
+  Spans carry `event_type`, `channel`, `status`, `delivery_id`.
 - Metrics: deliveries by channel and status, retry count, revoked bindings.
 - A test asserts that nothing personal reaches logs or spans (like the existing PII tests).
 
@@ -227,6 +315,7 @@ review before merge (see AGENTS.md).
 | N4 | `common.telegram` with webhook linking | tests with a fake Telegram API: alert reaches a linked private chat; group chats and reused codes are rejected; demo mode links nothing |
 | N5 | `common.webpush` (backend) | tests with a fake push service: push to every device of a user; non-allowlisted endpoints rejected; 410 revokes; demo mode subscribes nothing |
 | N6 | Scheduler: reading reminders and clean-up | one reminder per period and user, also after a restart; old deliveries and link codes are deleted |
+| N7 | `common.fcm_push`: push to the native phone app (6.4). Plan and stub done (#57); implementation later | see "Done when" in 6.4 |
 
 ## 10. Decisions settled before N1
 

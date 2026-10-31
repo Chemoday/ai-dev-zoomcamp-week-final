@@ -200,7 +200,10 @@ All tables use `UUID` primary keys (`uuid4`), UTC timestamps (`TIMESTAMPTZ`), an
 *Design: [docs/epics/E1_NOTIFICATIONS.md](epics/E1_NOTIFICATIONS.md). `notif_channel_bindings`, `notif_preferences` and `notif_deliveries` exist since task N2 (migration 006); `notif_link_codes` and `notif_link_attempts` come with Telegram (N4).*
 
 Shared enums (each has a named `CHECK (… IN (…))`):
-- `channel`: `in_app`, `email`, `telegram`, `webpush`
+- `channel`: `in_app`, `email`, `telegram`, `webpush`; *(planned, N7)* `mobile_push` (push to the
+  native phone app through FCM). N7 adds it in a migration to every `channel` check below, including
+  the binding checks, so wherever `('telegram', 'webpush')` appears it becomes
+  `('telegram', 'webpush', 'mobile_push')`.
 - `event_type`: `EMERGENCY_PUBLISHED`, `EMERGENCY_RESOLVED`, `READING_DEADLINE`, `PERIOD_REVIEW`
 - delivery `status`: `PENDING`, `SENDING`, `SENT`, `FAILED`, `SKIPPED`
 
@@ -211,16 +214,16 @@ Shared enums (each has a named `CHECK (… IN (…))`):
 | `id` | `UUID` | `PK` | Binding ID |
 | `user_id` | `UUID` | `FK(core_users.id), NOT NULL, INDEX` | Owner of the binding |
 | `channel` | `VARCHAR(16)` | `NOT NULL, CHECK IN ('telegram', 'webpush')` | |
-| `config` | `JSONB` | `NULLABLE` | Telegram: `{"chat_id": 123}`; WebPush: `{"endpoint", "p256dh", "auth"}`. Wiped (`NULL`) on revoke. Never returned by the API, never logged |
-| `address_hash` | `VARCHAR(64)` | `NOT NULL` | Hex HMAC-SHA-256 (key `NOTIFICATIONS_HASH_SECRET`) of the chat id or the endpoint URL. Keyed, because a plain hash of a 10-digit chat id is reversible |
+| `config` | `JSONB` | `NULLABLE` | Telegram: `{"chat_id": 123}`; WebPush: `{"endpoint", "p256dh", "auth"}`; mobile push *(N7)*: `{"token", "platform"}` (`android` or `ios`). Wiped (`NULL`) on revoke. Never returned by the API, never logged |
+| `address_hash` | `VARCHAR(64)` | `NOT NULL` | Hex HMAC-SHA-256 (key `NOTIFICATIONS_HASH_SECRET`) of the chat id, the endpoint URL or the FCM token. Keyed, because a plain hash of a 10-digit chat id is reversible |
 | `label` | `VARCHAR(100)` | `NULLABLE` | Device label chosen by the client, e.g. `"Chrome on Android"` |
 | `created_at` | `TIMESTAMPTZ` | `NOT NULL` | |
-| `revoked_at` | `TIMESTAMPTZ` | `NULLABLE` | Set on unlink, on logout (the client deletes its device binding), on a Telegram 403, or on a push service 404/410 |
+| `revoked_at` | `TIMESTAMPTZ` | `NULLABLE` | Set on unlink, on logout (the client deletes its device binding), on a Telegram 403, on a push service 404/410, or *(N7)* on FCM `UNREGISTERED` / `SENDER_ID_MISMATCH` and a token refresh (`replaces_binding_id`) |
 | `UNIQUE` | `(channel, address_hash) WHERE revoked_at IS NULL` | | Partial unique index `uq_notif_channel_bindings_active_address`: an active chat or endpoint belongs to one user. Moving it to another user revokes the old binding first |
 | `UNIQUE` | `(user_id) WHERE channel = 'telegram' AND revoked_at IS NULL` | | Partial unique index `uq_notif_channel_bindings_one_telegram`: one active Telegram chat per user |
 
 - `ck_notif_channel_bindings_config_revoked`: `(revoked_at IS NULL) = (config IS NOT NULL)`.
-- At most 10 active WebPush bindings per user (checked by the service, which locks the endpoint first).
+- At most 10 active WebPush bindings per user (checked by the service, which locks the endpoint first); *(N7)* likewise at most 10 active mobile push bindings.
 
 ### Table: `notif_preferences`
 *(Only deviations from the defaults are stored; no row means the default of docs/API.md section 6.)*
