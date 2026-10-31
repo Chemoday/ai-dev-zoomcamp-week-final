@@ -1,0 +1,13 @@
+key,en,ru,et
+subject.EMERGENCY_PUBLISHED,Emergency: {title},Авария: {title},Avarii: {title}
+subject.EMERGENCY_RESOLVED,Resolved: {title},Устранено: {title},Lahendatud: {title}
+subject.READING_DEADLINE,Meter readings for {period_code} are due,Пора передать показания счётчиков за {period_code},Arvestinäitude esitamise tähtaeg: {period_code}
+subject.PERIOD_REVIEW,Readings for {period_code} are ready for review,Показания за {period_code} готовы к проверке,Perioodi {period_code} näidud on ülevaatamiseks valmis
+text.EMERGENCY_RESOLVED,"The emergency ""{title}"" has been resolved.",Авария «{title}» устранена.,Avarii „{title}“ on lahendatud.
+text.READING_DEADLINE,Please submit your meter readings for {period_code} by {due_date}.,"Пожалуйста, передайте показания счётчиков за {period_code} до {due_date}.",Palun esitage arvestinäidud perioodi {period_code} eest hiljemalt {due_date}.
+text.PERIOD_REVIEW,The meter readings for {period_code} were sent to the board for review.,Показания за {period_code} переданы правлению на проверку.,Perioodi {period_code} näidud saadeti juhatusele ülevaatamiseks.
+line.affected,Affected: {target},Затронуто: {target},Puudutab: {target}
+target.ALL_BUILDING,the whole building,весь дом,kogu maja
+target.ENTRANCE,entrance {entrance},подъезд {entrance},trepikoda {entrance}
+target.APARTMENT_LIST,selected apartments,отдельные квартиры,valitud korterid
+footer,"This is an automatic message from your apartment association. Details, contacts and notification settings are on the site: {site_url}","Это автоматическое сообщение вашего квартирного товарищества. Подробности, контакты и настройки уведомлений на сайте: {site_url}","See on teie korteriühistu automaatne teade. Üksikasjad, kontaktid ja teavituste seaded on veebilehel: {site_url}"
