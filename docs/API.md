@@ -454,9 +454,9 @@ Seeded at startup by `src/core/seed.py` when `SEED_DEMO_DATA=true` (local Docker
 
 > **Status.** Implemented (in `docs/openapi.json`): in-app notifications for emergencies,
 > resolved emergencies and periods in review; the feed, preferences and the notification language
-> (N2); e-mail (N3); Telegram linking, the webhook and the bindings API (N4). **Planned** (marked
-> below; not in `docs/openapi.json` yet): WebPush (N5), reading reminders (N6) and push to the
-> native phone app (N7). Every current environment runs in demo mode, so only `in_app` delivers
+> (N2); e-mail (N3); Telegram linking, the webhook and the bindings API (N4); WebPush (N5).
+> **Planned** (marked below; not in `docs/openapi.json` yet): reading reminders (N6) and push to
+> the native phone app (N7). Every current environment runs in demo mode, so only `in_app` delivers
 > there and the other channels are reported unavailable. Design: [docs/epics/E1_NOTIFICATIONS.md](epics/E1_NOTIFICATIONS.md).
 
 ### How notifications reach people
@@ -640,10 +640,18 @@ Called by Telegram, **not by the frontend**; no user authentication.
   `allowed_updates: ["message"]`; `webhook-info` shows Telegram's view. Dev and prod use different
   bots.
 
-### WebPush *(planned, N5)*
+### WebPush
+Push to a browser or an installed PWA (RFC 8030), encrypted end to end (RFC 8291, `aes128gcm`):
+the push service of the browser vendor sees neither the text nor the link. The server identifies
+itself with VAPID (RFC 8292). Client steps: docs/FRONTEND_GUIDE.md section 11.
+
 #### `GET /api/v1/notifications/webpush/vapid-public-key`
-`{"public_key": "BEl6..."}` for `pushManager.subscribe`. Plugin `common.webpush` not enabled:
-`404 CHANNEL_NOT_ENABLED`.
+`{"public_key": "BEl6..."}` (base64url, 65 bytes) for `pushManager.subscribe`. Plugin
+`common.webpush` not enabled, or demo mode: `404 CHANNEL_NOT_ENABLED`. A new key pair (one per
+environment) comes from `uv run python -m src.plugins.common.webpush generate-vapid-keys`. After a
+key change the push services reject the old subscriptions (`WEBPUSH_AUTH_FAILED`, not revoked: a
+configuration error must not wipe every device), so the client compares keys on page load and
+subscribes again (docs/FRONTEND_GUIDE.md section 11).
 
 #### `POST /api/v1/notifications/webpush/subscriptions`
 Request: the browser's `PushSubscription.toJSON()` plus a label:
@@ -658,13 +666,23 @@ Request: the browser's `PushSubscription.toJSON()` plus a label:
 - Runs in one transaction under advisory locks, first the user, then the endpoint, so concurrent
   subscriptions end with one active binding per endpoint and never with an error.
 - At most 10 active devices per user, checked under the user lock: `409 DEVICE_LIMIT_REACHED`.
-- Limits: `endpoint` at most 2048 characters; `keys.p256dh` base64url of 65 bytes, `keys.auth`
-  base64url of 16 bytes; otherwise `422 VALIDATION_ERROR`.
+- Limits: `endpoint` at most 2048 characters; `keys.p256dh` base64url of 65 bytes (an uncompressed
+  P-256 point, first byte `0x04`), `keys.auth` base64url of 16 bytes; otherwise
+  `422 VALIDATION_ERROR`. `expirationTime` and unknown fields are ignored.
+- Plugin `common.webpush` not enabled, or demo mode: `404 CHANNEL_NOT_ENABLED`.
 - **Endpoint check** (`422 INVALID_PUSH_ENDPOINT`): `https` only, no user info, default port, no IP
-  address as host, and the host must be a known push service (`fcm.googleapis.com`,
+  address as host, a lower-case host name without punycode labels, and the host must be a known push service (`fcm.googleapis.com`,
   `updates.push.services.mozilla.com`, `*.notify.windows.com`, `web.push.apple.com`; a wildcard
   matches sub-domains only at a dot boundary). `label` 1..100 characters, safe text.
 - A push service answering `404` or `410` revokes the binding.
+- **What a push carries** (the service worker's `push` event, JSON):
+  `{"v": 1, "event_type": "EMERGENCY_PUBLISHED", "title": "...", "body": "...", "url": "<PUBLIC_BASE_URL>", "tag": "post:<id>", "urgent": true}`.
+  `title` and `body` are the same texts as on the other external channels, without the e-mail
+  footer; a long body is cut to fit one push message (about 4 KB) and then ends with an ellipsis
+  (U+2026). `tag` is the same for a post's alert and its "resolved", so the newer notification
+  replaces the older.
+  Emergencies are sent with `Urgency: high` and expire after 1 hour (`TTL`); everything else is
+  `normal` and expires after 24 hours.
 
 ### Mobile push *(planned, N7)*
 Push to the native phone app (a native app or a wrapper of the Vue client, e.g. Capacitor) through
@@ -698,8 +716,9 @@ Called by the phone app after login, with the FCM registration token of the devi
 - FCM answering `UNREGISTERED` or `SENDER_ID_MISMATCH` revokes the binding.
 
 ### Error codes of this section
-`NOTIFICATION_NOT_FOUND`, `PREFERENCE_MANDATORY`, `CHANNEL_NOT_ENABLED`, `BINDING_NOT_FOUND` and
-`RATE_LIMITED` are live; `DEVICE_LIMIT_REACHED` and `INVALID_PUSH_ENDPOINT` come with N5/N7.
+`NOTIFICATION_NOT_FOUND`, `PREFERENCE_MANDATORY`, `CHANNEL_NOT_ENABLED`, `BINDING_NOT_FOUND`,
+`RATE_LIMITED`, `DEVICE_LIMIT_REACHED` and `INVALID_PUSH_ENDPOINT` are all live (mobile push, N7,
+reuses `DEVICE_LIMIT_REACHED`).
 | Status | `error_code` |
 | :--- | :--- |
 | 404 | `NOTIFICATION_NOT_FOUND`, `BINDING_NOT_FOUND`, `CHANNEL_NOT_ENABLED` |

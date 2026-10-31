@@ -252,3 +252,23 @@ not of the feed.
   `/start <code>`), valid 10 minutes. `429 RATE_LIMITED` carries `retry_after_seconds`. After the
   user pressed Start in Telegram, reload `GET /notifications/bindings`; "Unlink" is
   `DELETE /notifications/bindings/{binding_id}`. Chat ids are never shown or sent.
+- **WebPush** (settings page, "Notify this browser"; only when the preferences list `webpush`
+  without `CHANNEL_NOT_ENABLED` or `DEMO_MODE`, and the browser has `PushManager`):
+  1. Register a service worker, ask `Notification.requestPermission()` on a click (never on page
+     load), get the key from `GET /notifications/webpush/vapid-public-key` and call
+     `registration.pushManager.subscribe({userVisibleOnly: true, applicationServerKey: key})`.
+  2. Send `subscription.toJSON()` plus a `label` (e.g. "Chrome on Android", 1..100 characters) to
+     `POST /notifications/webpush/subscriptions`; keep the returned `binding_id` locally. `201` is a
+     new device, `200` an update of this one; call it again after each login and when the
+     subscription changes. `409 DEVICE_LIMIT_REACHED`: at most 10 devices, show the bindings list.
+  3. The service worker's `push` event carries JSON
+     `{"v": 1, "event_type", "title", "body", "url", "tag", "urgent"}`: call
+     `showNotification(title, {body, tag, data: {url}, requireInteraction: urgent})`, and on
+     `notificationclick` open `url`. The texts are already in the user's language.
+  4. **On logout** delete the binding (`DELETE /notifications/bindings/{binding_id}`) and call
+     `subscription.unsubscribe()`, so a shared browser stops receiving the previous user's alerts.
+  5. **On page load** (logged in) compare `(await registration.pushManager.getSubscription())
+     ?.options.applicationServerKey` (an `ArrayBuffer`: encode it as base64url without padding
+     first) with the served key. If they differ (the server's key was
+     changed), delete the stored binding, call `unsubscribe()` and subscribe again; otherwise the
+     device keeps failing and still counts towards the 10 devices.
