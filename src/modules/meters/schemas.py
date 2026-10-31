@@ -144,6 +144,17 @@ class PeriodDTO(BaseModel):
     due_date: datetime
 
 
+class DuePeriodRefDTO(BaseModel):
+    """An open period with a deadline, for the reading reminders (system-level, notifications)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    period_id: uuid.UUID
+    building_id: uuid.UUID
+    period_code: str
+    due_date: datetime
+
+
 class PeriodListResponse(BaseModel):
     periods: list[PeriodDTO]  # newest first
 

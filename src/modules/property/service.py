@@ -210,6 +210,24 @@ class PropertyService:
         found = row.first()
         return RecipientDTO(user_id=found.id, locale=found.locale) if found else None
 
+    async def reading_submitters(self, apartment_ids: Iterable[uuid.UUID]) -> list[RecipientDTO]:
+        """Active members of these apartments who may submit readings, once each."""
+        ids = list(apartment_ids)
+        if not ids:
+            return []
+        rows = await self.session.execute(
+            select(User.id, User.locale)
+            .join(ApartmentMembership, ApartmentMembership.user_id == User.id)
+            .where(
+                ApartmentMembership.apartment_id.in_(ids),
+                ApartmentMembership.can_submit_readings.is_(True),
+                User.is_active.is_(True),
+            )
+            .distinct()
+            .order_by(User.id)
+        )
+        return [RecipientDTO(user_id=user_id, locale=locale) for user_id, locale in rows.all()]
+
     async def is_user_active(self, user_id: uuid.UUID) -> bool:
         active = await self.session.scalar(select(User.is_active).where(User.id == user_id))
         return bool(active)
