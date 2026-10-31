@@ -167,3 +167,36 @@ There is no check inside the data itself.
 - Is `ENVIRONMENT` enough, or does each instance need its own id (several associations on one
   host, see B-1)?
 - Should a prod copy in dev be anonymised automatically?
+
+## B-5. Readings more often than once a period (smart meters)
+
+- **Status:** note only, no work planned. Raised 2026-10-31.
+
+### Current state
+Several submissions within one period are already handled: `UNIQUE(meter_id, period_id)` keeps
+one reading per meter and period, and every change writes an audit row to
+`meters_reading_logs`. A new submission overwrites the value within the rules of
+`POST /api/v1/meters/readings` in docs/API.md (residents only while the period is open, never over
+a board correction, never once a later period has a reading).
+Nothing to change for manual readings.
+
+### When it matters
+Smart electricity meters deliver hourly or 15-minute values, used to split costs by the exchange
+price. If we support that, store the raw time series in a separate table (fed by the IoT readings
+API, epic E4) and derive the period reading from it; do not put time series into
+`meters_readings`.
+
+## B-6. Debt reminders
+
+- **Status:** open, depends on epic E2. Raised 2026-10-31.
+
+### Problem
+Reminding residents about unpaid bills needs payment data. By the decision in
+[E2](epics/E2_BILLING_EXPORT.md) payments and balances live in the external accounting software,
+so we do not have them.
+
+### Options
+- Import bank statements (ISO 20022 camt.053) and match payments by reference number.
+- Read balances from the accounting software API (country plugin, e.g. Merit Aktiva).
+
+Delivery itself reuses epic E1 (a new event type, e.g. `PaymentOverdue`).
