@@ -82,7 +82,8 @@ class CommunicationService:
         """
         query = select(Post).where(Post.id == post_id, Post.post_type == PostType.EMERGENCY)
         if lock_for_share:
-            query = query.with_for_update(read=True)
+            # Refresh an object the session may already hold, so the locked state is the one read.
+            query = query.with_for_update(read=True).execution_options(populate_existing=True)
         post = await self.session.scalar(query)
         if post is None:
             return None

@@ -307,15 +307,13 @@ class NotificationsSubscriber:
             )
             if ref is None or not ref.is_active:
                 return
+            # Targeting comes from the stored alert, the one source of truth.
             targeted = await properties.resolve_recipients(
-                event.building_id,
-                event.target_scope,
-                event.target_entrance,
-                event.target_apartment_ids,
+                ref.building_id, ref.target_scope, ref.target_entrance, ref.target_apartment_ids
             )
-            board = await properties.users_with_roles(event.building_id, _EMERGENCY_ROLES)
+            board = await properties.users_with_roles(ref.building_id, _EMERGENCY_ROLES)
             recipients = {r.user_id: r for r in (*targeted, *board)}
-            recipients.pop(event.published_by_user_id, None)  # never the author
+            recipients.pop(ref.author_user_id, None)  # never the author
             await self._insert_in_app(
                 session,
                 recipients.values(),
@@ -323,9 +321,9 @@ class NotificationsSubscriber:
                 dedup_key=emergency_key(event.post_id),
                 subject=(SubjectType.POST, event.post_id),
                 params={
-                    "category": event.category.value,
-                    "target_scope": event.target_scope.value,
-                    "target_entrance": event.target_entrance,
+                    "category": ref.category.value,
+                    "target_scope": ref.target_scope.value,
+                    "target_entrance": ref.target_entrance,
                 },
                 respect_preferences=False,  # mandatory
             )

@@ -9,12 +9,13 @@ Revises: 005
 Create Date: 2026-10-31
 """
 
-import os
 from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
+
+from src.core.config import settings
 
 revision: str = "006"
 down_revision: str | None = "005"
@@ -39,8 +40,8 @@ WHERE (due_date AT TIME ZONE 'UTC')::time = time '23:59:59'
 
 
 def upgrade() -> None:
-    timezone = os.environ.get("INSTANCE_TIMEZONE", "Europe/Tallinn")
-    op.get_bind().execute(sa.text(LOCAL_DEADLINE_SQL), {"tz": timezone})
+    # The same validated setting the app uses from now on (env or .env).
+    op.execute(sa.text(LOCAL_DEADLINE_SQL).bindparams(tz=settings.INSTANCE_TIMEZONE))
 
     op.add_column("core_users", sa.Column("locale", sa.String(5), nullable=True))
     op.create_check_constraint("ck_core_users_locale", "core_users", f"locale IN {LOCALES}")
