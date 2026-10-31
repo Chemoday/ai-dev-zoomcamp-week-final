@@ -5,6 +5,7 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Any
 
+import pytest
 from httpx import AsyncClient, Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,11 +13,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.config import Settings
 from src.core.security import DEMO_USER_HEADER
 from src.main import create_app
-from src.modules.communication.events import EmergencyAlertPublished
-from src.modules.communication.schemas import PostCategory
+from src.modules.communication.events import EmergencyAlertPublished, EmergencyAlertResolved
+from src.modules.communication.models import Post
+from src.modules.communication.schemas import PostCategory, PostType
 from src.modules.notifications.models import Delivery, Preference
-from src.modules.notifications.service import NotificationsSubscriber
+from src.modules.notifications.service import NotificationsService, NotificationsSubscriber
 from src.modules.property.schemas import TargetScope
+from src.modules.property.service import PropertyService
+from tests.factories import create_membership, create_user
 from tests.notifications.conftest import NotifWorld
 
 API = "/api/v1/notifications"
@@ -85,19 +89,37 @@ async def test_an_entrance_alert_reaches_its_residents_and_the_board_once_each(
     assert await event_types(api_client, world.other_resident) == []
 
 
+@pytest.mark.parametrize(
+    "target",
+    [
+        {"target_scope": "ALL_BUILDING", "target_entrance": None},
+        {"target_scope": "ENTRANCE", "target_entrance": 2},
+        {"target_scope": "ENTRANCE", "target_entrance": 1},
+        {"target_scope": "APARTMENT_LIST", "target_entrance": None, "apartments": ["2"]},
+        {"target_scope": "APARTMENT_LIST", "target_entrance": None, "apartments": ["15"]},
+    ],
+)
 async def test_recipients_match_who_sees_the_alert_in_the_app(
-    api_client: AsyncClient, world: NotifWorld
+    api_client: AsyncClient, world: NotifWorld, db_session: AsyncSession, target: dict[str, Any]
 ) -> None:
-    # The shared targeting rule: residents notified == residents who see the banner.
-    await emergency(api_client, world.chairman)
+    # The shared targeting rule: residents notified == residents who see the banner, for every
+    # scope, including a resident with apartments in two entrances.
+    two_entrances = await create_user(db_session, world.building, "Two Homes")
+    await create_membership(db_session, two_entrances, world.apt_2)
+    await create_membership(db_session, two_entrances, world.apt_15)
+    apartments = {"2": world.apt_2.id, "15": world.apt_15.id}
+    overrides = {k: v for k, v in target.items() if k != "apartments"}
+    if "apartments" in target:
+        overrides["target_apartment_ids"] = [str(apartments[n]) for n in target["apartments"]]
+    await emergency(api_client, world.chairman, **overrides)
 
-    for resident in (world.owner_14, world.tenant_2):
+    for resident in (world.owner_14, world.tenant_2, two_entrances):
         banner = await api_client.get(
             "/api/v1/communication/emergencies/active", headers=as_user(resident)
         )
         sees = bool(banner.json())
         notified = bool(await feed(api_client, resident))
-        assert sees == notified, resident.full_name
+        assert sees == notified, (resident.full_name, target)
 
 
 async def test_an_inactive_user_is_not_notified(
@@ -200,16 +222,33 @@ async def test_a_period_in_review_notifies_the_chairman_and_accountants_except_t
     assert await event_types(api_client, world.accountant) == ["PERIOD_REVIEW", "PERIOD_REVIEW"]
 
 
-async def test_a_replayed_event_creates_no_duplicates(
-    db_session: AsyncSession, world: NotifWorld
-) -> None:
+def _subscriber(db_session: AsyncSession) -> NotificationsSubscriber:
     @asynccontextmanager
     async def factory():
         yield db_session
 
-    subscriber = NotificationsSubscriber(lambda: factory, "et")
-    event = EmergencyAlertPublished(
-        post_id=uuid.uuid4(),
+    return NotificationsSubscriber(lambda: factory, "et")
+
+
+async def _stored_emergency(db_session: AsyncSession, world: NotifWorld, *, active: bool) -> Post:
+    post = Post(
+        building_id=world.building.id,
+        author_user_id=world.chairman.id,
+        post_type=PostType.EMERGENCY,
+        category=PostCategory.WATER_SHUTOFF,
+        title="Hot water off",
+        body="Boiler maintenance.",
+        target_scope=TargetScope.ALL_BUILDING,
+        is_active=active,
+    )
+    db_session.add(post)
+    await db_session.commit()
+    return post
+
+
+def _published(post: Post, world: NotifWorld) -> EmergencyAlertPublished:
+    return EmergencyAlertPublished(
+        post_id=post.id,
         building_id=world.building.id,
         category=PostCategory.WATER_SHUTOFF,
         target_scope=TargetScope.ALL_BUILDING,
@@ -218,17 +257,95 @@ async def test_a_replayed_event_creates_no_duplicates(
         published_by_user_id=world.chairman.id,
     )
 
-    await subscriber.on_emergency_published(event)
-    await subscriber.on_emergency_published(event)  # the relay delivers at least once
 
-    rows = list(
-        await db_session.scalars(
-            select(Delivery.user_id).where(Delivery.subject_id == event.post_id)
+async def _recipients_of(db_session: AsyncSession, post_id, event_type: str) -> list[str]:
+    rows = await db_session.scalars(
+        select(Delivery.user_id).where(
+            Delivery.subject_id == post_id, Delivery.event_type == event_type
         )
     )
-    assert sorted(map(str, rows)) == sorted(
-        map(str, [world.owner_14.id, world.tenant_2.id, world.board_15.id])
+    return sorted(map(str, rows))
+
+
+async def test_a_period_review_preference_switched_off(
+    api_client: AsyncClient, world: NotifWorld
+) -> None:
+    switched_off = await api_client.put(
+        f"{API}/preferences",
+        json={
+            "preferences": [{"event_type": "PERIOD_REVIEW", "channel": "in_app", "enabled": False}]
+        },
+        headers=as_user(world.accountant),
     )
+    assert switched_off.status_code == 200
+
+    response = await api_client.patch(
+        f"/api/v1/meters/periods/{world.period.period_code}/status",
+        json={"status": "REVIEW_BY_BOARD"},
+        headers=as_user(world.chairman),
+    )
+
+    assert response.status_code == 200
+    assert await event_types(api_client, world.accountant) == []
+
+
+async def test_a_replayed_event_creates_no_duplicates(
+    db_session: AsyncSession, world: NotifWorld
+) -> None:
+    subscriber = _subscriber(db_session)
+    post = await _stored_emergency(db_session, world, active=True)
+    event = _published(post, world)
+    resolved = EmergencyAlertResolved(
+        post_id=post.id, building_id=world.building.id, resolved_by_user_id=world.chairman.id
+    )
+
+    await subscriber.on_emergency_published(event)
+    await subscriber.on_emergency_published(event)  # the relay delivers at least once
+    await subscriber.on_emergency_resolved(resolved)
+    await subscriber.on_emergency_resolved(resolved)
+
+    everyone = sorted(map(str, [world.owner_14.id, world.tenant_2.id, world.board_15.id]))
+    assert await _recipients_of(db_session, post.id, "EMERGENCY_PUBLISHED") == everyone
+    assert await _recipients_of(db_session, post.id, "EMERGENCY_RESOLVED") == everyone
+
+
+async def test_an_alert_resolved_before_its_published_event_is_handled_notifies_nobody(
+    db_session: AsyncSession, world: NotifWorld
+) -> None:
+    # Events are unordered: a failed "published" handler is retried by the relay after the
+    # alert may already be over. It must not show a live alert that nobody will ever close.
+    subscriber = _subscriber(db_session)
+    post = await _stored_emergency(db_session, world, active=False)
+
+    await subscriber.on_emergency_resolved(
+        EmergencyAlertResolved(
+            post_id=post.id, building_id=world.building.id, resolved_by_user_id=world.chairman.id
+        )
+    )
+    await subscriber.on_emergency_published(_published(post, world))
+
+    count = await db_session.scalar(
+        select(func.count()).select_from(Delivery).where(Delivery.subject_id == post.id)
+    )
+    assert count == 0
+
+
+async def test_deliveries_keep_the_request_trace(
+    api_client: AsyncClient, world: NotifWorld, db_session: AsyncSession
+) -> None:
+    response = await api_client.post(
+        "/api/v1/communication/posts",
+        json={
+            "post_type": "EMERGENCY",
+            "title": "Gas smell in entrance 2",
+            "body": "Leave the building.",
+            "target_scope": "ALL_BUILDING",
+        },
+        headers=as_user(world.chairman),
+    )
+
+    trace_ids = set(await db_session.scalars(select(Delivery.trace_id)))
+    assert trace_ids == {response.headers["X-Trace-Id"]}
 
 
 async def test_external_channels_get_no_rows_yet(
@@ -258,14 +375,14 @@ async def test_reading_notifications(api_client: AsyncClient, world: NotifWorld)
     headers = as_user(world.owner_14)
 
     assert (await api_client.get(f"{API}/unread-count", headers=headers)).json() == {"unread": 2}
-    first = (await feed(api_client, world.owner_14))[0]["id"]
+    first, second = (n["id"] for n in await feed(api_client, world.owner_14))
 
     read = await api_client.post(f"{API}/feed/{first}/read", headers=headers)
     again = await api_client.post(f"{API}/feed/{first}/read", headers=headers)
     assert read.status_code == again.status_code == 200
     assert read.json()["read_at"] == again.json()["read_at"], "the first read time is kept"
 
-    assert [n["id"] for n in await feed(api_client, world.owner_14, unread_only=True)] != [first]
+    assert [n["id"] for n in await feed(api_client, world.owner_14, unread_only=True)] == [second]
     assert (await api_client.get(f"{API}/unread-count", headers=headers)).json() == {"unread": 1}
     assert (await api_client.post(f"{API}/feed/read-all", headers=headers)).json() == {"updated": 1}
     assert (await api_client.get(f"{API}/unread-count", headers=headers)).json() == {"unread": 0}
@@ -393,6 +510,37 @@ async def test_duplicate_combinations_are_rejected(
 
     assert response.status_code == 422
     assert response.json()["error_code"] == "VALIDATION_ERROR"
+
+
+async def test_channel_reasons_outside_demo_mode(
+    db_session: AsyncSession, world: NotifWorld
+) -> None:
+    class Plugins:
+        def is_enabled(self, name: str) -> bool:
+            return name in {"common.email_smtp", "common.webpush"}
+
+    service = NotificationsService(
+        db_session, PropertyService(db_session), demo_mode=False, plugins=Plugins()
+    )
+
+    def reasons(response) -> dict[str, str | None]:
+        return {c.channel.value: c.reason for c in response.channels}
+
+    owner = await service.get_preferences(await _current(db_session, world.owner_14))
+    tenant = await service.get_preferences(await _current(db_session, world.tenant_2))
+    assert reasons(owner) == {
+        "in_app": None,
+        "email": None,
+        "telegram": "CHANNEL_NOT_ENABLED",
+        "webpush": "NOT_LINKED",
+    }
+    assert reasons(tenant)["email"] == "NO_EMAIL", "the tenant has no e-mail address"
+
+
+async def _current(db_session: AsyncSession, user):
+    current = await PropertyService(db_session).get_current_user(user.id)
+    assert current is not None
+    return current
 
 
 # --- Language -------------------------------------------------------------------------------------

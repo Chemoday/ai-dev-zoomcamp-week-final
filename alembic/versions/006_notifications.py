@@ -1,10 +1,15 @@
 """Notifications: channel bindings, preferences, deliveries; the user's notification language.
 
+Also moves existing reading deadlines to the end of the local day (docs/SCHEMA.md,
+meters_periods.due_date): rows written by the old seed at 23:59:59 UTC become 23:59:59 in
+INSTANCE_TIMEZONE on the same date.
+
 Revision ID: 006
 Revises: 005
 Create Date: 2026-10-31
 """
 
+import os
 from collections.abc import Sequence
 
 import sqlalchemy as sa
@@ -23,8 +28,20 @@ CHANNELS = "('in_app', 'email', 'telegram', 'webpush')"
 EVENT_TYPES = "('EMERGENCY_PUBLISHED', 'EMERGENCY_RESOLVED', 'READING_DEADLINE', 'PERIOD_REVIEW')"
 LOCALES = "('et', 'ru', 'en')"
 
+# Only rows that follow the old rule (exactly 23:59:59 UTC) are touched, so re-running is harmless.
+LOCAL_DEADLINE_SQL = """
+UPDATE meters_periods
+SET due_date = (
+    date_trunc('day', due_date AT TIME ZONE 'UTC') + interval '23:59:59'
+) AT TIME ZONE :tz
+WHERE (due_date AT TIME ZONE 'UTC')::time = time '23:59:59'
+"""
+
 
 def upgrade() -> None:
+    timezone = os.environ.get("INSTANCE_TIMEZONE", "Europe/Tallinn")
+    op.get_bind().execute(sa.text(LOCAL_DEADLINE_SQL), {"tz": timezone})
+
     op.add_column("core_users", sa.Column("locale", sa.String(5), nullable=True))
     op.create_check_constraint("ck_core_users_locale", "core_users", f"locale IN {LOCALES}")
 
@@ -148,6 +165,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Deadlines stay at local midnight: the old value is still the same day, just stricter.
     op.drop_table("notif_deliveries")
     op.drop_table("notif_preferences")
     op.drop_table("notif_channel_bindings")

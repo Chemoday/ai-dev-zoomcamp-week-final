@@ -95,7 +95,7 @@ All tables use `UUID` primary keys (`uuid4`), UTC timestamps (`TIMESTAMPTZ`), an
 | `building_id` | `UUID` | `FK(property_buildings.id)` | Building ID |
 | `period_code` | `VARCHAR(7)` | `NOT NULL, INDEX` | Format `'YYYY-MM'` (e.g., `'2026-10'`) |
 | `status` | `VARCHAR(32)` | `NOT NULL` | Enum: `OPEN_FOR_RESIDENTS`, `REVIEW_BY_BOARD`, `LOCKED` |
-| `due_date` | `TIMESTAMPTZ` | `NOT NULL` | End of the local deadline day in `INSTANCE_TIMEZONE` (default `Europe/Tallinn`), stored in UTC: `2026-11-04 23:59:59` Tallinn = `2026-11-04 21:59:59 UTC`. Reading reminders are computed from it |
+| `due_date` | `TIMESTAMPTZ` | `NOT NULL` | End of the local deadline day in `INSTANCE_TIMEZONE` (default `Europe/Tallinn`), stored in UTC: `2026-11-04 23:59:59` Tallinn = `2026-11-04 21:59:59 UTC`. Reading reminders are computed from it. Migration 006 moved deadlines written by the old rule (23:59:59 UTC) to local midnight of the same date |
 | `UNIQUE` | `(building_id, period_code)` | | One accounting period per month per building |
 
 ### Table: `meters_readings`

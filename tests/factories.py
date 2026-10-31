@@ -6,6 +6,7 @@ from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.config import get_settings
 from src.modules.meters.models import MeterDevice, MeterReading, ReadingPeriod
 from src.modules.meters.policies import period_due_date
 from src.modules.meters.schemas import PeriodStatus, ReadingSource, ResourceType
@@ -154,7 +155,9 @@ async def create_period(
         building_id=building.id,
         period_code=period_code,
         status=status,
-        due_date=period_due_date(period_code, building.reading_deadline_day, "Europe/Tallinn"),
+        due_date=period_due_date(
+            period_code, building.reading_deadline_day, get_settings().INSTANCE_TIMEZONE
+        ),
     )
     session.add(period)
     await session.flush()

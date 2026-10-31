@@ -1,4 +1,4 @@
-"""Domain events of the communication module, published on core.event_bus after commit.
+"""Domain events of the communication module, published on the app's event bus after commit.
 
 Payloads carry ids, codes and the target only: no names, and no free text (titles and bodies),
 so a handler that logs an event can never leak what a neighbour wrote. A notifier that needs the

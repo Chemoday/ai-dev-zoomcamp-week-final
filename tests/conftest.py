@@ -111,8 +111,13 @@ def db_app(app: FastAPI, db_session: AsyncSession) -> Iterator[FastAPI]:
 
     @asynccontextmanager
     async def subscriber_session() -> AsyncIterator[AsyncSession]:
-        # Event handlers (e.g. notifications) write inside the test transaction too.
-        yield db_session
+        # Event handlers (e.g. notifications) write inside the test transaction too. Like a real
+        # session closing, a failing handler loses its uncommitted writes.
+        try:
+            yield db_session
+        except BaseException:
+            await db_session.rollback()
+            raise
 
     app.dependency_overrides[get_db_session] = override_db_session
     app.state.notifications_session_factory = subscriber_session

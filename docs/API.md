@@ -521,8 +521,8 @@ Seeded at startup by `src/core/seed.py` when `SEED_DEMO_DATA=true` (local Docker
 ### `GET /api/v1/notifications/feed?unread_only=false&limit=50&offset=0`
 The caller's in-app notifications as a JSON array of `NotificationView`, newest first
 (`created_at`, then `id`). `limit` 1..100
-(default 50), `offset` 0..100000. Notifications older than `NOTIFICATIONS_RETENTION_DAYS`
-(default 180) are deleted.
+(default 50), `offset` 0..100000. *(Planned, N6:)* notifications older than
+`NOTIFICATIONS_RETENTION_DAYS` (default 180) are deleted.
 
 ### `GET /api/v1/notifications/unread-count`
 `{"unread": 3}`, for the badge on the bell icon.
@@ -540,7 +540,7 @@ The full matrix with defaults filled in, plus which channels can reach the calle
 ```json
 {
   "channels": [
-    { "channel": "in_app", "available": true },
+    { "channel": "in_app", "available": true, "reason": null },
     { "channel": "email", "available": true },
     { "channel": "telegram", "available": false, "reason": "NOT_LINKED" },
     { "channel": "webpush", "available": false, "reason": "CHANNEL_NOT_ENABLED" }

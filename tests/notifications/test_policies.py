@@ -2,9 +2,11 @@
 
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import get_args
 
 import pytest
 
+from src.core.config import Settings
 from src.modules.notifications.policies import (
     DEFAULT_PREFERENCES,
     channel_unavailable_reason,
@@ -18,7 +20,7 @@ from src.modules.notifications.policies import (
 )
 from src.modules.notifications.schemas import Channel, NotificationEventType, UnavailableReason
 from src.modules.property.policies import apartment_in_target
-from src.modules.property.schemas import TargetScope
+from src.modules.property.schemas import Locale, TargetScope
 
 E, C = NotificationEventType, Channel
 
@@ -97,3 +99,8 @@ def test_the_shared_targeting_rule() -> None:
     assert not matches(TargetScope.ENTRANCE, None, set())
     assert matches(TargetScope.APARTMENT_LIST, None, {apartment})
     assert not matches(TargetScope.APARTMENT_LIST, None, {uuid.uuid4()})
+
+
+def test_the_default_locale_setting_offers_exactly_the_supported_languages() -> None:
+    annotation = Settings.model_fields["DEFAULT_LOCALE"].annotation
+    assert set(get_args(annotation)) == {locale.value for locale in Locale}

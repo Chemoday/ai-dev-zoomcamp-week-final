@@ -20,9 +20,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import Settings
 from src.core.database import DbSession
+from src.core.domain_events import SessionFactory
 from src.core.event_bus import EventBus
 from src.core.exceptions import DomainError
 from src.modules.communication.events import EmergencyAlertPublished, EmergencyAlertResolved
+from src.modules.communication.service import CommunicationService
 from src.modules.meters.events import ReadingPeriodStatusChanged
 from src.modules.meters.schemas import PeriodStatus
 from src.modules.notifications.models import ChannelBinding, Delivery, Preference
@@ -55,7 +57,6 @@ from src.modules.property.schemas import BuildingRole, CurrentUserDTO, Locale, R
 from src.modules.property.service import PropertyService
 from src.plugins.registry import PluginRegistry
 
-type SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 type StoredPreferences = dict[tuple[NotificationEventType, Channel], bool]
 
 _EMERGENCY_ROLES = (BuildingRole.CHAIRMAN, BuildingRole.BOARD)
@@ -279,10 +280,15 @@ class NotificationsSubscriber:
     still reach people in the app; external channels will respect `external_channels_allowed`.
     """
 
-    def __init__(self, session_factory: Callable[[], SessionFactory], default_locale: str) -> None:
-        # A provider, read on every event, so tests can swap the factory after create_app.
-        self._session_factory = session_factory
+    def __init__(
+        self, session_factory_provider: Callable[[], SessionFactory], default_locale: str
+    ) -> None:
+        # Asked on every event, so tests can swap the factory after create_app.
+        self._session_factory_provider = session_factory_provider
         self._default_locale = Locale(default_locale)
+
+    def _session(self) -> AbstractAsyncContextManager[AsyncSession]:
+        return self._session_factory_provider()()
 
     def subscribe(self, bus: EventBus) -> None:
         bus.subscribe(EmergencyAlertPublished, self.on_emergency_published)
@@ -290,8 +296,17 @@ class NotificationsSubscriber:
         bus.subscribe(ReadingPeriodStatusChanged, self.on_period_status_changed)
 
     async def on_emergency_published(self, event: EmergencyAlertPublished) -> None:
-        async with self._session_factory()() as session:
+        async with self._session() as session:
             properties = PropertyService(session)
+            # Events are unordered (a failed handler is retried by the relay later), so check
+            # the alert itself: a resolved one notifies nobody. The share lock makes a
+            # concurrent resolve wait until these rows are stored, so its "resolved" handler
+            # always finds them.
+            ref = await CommunicationService(session, properties).get_emergency_ref(
+                event.post_id, lock_for_share=True
+            )
+            if ref is None or not ref.is_active:
+                return
             targeted = await properties.resolve_recipients(
                 event.building_id,
                 event.target_scope,
@@ -317,7 +332,7 @@ class NotificationsSubscriber:
             await session.commit()
 
     async def on_emergency_resolved(self, event: EmergencyAlertResolved) -> None:
-        async with self._session_factory()() as session:
+        async with self._session() as session:
             rows = await session.execute(
                 select(Delivery.user_id, Delivery.locale, Delivery.params).where(
                     Delivery.dedup_key == emergency_key(event.post_id),
@@ -344,7 +359,7 @@ class NotificationsSubscriber:
     async def on_period_status_changed(self, event: ReadingPeriodStatusChanged) -> None:
         if event.new_status != PeriodStatus.REVIEW_BY_BOARD:
             return
-        async with self._session_factory()() as session:
+        async with self._session() as session:
             staff = await PropertyService(session).users_with_roles(
                 event.building_id, _PERIOD_REVIEW_ROLES
             )
@@ -403,8 +418,9 @@ class NotificationsSubscriber:
             }
             for recipient in recipients
         ]
+        # executemany style, so SQLAlchemy batches large buildings instead of building one
+        # statement with more bind parameters than PostgreSQL accepts.
         await session.execute(
-            pg_insert(Delivery)
-            .values(list(rows))
-            .on_conflict_do_nothing(constraint="uq_notif_deliveries_dedup")
+            pg_insert(Delivery).on_conflict_do_nothing(constraint="uq_notif_deliveries_dedup"),
+            list(rows),
         )

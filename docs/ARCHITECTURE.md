@@ -109,7 +109,7 @@ System-level methods (no `CurrentUserDTO`), returning DTOs, used only by notific
 | `property` | *(N3)* `is_user_active(user_id)` | `bool` (send-time check) |
 | `meters` | *(N6)* `open_periods_due_within(until)` | `list[DuePeriodRefDTO(period_id, building_id, period_code, due_date)]` |
 | `meters` | *(N6)* `apartments_missing_readings(period_id)` | `list[UUID]`: apartments with an active meter and no reading |
-| `communication` | *(N3)* `get_emergency_ref(post_id)` | `EmergencyRefDTO` regardless of status, or `None` |
+| `communication` | `get_emergency_ref(post_id, lock_for_share=False)` | `EmergencyRefDTO` regardless of status, or `None`. The subscriber reads it with a share lock and notifies nobody about an alert that is already resolved: events are unordered, and the lock makes a concurrent resolve wait until the "published" rows are stored |
 
 - `EmergencyRefDTO`: `post_id`, `building_id`, `author_user_id`, `is_active`, `target_scope`, `target_entrance`, `target_apartment_ids`, `title`, `category`.
 - **Locale** is resolved when a delivery row is inserted (`RecipientDTO.locale`, else `DEFAULT_LOCALE`) and stored on the row, so the dispatcher needs no extra lookup.
