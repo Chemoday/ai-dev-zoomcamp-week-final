@@ -14,7 +14,7 @@ All tables use `UUID` primary keys (`uuid4`), UTC timestamps (`TIMESTAMPTZ`), an
 | `email` | `VARCHAR(255)` | `UNIQUE, NULLABLE` | Email (optional for offline/PIN-only elderly residents) |
 | `full_name` | `VARCHAR(255)` | `NOT NULL` | Real name (NEVER exposed raw in forum APIs or telemetry logs) |
 | `phone` | `VARCHAR(50)` | `NULLABLE` | Emergency contact phone (visible only to Chairman/Board) |
-| `locale` | `VARCHAR(5)` | `NULLABLE, CHECK IN ('et', 'ru', 'en')` | *(Planned, E1/N2)* Language of notifications sent outside the app. `NULL` = the instance default `DEFAULT_LOCALE` |
+| `locale` | `VARCHAR(5)` | `NULLABLE, CHECK IN ('et', 'ru', 'en')` | Language of notifications sent outside the app. `NULL` = the instance default `DEFAULT_LOCALE` |
 | `building_role` | `VARCHAR(32)` | `NOT NULL, DEFAULT 'USER'` | Enum: `CHAIRMAN`, `BOARD`, `ACCOUNTANT`, `USER` |
 | `is_active` | `BOOLEAN` | `NOT NULL, DEFAULT TRUE` | Account status |
 | `created_at` | `TIMESTAMPTZ` | `NOT NULL` | Creation timestamp |
@@ -95,7 +95,7 @@ All tables use `UUID` primary keys (`uuid4`), UTC timestamps (`TIMESTAMPTZ`), an
 | `building_id` | `UUID` | `FK(property_buildings.id)` | Building ID |
 | `period_code` | `VARCHAR(7)` | `NOT NULL, INDEX` | Format `'YYYY-MM'` (e.g., `'2026-10'`) |
 | `status` | `VARCHAR(32)` | `NOT NULL` | Enum: `OPEN_FOR_RESIDENTS`, `REVIEW_BY_BOARD`, `LOCKED` |
-| `due_date` | `TIMESTAMPTZ` | `NOT NULL` | End of the local deadline day in `INSTANCE_TIMEZONE` (default `Europe/Tallinn`), stored in UTC: `2026-11-04 23:59:59` Tallinn = `2026-11-04 21:59:59 UTC`. *(Until E1/N2 the seed, `tests/factories.py` and the meters API tests still use `23:59:59 UTC`.)* Reading reminders are computed from it |
+| `due_date` | `TIMESTAMPTZ` | `NOT NULL` | End of the local deadline day in `INSTANCE_TIMEZONE` (default `Europe/Tallinn`), stored in UTC: `2026-11-04 23:59:59` Tallinn = `2026-11-04 21:59:59 UTC`. Reading reminders are computed from it |
 | `UNIQUE` | `(building_id, period_code)` | | One accounting period per month per building |
 
 ### Table: `meters_readings`
@@ -195,9 +195,9 @@ All tables use `UUID` primary keys (`uuid4`), UTC timestamps (`TIMESTAMPTZ`), an
 
 ---
 
-## 5. Module: `notifications` (Planned, epic E1)
+## 5. Module: `notifications` (epic E1)
 
-*Design: [docs/epics/E1_NOTIFICATIONS.md](epics/E1_NOTIFICATIONS.md). Implemented in task N2; until then these tables do not exist.*
+*Design: [docs/epics/E1_NOTIFICATIONS.md](epics/E1_NOTIFICATIONS.md). `notif_channel_bindings`, `notif_preferences` and `notif_deliveries` exist since task N2 (migration 006); `notif_link_codes` and `notif_link_attempts` come with Telegram (N4).*
 
 Shared enums (each has a named `CHECK (… IN (…))`):
 - `channel`: `in_app`, `email`, `telegram`, `webpush`

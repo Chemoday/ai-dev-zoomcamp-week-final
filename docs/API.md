@@ -23,10 +23,10 @@ All errors share one JSON shape, `{"error_code": "...", "message": "...", ...ext
 | :--- | :--- | :--- |
 | 401 | `NOT_AUTHENTICATED` / `INVALID_TOKEN` / `UNKNOWN_USER` | No credentials, a bad or expired token, or an unknown or inactive user (sent with `WWW-Authenticate: Bearer`) |
 | 403 | `FORBIDDEN` | Authenticated, but the building role or a membership flag (e.g. `can_submit_readings`) does not allow it |
-| 404 | `NOT_FOUND`, `MEMBERSHIP_NOT_FOUND`, `METER_NOT_FOUND`, `PERIOD_NOT_FOUND`, `READING_NOT_FOUND`, `POST_NOT_FOUND`, `EXPORTER_NOT_ENABLED` | Unknown route, a resource that does not exist or is not visible to you, or a disabled plugin |
+| 404 | `NOT_FOUND`, `MEMBERSHIP_NOT_FOUND`, `METER_NOT_FOUND`, `PERIOD_NOT_FOUND`, `READING_NOT_FOUND`, `POST_NOT_FOUND`, `NOTIFICATION_NOT_FOUND`, `EXPORTER_NOT_ENABLED` | Unknown route, a resource that does not exist or is not visible to you, or a disabled plugin |
 | 409 | `ANOMALY_CONFIRMATION_STEP_1/2`, `PERIOD_CLOSED`, `PERIOD_LOCKED`, `PERIOD_NOT_IN_REVIEW`, `INVALID_PERIOD_TRANSITION`, `READING_SET_BY_BOARD`, `LATER_READING_EXISTS`, `COMMENTS_DISABLED`, `POST_NOT_DELETABLE` | The request is valid, but conflicts with the current state |
 | 405 | `METHOD_NOT_ALLOWED` | The route exists but not for this HTTP method |
-| 422 | `VALIDATION_ERROR`, `READING_BELOW_PREVIOUS`, `REASON_REQUIRED`, `ESTIMATE_OUT_OF_RANGE`, `INVALID_TARGET`, `INVALID_AUTHOR_APARTMENT` | Invalid input; for `VALIDATION_ERROR` the details are in `errors`. Free-text fields reject control characters, e.g. NUL |
+| 422 | `VALIDATION_ERROR`, `READING_BELOW_PREVIOUS`, `REASON_REQUIRED`, `ESTIMATE_OUT_OF_RANGE`, `INVALID_TARGET`, `INVALID_AUTHOR_APARTMENT`, `PREFERENCE_MANDATORY` | Invalid input; for `VALIDATION_ERROR` the details are in `errors`. Free-text fields reject control characters, e.g. NUL |
 | 500 | `INTERNAL_SERVER_ERROR` | Unhandled error; the body carries `trace_id` |
 | other | `HTTP_<status>` | Any other framework-level HTTP error |
 
@@ -74,7 +74,7 @@ The payload never contains the raw `full_name`, `email` or `phone`, not even the
   ]
 }
 ```
-*(Planned, E1/N2)* The payload also gets `"locale": "et" | "ru" | "en" | null`: the language of notifications sent outside the app (`null` = the instance default). It is not personal data.
+The payload also has `"locale": "et" | "ru" | "en" | null`: the language of notifications sent outside the app (`null` = the instance default). It is not personal data.
 
 Memberships are ordered by entrance, then apartment number in natural order (`2`, `10`, `14`, `14A`). The top-level `privacy_display_mode` is the most private mode across the memberships (`APARTMENT_ONLY` when there are none); it is the mode used when the user acts without an apartment context. Only memberships of apartments in the user's own building are returned.
 
@@ -177,7 +177,7 @@ Who may submit, and in which period status:
 - `previous_value` is the meter's reading in the latest earlier period, or `initial_value` if there is none.
 - `average_delta` follows docs/ROADMAP_MVP.md, section C.
 - **Locking.** The period is taken `FOR SHARE`, then the meter `FOR UPDATE`. Status changes and estimates lock the period `FOR NO KEY UPDATE` first, then the meters. This one order means a submission and a status change or estimate run one after the other and never deadlock, and a reading can never land in a period that was just closed.
-- `due_date` is the end of the local deadline day in `INSTANCE_TIMEZONE` (default `Europe/Tallinn`), sent in UTC: `2026-11-04T21:59:59Z` is 23:59:59 on 4 November in Tallinn. *(Planned, E1/N2: until then the seed, `tests/factories.py` and the meters API tests still use `23:59:59Z`.)* Periods are closed by `PATCH …/status`, not automatically; `due_date` only drives the reading reminders (section 6).
+- `due_date` is the end of the local deadline day in `INSTANCE_TIMEZONE` (default `Europe/Tallinn`), sent in UTC: `2026-11-04T21:59:59Z` is 23:59:59 on 4 November in Tallinn. Periods are closed by `PATCH …/status`, not automatically; `due_date` only drives the reading reminders (section 6).
 
 **Request:**
 ```json
@@ -450,12 +450,13 @@ Seeded at startup by `src/core/seed.py` when `SEED_DEMO_DATA=true` (local Docker
 - **Communication:** an active `EMERGENCY` (hot water off) targeted at entrance 2, so Apt 14 sees the banner and Apt 2 does not; an `OFFICIAL_NOTICE` without comments; two forum topics with comments from several residents.
 - Seeding publishes and stores no domain events, so no notifications are sent, now or later.
 
-## 6. Notifications (`notifications`): planned, epic E1
+## 6. Notifications (`notifications`), epic E1
 
-> **Not implemented yet.** This section is the contract for epic E1 (design:
-> [docs/epics/E1_NOTIFICATIONS.md](epics/E1_NOTIFICATIONS.md)). The endpoints appear in
-> `docs/openapi.json` with task N2 (in-app feed, preferences), N4 (Telegram) and N5 (WebPush). The
-> error codes below are not in the table of section 0 until then.
+> **Status.** Implemented (task N2, in `docs/openapi.json`): in-app notifications for emergencies,
+> resolved emergencies and periods in review; the feed, preferences and the notification language.
+> **Planned** (marked below; not in `docs/openapi.json` yet): e-mail (N3), Telegram (N4), WebPush
+> (N5) and reading reminders (N6). Until then only the `in_app` channel delivers; the others are
+> reported unavailable. Design: [docs/epics/E1_NOTIFICATIONS.md](epics/E1_NOTIFICATIONS.md).
 
 ### How notifications reach people
 - Notifications are created from domain events: a published or resolved emergency, a reading
@@ -474,7 +475,7 @@ Seeded at startup by `src/core/seed.py` when `SEED_DEMO_DATA=true` (local Docker
 | :--- | :--- | :--- |
 | `EMERGENCY_PUBLISHED` | active users of the targeted apartments, plus the chairman and board members; one notification per person and channel; never the author | yes |
 | `EMERGENCY_RESOLVED` | one per `EMERGENCY_PUBLISHED` notification that was sent (same channel and device), filtered by preferences; never the person who resolved it | no |
-| `READING_DEADLINE` | active members with `can_submit_readings` of apartments where at least one active meter has no reading in the open period; sent between 09:00 and 21:00 local time, starting `READING_REMINDER_DAYS_BEFORE` (default 2) days before the deadline day; if that window is missed, the next window before `due_date` is used, and after `due_date` nothing is sent; once per period | no |
+| `READING_DEADLINE` *(planned, N6)* | active members with `can_submit_readings` of apartments where at least one active meter has no reading in the open period; sent between 09:00 and 21:00 local time, starting `READING_REMINDER_DAYS_BEFORE` (default 2) days before the deadline day; if that window is missed, the next window before `due_date` is used, and after `due_date` nothing is sent; once per period | no |
 | `PERIOD_REVIEW` | the chairman and accountants when a period moves to `REVIEW_BY_BOARD`, except the person who moved it | no |
 
 - Users who join, link a channel or add a device while an emergency is active see it as the banner
@@ -567,18 +568,18 @@ Only the listed combinations change. Response: the same body as the `GET`.
 (Module `property`.) Request `{"locale": "ru"}`; `"et"`, `"ru"`, `"en"` or `null` for the instance
 default. Response `{"locale": "ru"}`. Anything else: `422 VALIDATION_ERROR`.
 
-### `GET /api/v1/notifications/bindings`
+### `GET /api/v1/notifications/bindings` *(planned, N4/N5)*
 The caller's active bindings: `[{"binding_id": "uuid", "channel": "webpush", "label": "Chrome on
 Android", "created_at": "..."}]`. Chat ids and endpoints are never returned.
 
-### `DELETE /api/v1/notifications/bindings/{binding_id}`
+### `DELETE /api/v1/notifications/bindings/{binding_id}` *(planned, N4/N5)*
 Unlinks a chat or device (`revoked_at` is set, the stored address is wiped). Response
 `204 No Content`; queued messages for it are skipped. Someone else's, unknown or already revoked:
 `404 BINDING_NOT_FOUND`. **The client deletes its own WebPush binding on logout** and also calls
 `PushSubscription.unsubscribe()`, so a shared browser stops receiving the previous user's alerts even
 if the token has already expired (the push service then answers 410 and the binding is revoked).
 
-### Telegram linking
+### Telegram linking *(planned, N4)*
 #### `POST /api/v1/notifications/telegram/link-code`
 Response `201 Created`:
 ```json
@@ -616,7 +617,7 @@ Called by Telegram, **not by the frontend**; no user authentication.
 - The webhook is registered with Telegram by an admin command (`setWebhook`), not on startup.
   Dev and prod use different bots.
 
-### WebPush
+### WebPush *(planned, N5)*
 #### `GET /api/v1/notifications/webpush/vapid-public-key`
 `{"public_key": "BEl6..."}` for `pushManager.subscribe`. Plugin `common.webpush` not enabled:
 `404 CHANNEL_NOT_ENABLED`.
@@ -643,6 +644,8 @@ Request: the browser's `PushSubscription.toJSON()` plus a label:
 - A push service answering `404` or `410` revokes the binding.
 
 ### Error codes of this section
+`NOTIFICATION_NOT_FOUND` and `PREFERENCE_MANDATORY` are live (and in the table of section 0); the
+others come with N4/N5.
 | Status | `error_code` |
 | :--- | :--- |
 | 404 | `NOTIFICATION_NOT_FOUND`, `BINDING_NOT_FOUND`, `CHANNEL_NOT_ENABLED` |
