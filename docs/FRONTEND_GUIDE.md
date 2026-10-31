@@ -169,7 +169,8 @@ any level ──► 422 READING_BELOW_PREVIOUS  → show previous_value, no popu
 - **CSV export needs the auth header**, so a plain `<a href>` does not work: `fetch` it with
   `X-Demo-User-Id`, turn the response into a `Blob` and download it with the file name from
   `Content-Disposition` (`readings-2026-10.csv`). `404 EXPORTER_NOT_ENABLED` hides the button.
-- `due_date` is informational; periods do not close automatically.
+- Periods do not close automatically. `due_date` (end of the local deadline day) is shown to users
+  and, once notifications exist (docs/API.md section 6), drives the reading reminders.
 
 ## 8. Emergencies and the forum
 
@@ -207,7 +208,7 @@ any level ──► 422 READING_BELOW_PREVIOUS  → show previous_value, no popu
 
 ## 9. Dates and ids
 
-- Timestamps are ISO 8601 in UTC (`2026-11-04T23:59:59Z`). Display them in the building's local
+- Timestamps are ISO 8601 in UTC (`2026-11-04T21:59:59Z`, i.e. 23:59:59 in Tallinn). Display them in the building's local
   time (Tallinn, `Europe/Tallinn`) with `Intl.DateTimeFormat`, not with string slicing.
 - All ids are UUID strings; treat them as opaque.
 
