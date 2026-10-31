@@ -25,6 +25,7 @@ from src.modules.notifications.dispatcher import (
 )
 from src.modules.notifications.router import router as notifications_router
 from src.modules.notifications.router import webhook_router as notifications_webhook_router
+from src.modules.notifications.scheduler import Scheduler, run_scheduler_loop
 from src.modules.notifications.service import NotificationsSubscriber
 from src.modules.property.router import router as property_router
 from src.plugins.registry import build_plugin_registry
@@ -49,6 +50,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if dispatcher is not None and settings.NOTIFICATIONS_DISPATCHER_ENABLED:
         loops.append(
             asyncio.create_task(run_dispatcher_loop(dispatcher), name="notifications-dispatcher")
+        )
+    scheduler: Scheduler | None = getattr(app.state, "notifications_scheduler", None)
+    if scheduler is not None and settings.NOTIFICATIONS_SCHEDULER_ENABLED:
+        loops.append(
+            asyncio.create_task(run_scheduler_loop(scheduler), name="notifications-scheduler")
         )
     yield
     for loop in loops:
@@ -80,17 +86,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         validate_channel_settings(settings, plugins)
         app.include_router(notifications_router)
         app.include_router(notifications_webhook_router)
-        # The subscriber and the dispatcher read the factory on every use, so tests can swap it
-        # after create_app.
+        # The subscriber, the dispatcher and the scheduler read the factory on every use, so
+        # tests can swap it after create_app.
         app.state.notifications_session_factory = async_session_factory
-        NotificationsSubscriber(
+        subscriber = NotificationsSubscriber(
             lambda: app.state.notifications_session_factory,
             settings.DEFAULT_LOCALE,
             demo_mode=settings.DEMO_MODE_ENABLED,
             plugins=plugins,
-        ).subscribe(app.state.event_bus)
+        )
+        subscriber.subscribe(app.state.event_bus)
         app.state.notifications_dispatcher = Dispatcher(
             lambda: app.state.notifications_session_factory, plugins, settings
+        )
+        app.state.notifications_scheduler = Scheduler(
+            lambda: app.state.notifications_session_factory, subscriber, settings
         )
     app.include_router(demo_router)
     # After every API route: the client only gets paths that nothing else answered.

@@ -49,6 +49,12 @@ class Settings(BaseSettings):
     INSTANCE_TIMEZONE: str = "Europe/Tallinn"
     # The loop that sends notifications on external channels (tests call one tick directly).
     NOTIFICATIONS_DISPATCHER_ENABLED: bool = True
+    # The loop that publishes reading reminders and deletes old rows (every 10 minutes).
+    NOTIFICATIONS_SCHEDULER_ENABLED: bool = True
+    # Deliveries (and the in-app feed) older than this are deleted, and revoked bindings too.
+    NOTIFICATIONS_RETENTION_DAYS: int = Field(default=180, ge=1)
+    # Reminders start this many days before the local deadline day, between 09:00 and 21:00.
+    READING_REMINDER_DAYS_BEFORE: int = Field(default=2, ge=0, le=28)
     # Base URL of the site, linked from every external message; required with an external channel.
     PUBLIC_BASE_URL: str = ""
 

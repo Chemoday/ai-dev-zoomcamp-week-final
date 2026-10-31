@@ -8,7 +8,7 @@ import hmac
 import secrets
 import uuid
 from collections.abc import Mapping
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, time, timedelta, tzinfo
 
 from src.modules.notifications.schemas import Channel, NotificationEventType, UnavailableReason
 
@@ -144,6 +144,10 @@ def emergency_resolved_key(post_id: uuid.UUID) -> str:
     return f"emergency_resolved:{post_id}"
 
 
+def reading_deadline_key(period_id: uuid.UUID) -> str:
+    return f"reading_deadline:{period_id}"
+
+
 def period_review_key(period_id: uuid.UUID, event_id: uuid.UUID) -> str:
     # The event id, so a period that is reopened and reviewed again notifies again.
     return f"period_review:{period_id}:{event_id}"
@@ -171,3 +175,52 @@ def channel_unavailable_reason(
     if channel == Channel.EMAIL:
         return None if has_email else UnavailableReason.NO_EMAIL
     return None if has_binding else UnavailableReason.NOT_LINKED
+
+
+# --- Scheduler (docs/ARCHITECTURE.md 3.3) --------------------------------------------------------
+
+SCHEDULER_INTERVAL = timedelta(minutes=10)
+# Reminders go out only in this local time window, never at night.
+REMINDER_WINDOW_START = time(9, 0)
+REMINDER_WINDOW_END = time(21, 0)
+# Link codes live 10 minutes and attempts count for 1 hour; both are kept a day for support.
+LINK_ROWS_RETENTION = timedelta(hours=24)
+
+
+def reminder_due(due_date: datetime, now: datetime, timezone: tzinfo, days_before: int) -> bool:
+    """Whether a reading reminder for a period with this deadline may go out now.
+
+    From the local day `days_before` days before the deadline day (due_date is the end of that
+    day in local time), between 09:00 and 21:00 local time, and never after the deadline. A missed
+    window (e.g. the app was down) moves to the next one before the deadline.
+    """
+    if now >= due_date:
+        return False
+    local_now = now.astimezone(timezone)
+    if not REMINDER_WINDOW_START <= local_now.time() < REMINDER_WINDOW_END:
+        return False
+    deadline_day = due_date.astimezone(timezone).date()
+    return local_now.date() >= deadline_day - timedelta(days=days_before)
+
+
+def in_reminder_hours(now: datetime, timezone: tzinfo) -> bool:
+    return REMINDER_WINDOW_START <= now.astimezone(timezone).time() < REMINDER_WINDOW_END
+
+
+def next_reminder_hours(now: datetime, timezone: tzinfo) -> datetime:
+    """The next 09:00 local time after `now` (today's if it is still before 09:00)."""
+    local = now.astimezone(timezone)
+    day = local.date() if local.time() < REMINDER_WINDOW_START else local.date() + timedelta(1)
+    return datetime.combine(day, REMINDER_WINDOW_START, tzinfo=timezone).astimezone(UTC)
+
+
+def reminder_deadline(params: Mapping[str, object]) -> datetime | None:
+    """The `due_date` of a READING_DEADLINE delivery, or None when it is missing or not aware."""
+    value = params.get("due_date")
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else None

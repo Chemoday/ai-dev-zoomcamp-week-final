@@ -429,19 +429,42 @@ class NotificationsSubscriber:
                 event.building_id, _PERIOD_REVIEW_ROLES
             )
             recipients = [r for r in staff if r.user_id != event.changed_by_user_id]
-            rows = {
-                "event_type": NotificationEventType.PERIOD_REVIEW,
-                "dedup_key": period_review_key(event.period_id, event.event_id),
-                "subject": (SubjectType.PERIOD, event.period_id),
-                "params": {"period_code": event.period_code},
-                "respect_preferences": True,
-            }
-            await self._insert(
-                session, [(r, None) for r in recipients], channel=Channel.IN_APP, **rows
+            await self.notify(
+                session,
+                recipients,
+                event_type=NotificationEventType.PERIOD_REVIEW,
+                dedup_key=period_review_key(event.period_id, event.event_id),
+                subject=(SubjectType.PERIOD, event.period_id),
+                params={"period_code": event.period_code},
             )
-            for channel, targets in (await self._external_targets(session, recipients)).items():
-                await self._insert(session, targets, channel=channel, **rows)
             await session.commit()
+
+    async def notify(
+        self,
+        session: AsyncSession,
+        recipients: Iterable[RecipientDTO],
+        *,
+        event_type: NotificationEventType,
+        dedup_key: str,
+        subject: tuple[SubjectType, uuid.UUID],
+        params: dict[str, Any],
+        now: datetime | None = None,
+    ) -> None:
+        """Insert a non-mandatory notification for these recipients on every channel they want
+        and can be reached on (in the caller's transaction; the caller commits). Also used by
+        the scheduler for reading reminders."""
+        recipients = list(recipients)
+        rows = {
+            "event_type": event_type,
+            "dedup_key": dedup_key,
+            "subject": subject,
+            "params": params,
+            "respect_preferences": True,
+            "now": now,
+        }
+        await self._insert(session, [(r, None) for r in recipients], channel=Channel.IN_APP, **rows)
+        for channel, targets in (await self._external_targets(session, recipients)).items():
+            await self._insert(session, targets, channel=channel, **rows)
 
     async def _insert(
         self,
@@ -454,6 +477,7 @@ class NotificationsSubscriber:
         subject: tuple[SubjectType, uuid.UUID],
         params: dict[str, Any],
         respect_preferences: bool,
+        now: datetime | None = None,
     ) -> None:
         targets = list(targets)
         if respect_preferences:
@@ -465,7 +489,9 @@ class NotificationsSubscriber:
             ]
         if not targets:
             return
-        now, trace_id = _now(), _current_trace_id()
+        # The scheduler passes its tick time, so one tick stamps its rows alike (and tests can
+        # run at any date).
+        now, trace_id = now or _now(), _current_trace_id()
         # In-app notifications are "sent" by being stored; external ones wait for the dispatcher.
         in_app = channel == Channel.IN_APP
         rows: Sequence[dict[str, Any]] = [
