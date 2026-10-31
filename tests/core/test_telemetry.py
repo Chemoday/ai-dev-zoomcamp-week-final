@@ -101,3 +101,18 @@ def test_span_exporter_never_exports_pii_in_attributes_events_or_status() -> Non
     assert "ivan@example.com" not in exception.attributes["exception.message"]
     assert "ivan@example.com" not in (exported.status.description or "")
     assert exported.context.trace_id == span.get_span_context().trace_id
+
+
+def test_mask_pii_text_masks_telegram_bot_tokens() -> None:
+    token = "123456789:AAFakeTokenForTelemetryTests_012345678"
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+
+    assert token not in mask_pii_text(f"POST {url} failed")
+
+
+def test_httpx_request_logs_are_silenced(app) -> None:
+    import logging
+
+    # Bot API URLs carry the token, and httpx logs every URL at INFO.
+    assert logging.getLogger("httpx").getEffectiveLevel() >= logging.WARNING
+    assert logging.getLogger("httpcore").getEffectiveLevel() >= logging.WARNING

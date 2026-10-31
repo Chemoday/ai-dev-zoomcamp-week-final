@@ -108,6 +108,7 @@ _STATUS_TITLES = {
     404: "Not found (or not visible to the caller)",
     409: "Conflict with the current state",
     422: "Invalid input",
+    429: "Too many requests (see retry_after_seconds and the Retry-After header)",
     500: "Internal server error",
     503: "Service unavailable",
 }
