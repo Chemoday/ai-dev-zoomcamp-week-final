@@ -1,11 +1,11 @@
 # E1. Notifications
 
-- **Phase:** 2. **Status:** design. **Epic issue:** [#39](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/39).
+- **Phase:** 2. **Status:** contract written (N1), implementation next. **Epic issue:** [#39](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/39).
 - **Goal:** one pluggable notification system that every module uses, instead of each feature
   sending its own messages. Reminders, emergency alerts and (later) voting all go through it.
 
-This page is the design. Task N1 turns it into the binding contract (docs/SCHEMA.md, docs/API.md,
-docs/openapi.json, docs/ARCHITECTURE.md); where they differ, the contract wins.
+This page is the design. The binding contract is docs/SCHEMA.md section 5, docs/API.md section 6
+and docs/ARCHITECTURE.md section 3 (task N1); where they differ, the contract wins.
 
 ## 1. Scope
 
@@ -28,7 +28,7 @@ Out of scope (later epics or backlog):
 business transaction commits
   -> EventOutbox publishes the domain event (in memory)
   -> notifications subscriber: resolve recipients, apply preferences,
-     INSERT notification_deliveries (PENDING) -- never sends
+     INSERT notif_deliveries (PENDING) -- never sends
   -> dispatcher loop (every few seconds): claim due rows with FOR UPDATE SKIP LOCKED,
      render the message, call the channel plugin, set SENT / FAILED / next_attempt_at
 ```
@@ -81,6 +81,7 @@ notifications.
 - `PropertyService.users_with_roles(building_id, roles) -> list[RecipientDTO]`.
 - `PropertyService.reading_submitters(apartment_ids) -> list[RecipientDTO]`: active members with
   `can_submit_readings`.
+- `PropertyService.is_user_active(user_id) -> bool` (send-time check).
 - `PropertyService.get_delivery_contact(user_id) -> DeliveryContactDTO(email)`. **Documented
   exception** to "no DTO carries a raw e-mail": it exists only for delivery, the caller keeps the
   value in memory for one send, and never logs or stores it. The `property/schemas.py` docstring
@@ -101,7 +102,7 @@ notifications.
 
 ## 4. Data model (draft; final version in docs/SCHEMA.md, task N1)
 
-`notification_channel_bindings`: where a user can be reached on an external channel.
+`notif_channel_bindings`: where a user can be reached on an external channel.
 - `id`, `user_id`, `channel` (`telegram|webpush`), `config` (JSONB: Telegram `chat_id`; WebPush
   `endpoint`, `p256dh`, `auth`), `address_hash` (SHA-256 of the chat id or endpoint),
   `created_at`, `revoked_at`. On revoke, `config` is wiped.
@@ -111,12 +112,13 @@ notifications.
 - E-mail has no binding row: a user is reachable by e-mail when `core_users.email` is set.
   `in_app` is always available.
 
-`notification_preferences`: `user_id`, `event_type`, `channel`, `enabled`. No row means the
+`notif_preferences`: `user_id`, `event_type`, `channel`, `enabled`. No row means the
 default from section 5.
 
-`notification_link_codes`: `code_hash`, `user_id`, `expires_at`, `used_at` (Telegram linking).
+`notif_link_codes`: `code_hash`, `user_id`, `expires_at`, `used_at` (Telegram linking).
+`notif_link_attempts`: `address_hash`, `attempted_at`, `succeeded` (rate limit of `/start` per chat).
 
-`notification_deliveries`: one message to one user on one channel (and one device).
+`notif_deliveries`: one message to one user on one channel (and one device).
 - `id`, `user_id`, `channel`, `binding_id` (nullable; set for telegram/webpush), `event_type`,
   `dedup_key`, `subject_type` (`post|period`), `subject_id`, `params` (JSONB, PII-free: e.g.
   `entrance`, `period_code`, `category`), `priority` (0 = mandatory first), `status`
@@ -224,7 +226,7 @@ review before merge (see AGENTS.md).
 
 | # | Task | Done when |
 |---|---|---|
-| N1 | Contract: SCHEMA.md, API.md, openapi.json, ARCHITECTURE.md, including section 3 (new methods of property, meters, communication) | docs merged, API reviewed by the owner |
+| N1 | Contract: SCHEMA.md, API.md, ARCHITECTURE.md, including sections 3 and 10 (openapi.json is generated from code, so it follows in N2) | docs merged, API reviewed by the owner |
 | N2 | Module, migrations (incl. `core_users.locale`), subscriber, recipients, `in_app` channel, preferences and feed API | an emergency alert creates in-app notifications for exactly the targeted users; resolved goes to the same users; tests green |
 | N3 | Dispatcher, retries, `common.email_smtp`, Mailpit in compose | alert e-mail visible in Mailpit with the same `trace_id`; a failing SMTP retries on schedule |
 | N4 | `common.telegram` with webhook linking | alert arrives in a linked private chat; group chats and reused codes are rejected |
@@ -296,7 +298,7 @@ none did (for example the alert was resolved before any delivery), nobody gets "
   before the deadline, never at night.
 
 ### 10.7 Telegram and WebPush hardening
-- Link codes in `notification_link_codes` (hash only, 10 minutes, single use, 5 per user per hour);
+- Link codes in `notif_link_codes` (hash only, 10 minutes, single use, 5 per user per hour);
   at most 10 `/start` attempts per `chat_id` per hour.
 - Webhook: the secret header is compared in constant time; 404 when the plugin is disabled; 200 for
   every update with a valid secret (otherwise Telegram retries); body size limit 64 KB;
@@ -310,4 +312,4 @@ none did (for example the alert was resolved before any delivery), nobody gets "
 - Delivery rows are deleted after 180 days (scheduler job).
 
 ### 10.9 Not done here
-- `telegram_notifier` in docs/ARCHITECTURE.md becomes `common.telegram` in N1.
+- Done in N1: `telegram_notifier` in docs/ARCHITECTURE.md is now `common.telegram`.

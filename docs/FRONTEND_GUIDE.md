@@ -207,7 +207,7 @@ any level ──► 422 READING_BELOW_PREVIOUS  → show previous_value, no popu
 
 ## 9. Dates and ids
 
-- Timestamps are ISO 8601 in UTC (`2026-11-04T23:59:59Z`). Display them in the building's local
+- Timestamps are ISO 8601 in UTC (`2026-11-04T21:59:59Z`, i.e. 23:59:59 in Tallinn). Display them in the building's local
   time (Tallinn, `Europe/Tallinn`) with `Intl.DateTimeFormat`, not with string slicing.
 - All ids are UUID strings; treat them as opaque.
 

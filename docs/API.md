@@ -74,6 +74,8 @@ The payload never contains the raw `full_name`, `email` or `phone`, not even the
   ]
 }
 ```
+*(Planned, E1/N2)* The payload also gets `"locale": "et" | "ru" | "en" | null`: the language of notifications sent outside the app (`null` = the instance default). It is not personal data.
+
 Memberships are ordered by entrance, then apartment number in natural order (`2`, `10`, `14`, `14A`). The top-level `privacy_display_mode` is the most private mode across the memberships (`APARTMENT_ONLY` when there are none); it is the mode used when the user acts without an apartment context. Only memberships of apartments in the user's own building are returned.
 
 ### `GET /api/v1/property/building`
@@ -120,7 +122,7 @@ Returns the resident's apartment meters, previous readings, current period statu
 `period_code` is optional. It defaults to the latest period that is `OPEN_FOR_RESIDENTS`, else the latest period overall, so a pre-created future period is never picked. `period` is `null` when the building has no periods yet. Only active meters of the user's own apartments are listed.
 ```json
 {
-  "period": { "period_code": "2026-10", "status": "OPEN_FOR_RESIDENTS", "due_date": "2026-11-04T23:59:59Z" },
+  "period": { "period_code": "2026-10", "status": "OPEN_FOR_RESIDENTS", "due_date": "2026-11-04T21:59:59Z" },
   "apartments": [
     {
       "apartment_id": "uuid", "apartment_number": "14", "can_submit_readings": true,
@@ -147,8 +149,8 @@ The reading periods of the user's building, newest first, for a period selector 
 ```json
 {
   "periods": [
-    { "period_code": "2026-10", "status": "OPEN_FOR_RESIDENTS", "due_date": "2026-11-04T23:59:59Z" },
-    { "period_code": "2026-09", "status": "LOCKED", "due_date": "2026-10-04T23:59:59Z" }
+    { "period_code": "2026-10", "status": "OPEN_FOR_RESIDENTS", "due_date": "2026-11-04T21:59:59Z" },
+    { "period_code": "2026-09", "status": "LOCKED", "due_date": "2026-10-04T20:59:59Z" }
   ]
 }
 ```
@@ -172,7 +174,7 @@ Who may submit, and in which period status:
 - `previous_value` is the meter's reading in the latest earlier period, or `initial_value` if there is none.
 - `average_delta` follows docs/ROADMAP_MVP.md, section C.
 - **Locking.** The period is taken `FOR SHARE`, then the meter `FOR UPDATE`. Status changes and estimates lock the period `FOR NO KEY UPDATE` first, then the meters. This one order means a submission and a status change or estimate run one after the other and never deadlock, and a reading can never land in a period that was just closed.
-- `due_date` is informational in the MVP. Periods are closed by `PATCH …/status`, not automatically.
+- `due_date` is the end of the local deadline day in `INSTANCE_TIMEZONE` (default `Europe/Tallinn`), sent in UTC: `2026-11-04T21:59:59Z` is 23:59:59 on 4 November in Tallinn. *(Planned, E1/N2: the seed still writes `23:59:59Z` until then.)* Periods are closed by `PATCH …/status`, not automatically; `due_date` only drives the reading reminders (section 6).
 Request:
 code
 JSON
@@ -234,7 +236,7 @@ Building Master Meters summary (master_total_m3 vs apartments_sum_m3 and unalloc
 List of all apartments with submission status (SUBMITTED, MISSING, AUTO_ESTIMATED, ANOMALY_CONFIRMED).
 ```json
 {
-  "period": { "period_code": "2026-10", "status": "REVIEW_BY_BOARD", "due_date": "2026-11-04T23:59:59Z" },
+  "period": { "period_code": "2026-10", "status": "REVIEW_BY_BOARD", "due_date": "2026-11-04T21:59:59Z" },
   "balances": [
     { "resource_type": "COLD_WATER", "unit": "m3", "master_total": "52.000", "apartments_sum": "48.500", "unallocated_loss": "3.500" }
   ],
@@ -437,3 +439,167 @@ Seeded at startup by `src/core/seed.py` when `SEED_DEMO_DATA=true` (local Docker
 - **October (`2026-10`, `OPEN_FOR_RESIDENTS`):** Apt 1 submitted both meters and Apt 2 its cold water. Apt 15's hot water is a confirmed anomaly (31 m³, a leaking tap). **Apt 14 has submitted nothing**, so the demo can start there; a normal value is its previous value plus about 4.8 m³ (cold) or 2.2 m³ (hot). A delta above 3 × its 3-month average (about 14.4 m³ cold, 6.5 m³ hot) or above the meter limit (25 / 15 m³) triggers the two popups.
 - **Communication:** an active `EMERGENCY` (hot water off) targeted at entrance 2, so Apt 14 sees the banner and Apt 2 does not; an `OFFICIAL_NOTICE` without comments; two forum topics with comments from several residents.
 - Seeding publishes no domain events, so no notifications are sent.
+
+## 6. Notifications (`notifications`): planned, epic E1
+
+> **Not implemented yet.** This section is the contract for epic E1 (design:
+> [docs/epics/E1_NOTIFICATIONS.md](epics/E1_NOTIFICATIONS.md)). The endpoints appear in
+> `docs/openapi.json` with task N2 (in-app feed, preferences), N4 (Telegram) and N5 (WebPush). The
+> error codes below are not in the table of section 0 until then.
+
+### How notifications reach people
+- Notifications are created from domain events: a published or resolved emergency, a reading
+  deadline that is close, a period sent to review. Nobody creates them through the API.
+- **Channels:** `in_app` (the feed below, always available), `email` (when the user has an
+  e-mail address), `telegram` and `webpush` (after linking, see below). External channels are
+  plugins; a channel whose plugin is not in `ENABLED_PLUGINS` is not offered.
+- **Texts:** the in-app feed returns codes and parameters, and the frontend renders localized
+  texts by `event_type` (like it does for `error_code`). For e-mail, Telegram and push the server
+  renders the text in the user's `locale`. What leaves the system on external channels: the event
+  type, the emergency title (written by the board), the target (e.g. "entrance 2"), the period code
+  and due date, and a link into the app. Post bodies, comments and author names never do.
+- **Who gets what:**
+
+| `event_type` | Recipients | Mandatory |
+| :--- | :--- | :--- |
+| `EMERGENCY_PUBLISHED` | active users of the targeted apartments, plus the chairman and board members; one notification per person and channel; never the author | yes |
+| `EMERGENCY_RESOLVED` | users whose `EMERGENCY_PUBLISHED` notification on that channel was sent | no |
+| `READING_DEADLINE` | active members with `can_submit_readings` of apartments where at least one active meter has no reading in the open period; sent from 09:00 local time, `READING_REMINDER_DAYS_BEFORE` (default 2) days before `due_date`, once per period | no |
+| `PERIOD_REVIEW` | the chairman and accountants when a period moves to `REVIEW_BY_BOARD`, except the person who moved it | no |
+
+- Users who join, link a channel or add a device while an emergency is active see it as the banner
+  (`GET /api/v1/communication/emergencies/active`); old alerts are not sent to new channels.
+- Delivery is **at least once**: after a crash a message may arrive twice, but is not lost.
+
+**Default preferences** (`mandatory` events cannot be switched off):
+
+| `event_type` | `in_app` | `email` | `telegram` | `webpush` |
+| :--- | :--- | :--- | :--- | :--- |
+| `EMERGENCY_PUBLISHED` (mandatory) | on | on | on | on |
+| `EMERGENCY_RESOLVED` | on | off | on | on |
+| `READING_DEADLINE` | on | on | on | on |
+| `PERIOD_REVIEW` | on | on | off | off |
+
+### Notification object (`NotificationView`)
+```json
+{
+  "id": "uuid",
+  "event_type": "EMERGENCY_PUBLISHED",
+  "subject_type": "post",
+  "subject_id": "uuid",
+  "params": { "category": "WATER_SHUTOFF", "target_scope": "ENTRANCE", "target_entrance": 2 },
+  "created_at": "2026-10-25T10:00:00Z",
+  "read_at": null
+}
+```
+- `subject_type` `post` links to `GET /api/v1/communication/posts/{subject_id}`; `period` links to
+  the readings of that period (`params.period_code`).
+- `params` by `event_type`: emergencies `category`, `target_scope`, `target_entrance`;
+  `READING_DEADLINE` `period_code`, `due_date`; `PERIOD_REVIEW` `period_code`.
+- Contains no names, titles or bodies; the frontend loads the post if it needs the title.
+
+### `GET /api/v1/notifications/feed?unread_only=false&limit=50&offset=0`
+The caller's in-app notifications, newest first (`created_at`, then `id`). `limit` 1..100
+(default 50), `offset` 0..100000. Notifications older than `NOTIFICATIONS_RETENTION_DAYS`
+(default 180) are deleted.
+
+### `GET /api/v1/notifications/unread-count`
+`{"unread": 3}`, for the badge on the bell icon.
+
+### `POST /api/v1/notifications/feed/{notification_id}/read`
+Marks one notification read. Idempotent: the first `read_at` is kept. Response
+`{"id": "uuid", "read_at": "2026-10-25T10:05:00Z"}`. Someone else's or unknown id:
+`404 NOTIFICATION_NOT_FOUND`.
+
+### `POST /api/v1/notifications/feed/read-all`
+Marks all the caller's unread notifications read. Response `{"updated": 3}`.
+
+### `GET /api/v1/notifications/preferences`
+The full matrix with defaults filled in, plus which channels can reach the caller.
+```json
+{
+  "channels": [
+    { "channel": "in_app", "available": true },
+    { "channel": "email", "available": true },
+    { "channel": "telegram", "available": false, "reason": "NOT_LINKED" },
+    { "channel": "webpush", "available": false, "reason": "CHANNEL_NOT_ENABLED" }
+  ],
+  "preferences": [
+    { "event_type": "EMERGENCY_PUBLISHED", "channel": "email", "enabled": true, "mandatory": true }
+  ]
+}
+```
+- `reason` when not available: `NO_EMAIL`, `NOT_LINKED`, `CHANNEL_NOT_ENABLED`.
+- `preferences` always has all 16 combinations of `event_type` and `channel`.
+
+### `PUT /api/v1/notifications/preferences`
+Request: `{"preferences": [{"event_type": "PERIOD_REVIEW", "channel": "telegram", "enabled": true}]}`.
+Only the listed combinations change. Response: the same body as the `GET`.
+- Switching off a mandatory combination: `422 PREFERENCE_MANDATORY` (nothing is changed).
+- A preference for an unavailable channel can be stored; it applies once the channel is linked.
+
+### `PATCH /api/v1/property/me/locale`
+(Module `property`.) Request `{"locale": "ru"}`; `"et"`, `"ru"`, `"en"` or `null` for the instance
+default. Response `{"locale": "ru"}`. Anything else: `422 VALIDATION_ERROR`.
+
+### `GET /api/v1/notifications/bindings`
+The caller's active bindings: `[{"binding_id": "uuid", "channel": "webpush", "label": "Chrome on
+Android", "created_at": "..."}]`. Chat ids and endpoints are never returned.
+
+### `DELETE /api/v1/notifications/bindings/{binding_id}`
+Unlinks a chat or device (`revoked_at` is set, the stored address is wiped). Response
+`204 No Content`; queued messages for it are skipped. Someone else's, unknown or already revoked:
+`404 BINDING_NOT_FOUND`. **The client deletes its own WebPush binding on logout**, so a shared
+browser stops receiving the previous user's alerts.
+
+### Telegram linking
+#### `POST /api/v1/notifications/telegram/link-code`
+Response `201 Created`:
+```json
+{ "code": "K7Q2M9XA", "expires_at": "2026-10-25T10:10:00Z", "deep_link": "https://t.me/<bot_username>?start=K7Q2M9XA" }
+```
+- 8 characters, valid 10 minutes, single use. The code is shown once; only its hash is stored.
+- At most 5 codes per user per hour: `429 RATE_LIMITED` with `retry_after_seconds`.
+- Plugin `common.telegram` not enabled: `404 CHANNEL_NOT_ENABLED`.
+- The user opens the deep link (or sends `/start <code>` to the bot). On success the bot replies
+  and the binding appears in `GET …/bindings`.
+
+#### `POST /api/v1/notifications/telegram/webhook`
+Called by Telegram, **not by the frontend**; no user authentication.
+- Accepted only with the header `X-Telegram-Bot-Api-Secret-Token` equal to
+  `TELEGRAM_WEBHOOK_SECRET` (constant-time comparison). Wrong secret or disabled plugin:
+  `404 NOT_FOUND`, like an unknown route.
+- With a valid secret the response is always `200 {}`, also for ignored updates, so Telegram does
+  not retry.
+- Body limit 64 KB. Only private chats (`chat.type == "private"`) can link; group chats get no
+  binding. At most 10 `/start` attempts per chat per hour; a wrong, used or expired code links
+  nothing.
+- The webhook is registered with Telegram by an admin command (`setWebhook`), not on startup.
+  Dev and prod use different bots.
+
+### WebPush
+#### `GET /api/v1/notifications/webpush/vapid-public-key`
+`{"public_key": "BEl6..."}` for `pushManager.subscribe`. Plugin `common.webpush` not enabled:
+`404 CHANNEL_NOT_ENABLED`.
+
+#### `POST /api/v1/notifications/webpush/subscriptions`
+Request: the browser's `PushSubscription.toJSON()` plus a label:
+```json
+{ "endpoint": "https://fcm.googleapis.com/fcm/send/...", "keys": { "p256dh": "...", "auth": "..." }, "label": "Chrome on Android" }
+```
+- Response `201 Created` with the binding (`binding_id`, `channel`, `label`, `created_at`); the same
+  endpoint again for the same user returns `200` with the existing binding.
+- If the endpoint is active for another user, that binding is revoked and the endpoint moves to the
+  caller.
+- **Endpoint check** (`422 INVALID_PUSH_ENDPOINT`): `https` only, no user info, default port, no IP
+  address as host, and the host must be a known push service (`fcm.googleapis.com`,
+  `updates.push.services.mozilla.com`, `*.notify.windows.com`, `web.push.apple.com`; a wildcard
+  matches sub-domains only at a dot boundary). `label` 1..100 characters, safe text.
+- A push service answering `404` or `410` revokes the binding.
+
+### Error codes of this section
+| Status | `error_code` |
+| :--- | :--- |
+| 404 | `NOTIFICATION_NOT_FOUND`, `BINDING_NOT_FOUND`, `CHANNEL_NOT_ENABLED` |
+| 422 | `PREFERENCE_MANDATORY`, `INVALID_PUSH_ENDPOINT` |
+| 429 | `RATE_LIMITED` (new status; the body has `retry_after_seconds`) |
