@@ -13,7 +13,7 @@ All responses include `X-Trace-Id` header populated by OpenTelemetry middleware 
 
 Error `message` texts are **English only**. They are meant for developers and logs; the frontend shows localized texts chosen by `error_code`. The backend contains no Russian at all: author badges are English too (`Apt. 14`, `Chairman`).
 
-Every `/api/v1` endpoint requires an authenticated user:
+Every `/api/v1` endpoint requires an authenticated user, except `GET /api/v1/demo/users` (section 5) and the planned Telegram webhook (section 6), which Telegram calls with its own secret:
 - `Authorization: Bearer <jwt>`: HS256 token with `sub = <user uuid>` and `exp`. It is accepted only when `JWT_SECRET_KEY` is configured.
 - `X-Demo-User-Id: <user uuid>`: accepted only when `DEMO_MODE_ENABLED=true` (local Docker, tests and the public demo). If both headers are sent, the Bearer token wins.
 
@@ -105,9 +105,9 @@ Only the user of that membership may change it. A membership that belongs to som
 {
   "privacy_display_mode": "INITIALS" // "APARTMENT_ONLY" | "INITIALS" | "FULL_NAME"
 }
-Response 200 OK:
-code
-JSON
+```
+**Response 200 OK:**
+```json
 {
   "membership_id": "uuid",
   "privacy_display_mode": "INITIALS",
@@ -116,8 +116,11 @@ JSON
     "role_badge": "OWNER"
   }
 }
-2. Meter Readings & Two-Step Anomaly Flow (meters)
-GET /api/v1/meters/my-dashboard?period_code=2026-10
+```
+
+## 2. Meter Readings & Two-Step Anomaly Flow (`meters`)
+
+### `GET /api/v1/meters/my-dashboard?period_code=2026-10`
 Returns the resident's apartment meters, previous readings, current period status, and deadline.
 `period_code` is optional. It defaults to the latest period that is `OPEN_FOR_RESIDENTS`, else the latest period overall, so a pre-created future period is never picked. `period` is `null` when the building has no periods yet. Only active meters of the user's own apartments are listed.
 ```json
@@ -144,7 +147,7 @@ Consumption hints, so the client can show "your usual consumption is about 4.2 m
 - `previous_delta`: the consumption of the latest earlier period that has a reading for the meter (any source). `null` when there is none.
 - Both are `null` when `period` is `null`. There is no comparison with the rest of the building: other apartments' consumption is not shown to residents.
 
-GET /api/v1/meters/periods
+### `GET /api/v1/meters/periods`
 The reading periods of the user's building, newest first, for a period selector and the archive of exports. Any user of the building.
 ```json
 {
@@ -156,7 +159,7 @@ The reading periods of the user's building, newest first, for a period selector 
 ```
 An empty list when the building has no periods yet. Matrix and export stay limited to the staff roles.
 
-POST /api/v1/meters/readings
+### `POST /api/v1/meters/readings`
 Submits or updates a meter reading for an open period.
 Who may submit, and in which period status:
 
@@ -174,10 +177,10 @@ Who may submit, and in which period status:
 - `previous_value` is the meter's reading in the latest earlier period, or `initial_value` if there is none.
 - `average_delta` follows docs/ROADMAP_MVP.md, section C.
 - **Locking.** The period is taken `FOR SHARE`, then the meter `FOR UPDATE`. Status changes and estimates lock the period `FOR NO KEY UPDATE` first, then the meters. This one order means a submission and a status change or estimate run one after the other and never deadlock, and a reading can never land in a period that was just closed.
-- `due_date` is the end of the local deadline day in `INSTANCE_TIMEZONE` (default `Europe/Tallinn`), sent in UTC: `2026-11-04T21:59:59Z` is 23:59:59 on 4 November in Tallinn. *(Planned, E1/N2: the seed still writes `23:59:59Z` until then.)* Periods are closed by `PATCH …/status`, not automatically; `due_date` only drives the reading reminders (section 6).
-Request:
-code
-JSON
+- `due_date` is the end of the local deadline day in `INSTANCE_TIMEZONE` (default `Europe/Tallinn`), sent in UTC: `2026-11-04T21:59:59Z` is 23:59:59 on 4 November in Tallinn. *(Planned, E1/N2: until then the seed, `tests/factories.py` and the meters API tests still use `23:59:59Z`.)* Periods are closed by `PATCH …/status`, not automatically; `due_date` only drives the reading reminders (section 6).
+
+**Request:**
+```json
 {
   "meter_id": "uuid",
   "period_code": "2026-10",
@@ -185,19 +188,20 @@ JSON
   "confirmation_level": 0,
   "reason": null
 }
-Response Scenarios:
-422 Unprocessable Entity (Value lower than previous reading):
-code
-JSON
+```
+**Response scenarios:**
+
+`422 Unprocessable Entity` (value lower than the previous reading):
+```json
 {
   "error_code": "READING_BELOW_PREVIOUS",
   "previous_value": "124.000",
   "submitted_value": "120.000",
   "message": "New reading cannot be lower than previous reading (124.000)."
 }
-409 Conflict — Popup #1 (confirmation_level == 0 and delta > threshold):
-code
-JSON
+```
+`409 Conflict`, popup #1 (`confirmation_level == 0` and delta > threshold):
+```json
 {
   "error_code": "ANOMALY_CONFIRMATION_STEP_1",
   "required_confirmation_level": 1,
@@ -206,19 +210,18 @@ JSON
   "max_reasonable_delta": "25.000",
   "message": "Value is unusually high (consumption 1130.000 m3), are you sure?"
 }
-409 Conflict — Popup #2 (confirmation_level == 1 and delta > threshold):
-code
-JSON
+```
+`409 Conflict`, popup #2 (`confirmation_level == 1` and delta > threshold):
+```json
 {
   "error_code": "ANOMALY_CONFIRMATION_STEP_2",
   "required_confirmation_level": 2,
   "consumption_delta": "1130.000",
   "message": "Please double-check the digits; this goes directly to billing!"
 }
-200 OK (Normal delta OR confirmation_level >= 2):
-Saves reading, appends row to meters_reading_logs, emits MeterReadingSubmitted once the request has committed.
-code
-JSON
+```
+`200 OK` (normal delta, or `confirmation_level >= 2`): saves the reading, appends a row to `meters_reading_logs`, and emits `MeterReadingSubmitted` once the request has committed.
+```json
 {
   "reading_id": "uuid",
   "meter_id": "uuid",
@@ -228,12 +231,14 @@ JSON
   "source": "RESIDENT",
   "is_anomaly_confirmed": true
 }
-3. Chairman / Accountant Matrix & Controls (meters)
-GET /api/v1/meters/periods/{period_code}/matrix
-(Requires role: CHAIRMAN, BOARD, or ACCOUNTANT)
-Returns:
-Building Master Meters summary (master_total_m3 vs apartments_sum_m3 and unallocated_loss_m3).
-List of all apartments with submission status (SUBMITTED, MISSING, AUTO_ESTIMATED, ANOMALY_CONFIRMED).
+```
+
+## 3. Chairman / Accountant Matrix & Controls (`meters`)
+
+### `GET /api/v1/meters/periods/{period_code}/matrix`
+(Requires role: `CHAIRMAN`, `BOARD` or `ACCOUNTANT`)
+
+Returns the Building Master Meters summary (`master_total_m3` vs `apartments_sum_m3` and `unallocated_loss_m3`) and the list of all apartments with their submission status (`SUBMITTED`, `MISSING`, `AUTO_ESTIMATED`, `ANOMALY_CONFIRMED`).
 ```json
 {
   "period": { "period_code": "2026-10", "status": "REVIEW_BY_BOARD", "due_date": "2026-11-04T21:59:59Z" },
@@ -263,15 +268,18 @@ List of all apartments with submission status (SUBMITTED, MISSING, AUTO_ESTIMATE
 - A meter's status is `MISSING` without a reading; otherwise `ANOMALY_CONFIRMED`, `AUTO_ESTIMATED` or `SUBMITTED`.
 - An apartment's status is the most urgent of its meters' statuses, in the order `MISSING` > `ANOMALY_CONFIRMED` > `AUTO_ESTIMATED` > `SUBMITTED`.
 - Apartments without active meters are not listed. The payload contains no names.
-POST /api/v1/meters/periods/{period_code}/estimate-missing
-(Requires role: CHAIRMAN or ACCOUNTANT)
+
+### `POST /api/v1/meters/periods/{period_code}/estimate-missing`
+(Requires role: `CHAIRMAN` or `ACCOUNTANT`)
+
 Finds all active apartment meters without a reading in period_code, calculates their 3-month rolling average delta, inserts readings with source = "AUTO_ESTIMATED", and writes audit logs.
 - Allowed only in `REVIEW_BY_BOARD` (`409 PERIOD_NOT_IN_REVIEW`), so residents can no longer submit.
 - The estimated `value` is `previous_value + average`, where the average defaults to `0.000` without history. The reading has `submitted_by_user_id = NULL`; its audit row records the triggering user and the reason `"3-month avg estimate"`.
 - Running it again estimates nothing new.
 - If `previous + average` would exceed NUMERIC(12, 3), nothing is saved and the response is `422 ESTIMATE_OUT_OF_RANGE` with that `meter_id`; enter that reading by hand.
 - Response: `{"period_code": "2026-10", "estimated_count": 2, "estimated": [{"reading_id", "meter_id", "apartment_id", "value", "consumption_delta"}]}`.
-PATCH /api/v1/meters/periods/{period_code}/status
+
+### `PATCH /api/v1/meters/periods/{period_code}/status`
 Transitions period status (OPEN_FOR_RESIDENTS ↔ REVIEW_BY_BOARD ↔ LOCKED).
 - Requires role `CHAIRMAN` or `ACCOUNTANT`.
 - Request: `{"status": "REVIEW_BY_BOARD"}`. Response: `{"period_code": "2026-10", "previous_status": "OPEN_FOR_RESIDENTS", "status": "REVIEW_BY_BOARD"}`.
@@ -281,19 +289,21 @@ Transitions period status (OPEN_FOR_RESIDENTS ↔ REVIEW_BY_BOARD ↔ LOCKED).
   - `LOCKED → REVIEW_BY_BOARD` (reopen before invoices are sent)
 - Anything else, including skipping a step or "changing" to the same status, returns `409 INVALID_PERIOD_TRANSITION` with `allowed_statuses`.
 - A transition emits `ReadingPeriodStatusChanged`.
-GET /api/v1/meters/readings/{reading_id}/history
+
+### `GET /api/v1/meters/readings/{reading_id}/history`
 Returns chronological audit trail from meters_reading_logs.
 - Visible to `CHAIRMAN`, `BOARD` and `ACCOUNTANT`, and to members of the meter's apartment. Anyone else gets `404 READING_NOT_FOUND`.
 - The actor is shown only as a masked author badge (`null` for the system), never as a name or user id.
 - Response: `{"reading_id", "meter_id", "period_code", "entries": [{"changed_at", "old_value", "new_value", "source", "reason", "changed_by": {"display_label", "role_badge"} | null}]}`.
 
-GET /api/v1/meters/periods/{period_code}/export-csv
+### `GET /api/v1/meters/periods/{period_code}/export-csv`
 Executes plugins/common/csv_export and streams a CSV file of the period's readings.
 - Requires role `CHAIRMAN`, `BOARD` or `ACCOUNTANT`. Served as `text/csv; charset=utf-8` with `Content-Disposition: attachment; filename="readings-2026-10.csv"`.
 - Columns: `period_code, entrance, apartment_number, meter_id, resource_type, serial_number, location_label, unit, previous_value, value, consumption_delta, source, is_anomaly_confirmed, recorded_at`.
 - Master meters have an empty apartment, and `MASTER` in `apartment_number`.
 - Text cells that would start a spreadsheet formula are prefixed with `'` (CSV-injection guard). That covers `= + - @`, also after leading whitespace or line breaks and in full-width forms (NFKC), and a leading tab, CR or LF. No names.
 - If the CSV plugin is not enabled (`ENABLED_PLUGINS`), the response is `404 EXPORTER_NOT_ENABLED`.
+
 ## 4. Emergency Alerts & Community Forum (`communication`)
 
 ### Who sees which post
@@ -438,7 +448,7 @@ Seeded at startup by `src/core/seed.py` when `SEED_DEMO_DATA=true` (local Docker
 - **History:** `2026-07`, `2026-08`, `2026-09` are `LOCKED` with readings for every meter. Readings of apartments without app users were entered by the chairman (`ADMIN_OVERRIDE`); Apt 13 in `2026-08` is `AUTO_ESTIMATED`. The master meters show a small loss over the apartments. Apt 14's cold water reading of `2026-09` was corrected once, so its history has two entries.
 - **October (`2026-10`, `OPEN_FOR_RESIDENTS`):** Apt 1 submitted both meters and Apt 2 its cold water. Apt 15's hot water is a confirmed anomaly (31 m³, a leaking tap). **Apt 14 has submitted nothing**, so the demo can start there; a normal value is its previous value plus about 4.8 m³ (cold) or 2.2 m³ (hot). A delta above 3 × its 3-month average (about 14.4 m³ cold, 6.5 m³ hot) or above the meter limit (25 / 15 m³) triggers the two popups.
 - **Communication:** an active `EMERGENCY` (hot water off) targeted at entrance 2, so Apt 14 sees the banner and Apt 2 does not; an `OFFICIAL_NOTICE` without comments; two forum topics with comments from several residents.
-- Seeding publishes no domain events, so no notifications are sent.
+- Seeding publishes no domain events, so no notifications are sent. The seeded emergency is two hours old, older than the 30-minute repair window of the planned notifications (section 6), so it is never sent later either.
 
 ## 6. Notifications (`notifications`): planned, epic E1
 
@@ -452,7 +462,7 @@ Seeded at startup by `src/core/seed.py` when `SEED_DEMO_DATA=true` (local Docker
   deadline that is close, a period sent to review. Nobody creates them through the API.
 - **Channels:** `in_app` (the feed below, always available), `email` (when the user has an
   e-mail address), `telegram` and `webpush` (after linking, see below). External channels are
-  plugins; a channel whose plugin is not in `ENABLED_PLUGINS` is not offered.
+  plugins; a channel whose plugin is not in `ENABLED_PLUGINS` is listed as unavailable.
 - **Texts:** the in-app feed returns codes and parameters, and the frontend renders localized
   texts by `event_type` (like it does for `error_code`). For e-mail, Telegram and push the server
   renders the text in the user's `locale`. What leaves the system on external channels: the event
@@ -463,12 +473,17 @@ Seeded at startup by `src/core/seed.py` when `SEED_DEMO_DATA=true` (local Docker
 | `event_type` | Recipients | Mandatory |
 | :--- | :--- | :--- |
 | `EMERGENCY_PUBLISHED` | active users of the targeted apartments, plus the chairman and board members; one notification per person and channel; never the author | yes |
-| `EMERGENCY_RESOLVED` | users whose `EMERGENCY_PUBLISHED` notification on that channel was sent | no |
-| `READING_DEADLINE` | active members with `can_submit_readings` of apartments where at least one active meter has no reading in the open period; sent from 09:00 local time, `READING_REMINDER_DAYS_BEFORE` (default 2) days before `due_date`, once per period | no |
+| `EMERGENCY_RESOLVED` | one per `EMERGENCY_PUBLISHED` notification that was sent (same channel and device), filtered by preferences; never the person who resolved it | no |
+| `READING_DEADLINE` | active members with `can_submit_readings` of apartments where at least one active meter has no reading in the open period; sent between 09:00 and 21:00 local time, starting `READING_REMINDER_DAYS_BEFORE` (default 2) days before the deadline day; if that window is missed, the next window before `due_date` is used, and after `due_date` nothing is sent; once per period | no |
 | `PERIOD_REVIEW` | the chairman and accountants when a period moves to `REVIEW_BY_BOARD`, except the person who moved it | no |
 
 - Users who join, link a channel or add a device while an emergency is active see it as the banner
-  (`GET /api/v1/communication/emergencies/active`); old alerts are not sent to new channels.
+  (`GET /api/v1/communication/emergencies/active`); old alerts are not sent to them on any channel.
+  (Technically: lost events are repaired only for alerts younger than 30 minutes, only for users
+  created before the alert and only on devices linked before it.)
+- **Demo mode.** While `DEMO_MODE_ENABLED=true` anyone can act as any user, so only `in_app`
+  works: e-mail, Telegram and WebPush are listed as unavailable (`DEMO_MODE`), linking returns
+  `404 CHANNEL_NOT_ENABLED`, and nothing is sent outside the app.
 - Delivery is **at least once**: after a crash a message may arrive twice, but is not lost.
 
 **Default preferences** (`mandatory` events cannot be switched off):
@@ -499,7 +514,8 @@ Seeded at startup by `src/core/seed.py` when `SEED_DEMO_DATA=true` (local Docker
 - Contains no names, titles or bodies; the frontend loads the post if it needs the title.
 
 ### `GET /api/v1/notifications/feed?unread_only=false&limit=50&offset=0`
-The caller's in-app notifications, newest first (`created_at`, then `id`). `limit` 1..100
+The caller's in-app notifications as a JSON array of `NotificationView`, newest first
+(`created_at`, then `id`). `limit` 1..100
 (default 50), `offset` 0..100000. Notifications older than `NOTIFICATIONS_RETENTION_DAYS`
 (default 180) are deleted.
 
@@ -529,13 +545,18 @@ The full matrix with defaults filled in, plus which channels can reach the calle
   ]
 }
 ```
-- `reason` when not available: `NO_EMAIL`, `NOT_LINKED`, `CHANNEL_NOT_ENABLED`.
+- `reason` when not available, first match wins: `DEMO_MODE`, `CHANNEL_NOT_ENABLED`, then `NO_EMAIL`
+  (e-mail) or `NOT_LINKED` (Telegram, WebPush).
 - `preferences` always has all 16 combinations of `event_type` and `channel`.
 
 ### `PUT /api/v1/notifications/preferences`
 Request: `{"preferences": [{"event_type": "PERIOD_REVIEW", "channel": "telegram", "enabled": true}]}`.
 Only the listed combinations change. Response: the same body as the `GET`.
-- Switching off a mandatory combination: `422 PREFERENCE_MANDATORY` (nothing is changed).
+- All or nothing, in one transaction. An empty list changes nothing.
+- The same combination twice in one request: `422 VALIDATION_ERROR`.
+- Switching off a mandatory combination: `422 PREFERENCE_MANDATORY` (nothing is changed);
+  `enabled: true` on it is accepted and changes nothing.
+- A value equal to the default removes the stored row (only deviations are stored).
 - A preference for an unavailable channel can be stored; it applies once the channel is linked.
 
 ### `PATCH /api/v1/property/me/locale`
@@ -549,8 +570,9 @@ Android", "created_at": "..."}]`. Chat ids and endpoints are never returned.
 ### `DELETE /api/v1/notifications/bindings/{binding_id}`
 Unlinks a chat or device (`revoked_at` is set, the stored address is wiped). Response
 `204 No Content`; queued messages for it are skipped. Someone else's, unknown or already revoked:
-`404 BINDING_NOT_FOUND`. **The client deletes its own WebPush binding on logout**, so a shared
-browser stops receiving the previous user's alerts.
+`404 BINDING_NOT_FOUND`. **The client deletes its own WebPush binding on logout** and also calls
+`PushSubscription.unsubscribe()`, so a shared browser stops receiving the previous user's alerts even
+if the token has already expired (the push service then answers 410 and the binding is revoked).
 
 ### Telegram linking
 #### `POST /api/v1/notifications/telegram/link-code`
@@ -558,17 +580,27 @@ Response `201 Created`:
 ```json
 { "code": "K7Q2M9XA", "expires_at": "2026-10-25T10:10:00Z", "deep_link": "https://t.me/<bot_username>?start=K7Q2M9XA" }
 ```
-- 8 characters, valid 10 minutes, single use. The code is shown once; only its hash is stored.
-- At most 5 codes per user per hour: `429 RATE_LIMITED` with `retry_after_seconds`.
+- 8 characters of Crockford base32 (`0-9`, `A-Z` without `I L O U`), case-insensitive; valid
+  10 minutes, single use. The code is shown once; only its hash is stored.
+- At most 5 codes per user per hour: `429 RATE_LIMITED` with `retry_after_seconds` and a
+  `Retry-After` header.
 - Plugin `common.telegram` not enabled: `404 CHANNEL_NOT_ENABLED`.
 - The user opens the deep link (or sends `/start <code>` to the bot). On success the bot replies
   and the binding appears in `GET …/bindings`.
+- **One Telegram chat per user.** Redeeming a code, in one transaction that locks the chat:
+  - the chat is already linked to this user: the code is used up, the binding stays, the bot
+    replies "already linked";
+  - the user has another chat linked: that binding is revoked, the new chat is linked;
+  - the chat is linked to another user: that binding is revoked and the chat moves to this user
+    (the same rule as WebPush).
 
 #### `POST /api/v1/notifications/telegram/webhook`
 Called by Telegram, **not by the frontend**; no user authentication.
 - Accepted only with the header `X-Telegram-Bot-Api-Secret-Token` equal to
-  `TELEGRAM_WEBHOOK_SECRET` (constant-time comparison). Wrong secret or disabled plugin:
-  `404 NOT_FOUND`, like an unknown route.
+  `TELEGRAM_WEBHOOK_SECRET` (constant-time comparison). Missing header, wrong secret or disabled
+  plugin: `404 NOT_FOUND`, like an unknown route. The app refuses to start with `common.telegram`
+  enabled and a secret shorter than 32 characters or outside `[A-Za-z0-9_-]`, so the webhook can
+  never be open.
 - With a valid secret the response is always `200 {}`, also for ignored updates, so Telegram does
   not retry.
 - Body limit 64 KB. Only private chats (`chat.type == "private"`) can link; group chats get no
@@ -588,9 +620,15 @@ Request: the browser's `PushSubscription.toJSON()` plus a label:
 { "endpoint": "https://fcm.googleapis.com/fcm/send/...", "keys": { "p256dh": "...", "auth": "..." }, "label": "Chrome on Android" }
 ```
 - Response `201 Created` with the binding (`binding_id`, `channel`, `label`, `created_at`); the same
-  endpoint again for the same user returns `200` with the existing binding.
+  endpoint again for the same user returns `200` with the existing binding, updated with the new
+  `keys` and `label`.
 - If the endpoint is active for another user, that binding is revoked and the endpoint moves to the
   caller.
+- Runs in one transaction under a lock on the endpoint, so two concurrent subscriptions of the same
+  endpoint end with one active binding and never with an error.
+- At most 10 active devices per user: `409 DEVICE_LIMIT_REACHED`.
+- Limits: `endpoint` at most 2048 characters; `keys.p256dh` base64url of 65 bytes, `keys.auth`
+  base64url of 16 bytes; otherwise `422 VALIDATION_ERROR`.
 - **Endpoint check** (`422 INVALID_PUSH_ENDPOINT`): `https` only, no user info, default port, no IP
   address as host, and the host must be a known push service (`fcm.googleapis.com`,
   `updates.push.services.mozilla.com`, `*.notify.windows.com`, `web.push.apple.com`; a wildcard
@@ -601,5 +639,6 @@ Request: the browser's `PushSubscription.toJSON()` plus a label:
 | Status | `error_code` |
 | :--- | :--- |
 | 404 | `NOTIFICATION_NOT_FOUND`, `BINDING_NOT_FOUND`, `CHANNEL_NOT_ENABLED` |
+| 409 | `DEVICE_LIMIT_REACHED` |
 | 422 | `PREFERENCE_MANDATORY`, `INVALID_PUSH_ENDPOINT` |
-| 429 | `RATE_LIMITED` (new status; the body has `retry_after_seconds`) |
+| 429 | `RATE_LIMITED` (new status; the body has `retry_after_seconds`, plus a `Retry-After` header) |

@@ -169,7 +169,8 @@ any level ──► 422 READING_BELOW_PREVIOUS  → show previous_value, no popu
 - **CSV export needs the auth header**, so a plain `<a href>` does not work: `fetch` it with
   `X-Demo-User-Id`, turn the response into a `Blob` and download it with the file name from
   `Content-Disposition` (`readings-2026-10.csv`). `404 EXPORTER_NOT_ENABLED` hides the button.
-- `due_date` is informational; periods do not close automatically.
+- Periods do not close automatically. `due_date` (end of the local deadline day) is shown to users
+  and, once notifications exist (docs/API.md section 6), drives the reading reminders.
 
 ## 8. Emergencies and the forum
 

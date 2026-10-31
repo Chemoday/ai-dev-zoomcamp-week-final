@@ -95,7 +95,7 @@ All tables use `UUID` primary keys (`uuid4`), UTC timestamps (`TIMESTAMPTZ`), an
 | `building_id` | `UUID` | `FK(property_buildings.id)` | Building ID |
 | `period_code` | `VARCHAR(7)` | `NOT NULL, INDEX` | Format `'YYYY-MM'` (e.g., `'2026-10'`) |
 | `status` | `VARCHAR(32)` | `NOT NULL` | Enum: `OPEN_FOR_RESIDENTS`, `REVIEW_BY_BOARD`, `LOCKED` |
-| `due_date` | `TIMESTAMPTZ` | `NOT NULL` | End of the local deadline day in `INSTANCE_TIMEZONE` (default `Europe/Tallinn`), stored in UTC: `2026-11-04 23:59:59` Tallinn = `2026-11-04 21:59:59 UTC`. *(Until E1/N2 the seed still writes `23:59:59 UTC`.)* Reading reminders are computed from it |
+| `due_date` | `TIMESTAMPTZ` | `NOT NULL` | End of the local deadline day in `INSTANCE_TIMEZONE` (default `Europe/Tallinn`), stored in UTC: `2026-11-04 23:59:59` Tallinn = `2026-11-04 21:59:59 UTC`. *(Until E1/N2 the seed, `tests/factories.py` and the meters API tests still use `23:59:59 UTC`.)* Reading reminders are computed from it |
 | `UNIQUE` | `(building_id, period_code)` | | One accounting period per month per building |
 
 ### Table: `meters_readings`
@@ -212,13 +212,15 @@ Shared enums (each has a named `CHECK (… IN (…))`):
 | `user_id` | `UUID` | `FK(core_users.id), NOT NULL, INDEX` | Owner of the binding |
 | `channel` | `VARCHAR(16)` | `NOT NULL, CHECK IN ('telegram', 'webpush')` | |
 | `config` | `JSONB` | `NULLABLE` | Telegram: `{"chat_id": 123}`; WebPush: `{"endpoint", "p256dh", "auth"}`. Wiped (`NULL`) on revoke. Never returned by the API, never logged |
-| `address_hash` | `VARCHAR(64)` | `NOT NULL` | Hex SHA-256 of the chat id or the endpoint URL |
+| `address_hash` | `VARCHAR(64)` | `NOT NULL` | Hex HMAC-SHA-256 (key `NOTIFICATIONS_HASH_SECRET`) of the chat id or the endpoint URL. Keyed, because a plain hash of a 10-digit chat id is reversible |
 | `label` | `VARCHAR(100)` | `NULLABLE` | Device label chosen by the client, e.g. `"Chrome on Android"` |
 | `created_at` | `TIMESTAMPTZ` | `NOT NULL` | |
 | `revoked_at` | `TIMESTAMPTZ` | `NULLABLE` | Set on unlink, on logout (the client deletes its device binding), on a Telegram 403, or on a push service 404/410 |
-| `UNIQUE` | `(channel, address_hash) WHERE revoked_at IS NULL` | | Partial unique index `uq_notif_bindings_active_address`: an active chat or endpoint belongs to one user. Re-subscribing a shared browser revokes the old binding first |
+| `UNIQUE` | `(channel, address_hash) WHERE revoked_at IS NULL` | | Partial unique index `uq_notif_channel_bindings_active_address`: an active chat or endpoint belongs to one user. Moving it to another user revokes the old binding first |
+| `UNIQUE` | `(user_id) WHERE channel = 'telegram' AND revoked_at IS NULL` | | Partial unique index `uq_notif_channel_bindings_one_telegram`: one active Telegram chat per user |
 
-- `ck_notif_bindings_config_revoked`: `(revoked_at IS NULL) = (config IS NOT NULL)`.
+- `ck_notif_channel_bindings_config_revoked`: `(revoked_at IS NULL) = (config IS NOT NULL)`.
+- At most 10 active WebPush bindings per user (checked by the service, which locks the endpoint first).
 
 ### Table: `notif_preferences`
 *(Only deviations from the defaults are stored; no row means the default of docs/API.md section 6.)*
@@ -238,7 +240,7 @@ Shared enums (each has a named `CHECK (… IN (…))`):
 | :--- | :--- | :--- | :--- |
 | `id` | `UUID` | `PK` | |
 | `user_id` | `UUID` | `FK(core_users.id), NOT NULL, INDEX` | |
-| `code_hash` | `VARCHAR(64)` | `NOT NULL, UNIQUE` | Hex SHA-256 of the code; the code itself is shown once and never stored |
+| `code_hash` | `VARCHAR(64)` | `NOT NULL, UNIQUE` | Hex HMAC-SHA-256 of the upper-cased code (Crockford base32, 8 characters); the code itself is shown once and never stored |
 | `created_at` | `TIMESTAMPTZ` | `NOT NULL` | Used for the limit of 5 codes per user per hour |
 | `expires_at` | `TIMESTAMPTZ` | `NOT NULL` | `created_at + 10 minutes` |
 | `used_at` | `TIMESTAMPTZ` | `NULLABLE` | Set when a chat redeemed the code; a used or expired code is rejected |
@@ -248,10 +250,12 @@ Shared enums (each has a named `CHECK (… IN (…))`):
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
 | `id` | `UUID` | `PK` | |
-| `address_hash` | `VARCHAR(64)` | `NOT NULL` | Hex SHA-256 of the Telegram chat id |
+| `address_hash` | `VARCHAR(64)` | `NOT NULL` | Same keyed hash of the Telegram chat id as in `notif_channel_bindings` |
 | `attempted_at` | `TIMESTAMPTZ` | `NOT NULL` | |
 | `succeeded` | `BOOLEAN` | `NOT NULL` | |
 | `INDEX` | `(address_hash, attempted_at)` | | |
+
+Rows of `notif_link_codes` and `notif_link_attempts` older than 24 hours are deleted by the scheduler.
 
 ### Table: `notif_deliveries`
 *(One message to one user on one channel; for `telegram` / `webpush` also one binding. Holds no message text and no contact data: titles and links are rendered from the subject.)*
@@ -262,13 +266,14 @@ Shared enums (each has a named `CHECK (… IN (…))`):
 | `channel` | `VARCHAR(16)` | `NOT NULL` | Enum `channel` |
 | `binding_id` | `UUID` | `FK(notif_channel_bindings.id), NULLABLE` | Set exactly for `telegram` and `webpush` |
 | `event_type` | `VARCHAR(32)` | `NOT NULL` | Enum `event_type` |
-| `dedup_key` | `VARCHAR(128)` | `NOT NULL` | `emergency:{post_id}`, `emergency_resolved:{post_id}`, `reading_deadline:{period_id}`, `period_review:{period_id}:{n}` |
+| `dedup_key` | `VARCHAR(128)` | `NOT NULL` | `emergency:{post_id}`, `emergency_resolved:{post_id}`, `reading_deadline:{period_id}`, `period_review:{period_id}:{event_id}` (the event id of that status change, so a reopened period can be reviewed again) |
 | `subject_type` | `VARCHAR(16)` | `NOT NULL, CHECK IN ('post', 'period')` | What the notification is about |
 | `subject_id` | `UUID` | `NOT NULL` | `comm_posts.id` or `meters_periods.id` (no FK: other modules' tables) |
 | `params` | `JSONB` | `NOT NULL, DEFAULT '{}'` | PII-free render parameters: `category`, `target_scope`, `target_entrance`, `period_code`, `due_date` |
-| `priority` | `SMALLINT` | `NOT NULL` | `0` for mandatory events (emergencies), `1` otherwise; lower is sent first |
+| `locale` | `VARCHAR(5)` | `NOT NULL, CHECK IN ('et', 'ru', 'en')` | Language for the external text, resolved at insert time (`core_users.locale` or `DEFAULT_LOCALE`) |
+| `priority` | `SMALLINT` | `NOT NULL` | `0` for `EMERGENCY_PUBLISHED` only, `1` for everything else; lower is sent first |
 | `status` | `VARCHAR(16)` | `NOT NULL` | Enum delivery `status` |
-| `attempts` | `INTEGER` | `NOT NULL, DEFAULT 0` | Send attempts so far (at most 5) |
+| `attempts` | `INTEGER` | `NOT NULL, DEFAULT 0` | Send attempts so far (at most 5); the claim increments it |
 | `next_attempt_at` | `TIMESTAMPTZ` | `NOT NULL` | When a `PENDING` row is due |
 | `lease_until` | `TIMESTAMPTZ` | `NULLABLE` | Set while `SENDING`; an expired lease is claimed again |
 | `last_attempt_at` | `TIMESTAMPTZ` | `NULLABLE` | |
@@ -279,6 +284,7 @@ Shared enums (each has a named `CHECK (… IN (…))`):
 | `read_at` | `TIMESTAMPTZ` | `NULLABLE` | In-app only: when the user read it |
 
 **Integrity constraints and indexes of `notif_deliveries`:**
+- Constraint names use the full table name, like the rest of the schema.
 - `uq_notif_deliveries_dedup`: `UNIQUE NULLS NOT DISTINCT (dedup_key, user_id, channel, binding_id)`, a named constraint so inserts can use `ON CONFLICT ON CONSTRAINT … DO NOTHING`.
 - `ck_notif_deliveries_binding_channel`: `binding_id IS NOT NULL` exactly when `channel IN ('telegram', 'webpush')`.
 - `ck_notif_deliveries_lease`: `lease_until IS NOT NULL` exactly when `status = 'SENDING'`.
@@ -286,5 +292,6 @@ Shared enums (each has a named `CHECK (… IN (…))`):
 - `ck_notif_deliveries_attempts`: `attempts BETWEEN 0 AND 5`; `ck_notif_deliveries_priority`: `priority IN (0, 1)`.
 - `ix_notif_deliveries_due`: partial index `(priority, next_attempt_at) WHERE status IN ('PENDING', 'SENDING')` for the dispatcher.
 - `ix_notif_deliveries_feed`: `(user_id, created_at DESC) WHERE channel = 'in_app'` for the feed.
-- `in_app` rows are inserted as `SENT` and never go through the dispatcher.
-- **Retention:** rows older than `NOTIFICATIONS_RETENTION_DAYS` (default 180) are deleted by the scheduler.
+- **Claiming never breaks the `attempts` check.** The claim takes `PENDING` rows that are due and `SENDING` rows whose lease expired, both only with `attempts < 5`. In the same transaction, an expired `SENDING` row with `attempts = 5` becomes `FAILED` with `error_code = 'LEASE_EXPIRED'`.
+- `in_app` rows are inserted as `SENT` with `attempts = 0` and `next_attempt_at = sent_at = created_at`, and never go through the dispatcher.
+- **Retention:** rows older than `NOTIFICATIONS_RETENTION_DAYS` (default 180) are deleted by the scheduler. This cannot re-send an old emergency: repairs only look at alerts younger than 30 minutes.

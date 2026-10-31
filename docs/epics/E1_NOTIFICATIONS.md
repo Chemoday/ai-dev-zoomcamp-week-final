@@ -49,7 +49,7 @@ section 10 wins.**
 | `EmergencyAlertPublished` | communication | users in the alert target plus chairman and board, once per user (10.3) | yes | `emergency:{post_id}` |
 | `EmergencyAlertResolved` | communication | users whose `emergency:{post_id}` delivery was SENT (10.5) | no | `emergency_resolved:{post_id}` |
 | `ReadingDeadlineApproaching` (new, from the scheduler) | notifications | members with `can_submit_readings` of apartments missing a reading | no | `reading_deadline:{period_id}` |
-| `ReadingPeriodStatusChanged` -> `REVIEW_BY_BOARD` | meters | chairman and accountants | no | `period_review:{period_id}:{n}`, n = how many times the period entered review |
+| `ReadingPeriodStatusChanged` -> `REVIEW_BY_BOARD` | meters | chairman and accountants | no | `period_review:{period_id}:{event_id}` |
 
 - The user who caused an event (`published_by_user_id`, `changed_by_user_id`, ...) is not notified
   about their own action.
@@ -313,3 +313,18 @@ none did (for example the alert was resolved before any delivery), nobody gets "
 
 ### 10.9 Not done here
 - Done in N1: `telegram_notifier` in docs/ARCHITECTURE.md is now `common.telegram`.
+
+### 10.10 Refined by the contract review (N1)
+The contract (docs/SCHEMA.md 5, docs/API.md 6, docs/ARCHITECTURE.md 3) is binding; it refines this
+page as follows:
+- Repairs only touch emergencies younger than 30 minutes, recipients created before the alert and
+  bindings created before it, so no channel (e-mail included) gets a late alert, and retention cannot
+  re-send one.
+- The claim only takes rows with `attempts < 5`; an expired lease at 5 attempts becomes `FAILED`.
+- Demo mode (`DEMO_MODE_ENABLED=true`) delivers `in_app` only; external linking is refused.
+- The app refuses to start with an external channel enabled but its secrets or `PUBLIC_BASE_URL`
+  missing; the webhook secret has at least 32 characters.
+- One Telegram chat per user; re-linking moves or replaces the binding in one transaction.
+- Addresses and codes are hashed with a keyed HMAC (`NOTIFICATIONS_HASH_SECRET`).
+- The locale is stored on each delivery; `period_review` keys use the event id; reminders are sent
+  between 09:00 and 21:00 local time.

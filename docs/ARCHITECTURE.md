@@ -58,26 +58,44 @@ class NotificationChannel(Protocol):
 
 
 class InboundChannel(Protocol):  # optional; implemented by common.telegram
-    async def parse_inbound(
-        self, headers: Mapping[str, str], body: bytes
-    ) -> InboundLink | None: ...
+    def verify(self, headers: Mapping[str, str]) -> bool: ...  # False -> 404
+
+    def parse_inbound(self, body: bytes) -> InboundLink | None: ...  # None -> ignored, 200
 ```
+
+- `InboundLink(chat_id, chat_type, code)`: a `/start <code>` message; any other update is `None`.
+- Registry additions: `register_channel(channel)`, `channel(name) -> NotificationChannel | None`,
+  `channels()`; a plugin that also implements `InboundChannel` is found through `channel(name)`.
 
 - `OutgoingMessage` (address, locale, subject, body, deep link) is built at send time and never stored or logged. `DeliveryResult` carries `ok`, `retryable`, `error_code` and `revoke_binding`; no provider text.
 - The notifications service owns every table: bindings, link codes, deliveries. Plugins only verify, format and send.
 - Plugins: `common.email_smtp`, `common.telegram`, `common.webpush`. `in_app` is built in.
+- **Startup checks.** With any external channel enabled, the app refuses to start without
+  `PUBLIC_BASE_URL` and `NOTIFICATIONS_HASH_SECRET` (at least 32 bytes), and each plugin without its
+  own settings: SMTP host and sender; bot token, bot username and a webhook secret of at least
+  32 characters in `[A-Za-z0-9_-]`; the VAPID keys and subject.
+- **Demo mode.** While `DEMO_MODE_ENABLED=true` (anyone can act as anyone), external channels are
+  treated as unavailable: no linking, and the dispatcher never calls an external plugin. Only
+  `in_app` works.
 
 ### 3.3 Background loops
 Both start in the app lifespan, stop on shutdown, and have switches (`NOTIFICATIONS_DISPATCHER_ENABLED`, `NOTIFICATIONS_SCHEDULER_ENABLED`); tests turn them off and call one tick directly.
-- **Dispatcher** (every 5 s), lease protocol: (1) a short transaction claims due rows with `FOR UPDATE SKIP LOCKED`, ordered by `priority`, and sets `SENDING` + `lease_until`; (2) send-time checks, then the send with no transaction open; (3) a second transaction records `SENT`, `FAILED`, `SKIPPED` or the next retry. An expired lease is claimed again, so delivery is at least once. Retry backoff: 1 min, 5 min, 30 min, 2 h (5 attempts).
-- **Scheduler** (every 10 min), each tick in a short transaction under `pg_try_advisory_xact_lock`: reconciles active emergencies (creates deliveries only for users without any row for that alert, on bindings older than the alert), publishes reading reminders, deletes deliveries older than the retention period.
+- **Dispatcher** (every 5 s), lease protocol:
+  1. A short transaction claims up to 10 rows: `(status = 'PENDING' AND next_attempt_at <= now()) OR (status = 'SENDING' AND lease_until < now())`, both with `attempts < 5`, `ORDER BY priority, next_attempt_at FOR UPDATE SKIP LOCKED`. It sets `SENDING`, `lease_until = now() + 2 min`, `attempts = attempts + 1`. In the same transaction, expired `SENDING` rows with `attempts = 5` become `FAILED` (`LEASE_EXPIRED`).
+  2. Send-time checks (`SKIPPED` with an `error_code`): the alert was resolved, the binding is revoked, the user is inactive, the e-mail is gone, a non-mandatory preference was switched off, demo mode. Then the sends run one after another with no transaction open, each with a 10 s timeout (WebPush: no redirects), so a batch fits in the lease.
+  3. A second transaction records `SENT`, `FAILED`, `SKIPPED` or the next retry.
+  An expired lease is claimed again, so delivery is at least once. Retry backoff: 1 min, 5 min, 30 min, 2 h (5 attempts in total).
+- **Scheduler** (every 10 min), each tick in a short transaction under `pg_try_advisory_xact_lock`:
+  - **repairs lost emergency events:** for active emergencies **created less than 30 minutes ago**, it creates the missing deliveries, only for recipients created before the alert (`RecipientDTO.created_at`) who have no row at all for it, and only on bindings created before it. Older alerts, the seeded alert, and alerts already active when the module is first deployed are never sent late; retention cannot re-trigger them either;
+  - publishes reading reminders inside the 09:00–21:00 local window;
+  - deletes deliveries older than the retention period, and link codes and link attempts older than 24 hours.
 
 ### 3.4 Contracts with other modules
 System-level methods (no `CurrentUserDTO`), returning DTOs, used only by notifications:
 
 | Module | Method | Returns |
 | :--- | :--- | :--- |
-| `property` | `resolve_recipients(building_id, scope, entrance, apartment_ids)` | `list[RecipientDTO(user_id, locale)]`: active users of the targeted apartments |
+| `property` | `resolve_recipients(building_id, scope, entrance, apartment_ids)` | `list[RecipientDTO(user_id, locale, created_at)]`: active users with a membership in a targeted apartment |
 | `property` | `users_with_roles(building_id, roles)` | `list[RecipientDTO]` |
 | `property` | `reading_submitters(apartment_ids)` | `list[RecipientDTO]`: active members with `can_submit_readings` |
 | `property` | `get_delivery_contact(user_id)` | `DeliveryContactDTO(email)` or `None` |
@@ -87,8 +105,10 @@ System-level methods (no `CurrentUserDTO`), returning DTOs, used only by notific
 | `communication` | `active_emergencies()` | `list[EmergencyRefDTO]` across all buildings |
 | `communication` | `get_emergency_ref(post_id)` | `EmergencyRefDTO` regardless of status, or `None` |
 
-- `EmergencyRefDTO`: `post_id`, `building_id`, `author_user_id`, `is_active`, `target_scope`, `target_entrance`, `target_apartment_ids`, `title`, `category`.
-- **Shared targeting rule.** Whether an apartment matches `ALL_BUILDING` / `ENTRANCE` / `APARTMENT_LIST` is one pure function, used by communication for post visibility and by property for recipients, so they cannot drift apart.
+- `EmergencyRefDTO`: `post_id`, `building_id`, `author_user_id`, `is_active`, `created_at`, `target_scope`, `target_entrance`, `target_apartment_ids`, `title`, `category`.
+- **Locale** is resolved when a delivery row is inserted (`RecipientDTO.locale`, else `DEFAULT_LOCALE`) and stored on the row, so the dispatcher needs no extra lookup.
+- **Shared targeting rule.** Whether an apartment matches `ALL_BUILDING` / `ENTRANCE` / `APARTMENT_LIST` is one pure predicate. Property uses it for recipients; communication's visibility stays a SQL filter, and tests assert that both select the same apartments.
+- **Staff without an apartment** are not recipients through targeting, even for `ALL_BUILDING` (visibility differs on purpose: an accountant without an apartment can read `ALL_BUILDING` posts in the feed). They are notified only through role rules: the chairman and board for emergencies, the chairman and accountants for `PERIOD_REVIEW`.
 - **Documented exception to the e-mail rule.** Elsewhere no DTO carries a raw e-mail. `DeliveryContactDTO` exists only for delivery: the dispatcher asks for one user's address right before sending, keeps it in memory for that send, and never logs or stores it. The `property/schemas.py` docstring states this exception (E1/N2).
 
 ### 3.5 Settings
@@ -100,7 +120,8 @@ System-level methods (no `CurrentUserDTO`), returning DTOs, used only by notific
 | `READING_REMINDER_DAYS_BEFORE` | `2` | Reminder lead time; sent from 09:00 local time |
 | `INSTANCE_TIMEZONE` | `Europe/Tallinn` | Local time for `due_date` and texts |
 | `DEFAULT_LOCALE` | `et` | Language when `core_users.locale` is `NULL` |
-| `PUBLIC_BASE_URL` | empty | Base of deep links in external messages |
+| `PUBLIC_BASE_URL` | empty | Base of deep links in external messages; required when an external channel is enabled |
+| `NOTIFICATIONS_HASH_SECRET` | empty | Key of the HMAC for chat ids, endpoints and link codes; required when an external channel is enabled |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_STARTTLS` | | `common.email_smtp` |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`, `TELEGRAM_WEBHOOK_SECRET` | | `common.telegram` (one bot per environment) |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | | `common.webpush` |
