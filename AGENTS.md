@@ -39,3 +39,10 @@ All AI coding, testing, and on-call agents operating in this repository MUST fol
   the current code for quality, security, bugs and the guardrails above. The implementing agent
   verifies every finding, fixes the confirmed ones in the same branch, and lists all findings
   (fixed / rejected and why) in the pull request. The owner approves the merge.
+- **Clean history: review before the first push.** Commit the task locally (split by concern) and
+  do not push yet; the reviewer checks those commits. Make fixes as `git commit --fixup=<sha>` on
+  the commit they belong to; a re-review after major fixes looks only at the fixups
+  (`git diff <reviewed-sha>..HEAD`). Then fold them with
+  `GIT_SEQUENCE_EDITOR=: git rebase -i --autosquash origin/develop`, rerun the checks, push once
+  and open the pull request with the reviewed SHA and the findings table. Once a branch is pushed,
+  its history is never rewritten: later changes (owner review, CI) are new commits, no force-push.
