@@ -246,3 +246,10 @@ the incoming HTTPS that Caddy already serves (Telegram webhooks accept ports 443
 ### Several associations on one server (Phase 3 managed cloud)
 One SMTP account and one Telegram bot shared by all instances (a shared delivery service) instead
 of one per association.
+
+---
+
+## B-9. Elections of the board chairman and the board members
+
+- **Status:** title only, not designed yet (owner, 2026-11-01). Related to epic E3 (governance and
+  voting).

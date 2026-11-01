@@ -1,8 +1,9 @@
 # E7. Login
 
 - **Phase:** 2. **Status:** design reviewed by the owner and by the CTO review (2026-11-01);
-  contract (A1) next. **Backlog:** docs/BACKLOG.md B-7. **Epic issue:** created with the merge of
-  this page.
+  contract (A1, [#64](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/64)) next.
+  **Backlog:** docs/BACKLOG.md B-7. **Epic issue:**
+  [#69](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/69).
 - **Goal:** people sign in as themselves, and only people the association invited can sign in.
   Today every environment runs in demo mode (`X-Demo-User-Id`: anyone can act as the chairman),
   so the external notification channels of E1 cannot be used for real.
