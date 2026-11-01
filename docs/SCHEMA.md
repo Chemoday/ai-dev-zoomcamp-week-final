@@ -330,9 +330,9 @@ Rows of `notif_link_codes` and `notif_link_attempts` older than 24 hours are del
 
 ---
 
-## 7. Module: `auth` (epic E7) *(planned)*
+## 7. Module: `auth` (epic E7) *(in progress)*
 
-*Design: [docs/epics/E7_LOGIN.md](epics/E7_LOGIN.md). API: docs/API.md section 7. Not implemented yet (tasks A2-A5).*
+*Design: [docs/epics/E7_LOGIN.md](epics/E7_LOGIN.md). API: docs/API.md section 7. `auth_sessions` and `auth_refresh_tokens` exist since A2 (migration 008, which also stores the existing `core_users.email` values in canonical form); the other tables come with A3-A5.*
 
 *All hashes are keyed HMAC-SHA-256 (hex, 64 characters) with `AUTH_HASH_SECRET`; a prefix such as `ip:` or `user:` is part of the hashed input, never stored. Rotating the secret ends every session and voids every open link and invitation.*
 

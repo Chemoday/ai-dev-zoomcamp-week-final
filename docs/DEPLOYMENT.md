@@ -100,8 +100,9 @@ over on dev, the dev database has to be emptied; prod is never reset by a deploy
    PUBLIC_IP=164.68.121.228 HTTPS_PORT=8443 DEPLOY_PUBKEY_FILE=./ci_deploy.pub bash bootstrap.sh
    ```
    This creates the `deploy` user and the `/opt/aap` layout, generates a random database password
-   per environment, creates the `aap-edge` network and starts Caddy. Re-running it is safe:
-   secrets, deploy state and certificates are kept.
+   and the login secrets (`JWT_SECRET_KEY`, `AUTH_HASH_SECRET`) per environment, creates the
+   `aap-edge` network and starts Caddy. Re-running it is safe: existing secrets, deploy state and
+   certificates are kept, and missing secrets are added.
 2. **GitHub repository settings**:
    - Secrets: `DEPLOY_SSH_KEY` (private half of the CI key) and `DEPLOY_KNOWN_HOSTS` (the VPS
      ed25519 host key, verified against `/etc/ssh/ssh_host_ed25519_key.pub`).
@@ -119,6 +120,21 @@ over on dev, the dev database has to be emptied; prod is never reset by a deploy
   login, docs/BACKLOG.md B-7), each environment gets its own `SMTP_*` values, `SMTP_FROM`,
   `PUBLIC_BASE_URL` and `common.email_smtp` in `ENABLED_PLUGINS` in its `.env`
   (docs/epics/E1_NOTIFICATIONS.md 6.1).
+- **Login secrets (epic E7):** the backend refuses to start without `JWT_SECRET_KEY` and
+  `AUTH_HASH_SECRET` (at least 32 bytes each), and `docker-compose.deploy.yml` refuses to start
+  without them in `/opt/aap/<env>/.env`. A deploy without them fails its health check and rolls
+  back. **Before the first deploy that contains E7/A2** (including a pull request labelled
+  `deploy-dev`), add them as root on the VPS:
+  ```bash
+  for e in dev prod; do f=/opt/aap/$e/.env; [ -z "$(tail -c1 "$f")" ] || echo >> "$f"
+    for k in JWT_SECRET_KEY AUTH_HASH_SECRET; do
+      grep -q "^$k=" "$f" || printf '%s=%s\n' "$k" "$(openssl rand -hex 32)" >> "$f"; done; done
+  ```
+  - Re-running `bootstrap.sh` adds them too, but only with exactly the parameters of step 1
+    (`HTTPS_PORT=8443`): with the default port it would move the edge proxy onto 443, which
+    another service on this VPS uses.
+  - Never rotate `AUTH_HASH_SECRET` casually: it signs everyone out and voids all open links and
+    invitations.
 - Troubleshooting (as root on the VPS):
   `docker compose -p aap-dev logs -f backend`, `cat /opt/aap/dev/history`,
   `docker logs aap-edge-caddy-1`.

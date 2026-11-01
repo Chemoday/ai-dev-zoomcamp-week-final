@@ -144,9 +144,9 @@ System-level methods (no `CurrentUserDTO`), returning DTOs, used only by notific
 ### 3.6 Privacy and observability
 No names, e-mails, phones, chat ids, push endpoints and their keys, FCM tokens, link codes, bot tokens or message bodies in logs or spans (httpx request logs are silenced because Bot API URLs carry the token, and the scrubber masks token patterns). Spans carry `event_type`, `channel`, `status`, `delivery_id`; the send span `notifications.deliver` joins the trace of the request that caused the event (`notif_deliveries.trace_id`). Metrics: `notifications.deliveries` (counter by `channel` and `status`: sent, failed, skipped, retry), `notifications.revoked_bindings`, `notifications.reminded_periods` and `notifications.deleted_rows` (by `table`).
 
-## 4. Module `auth` (epic E7) *(planned)*
+## 4. Module `auth` (epic E7) *(in progress)*
 
-Design: [docs/epics/E7_LOGIN.md](epics/E7_LOGIN.md). Tables: docs/SCHEMA.md section 7. API: docs/API.md section 7. Contract of task A1; implemented by A2-A5.
+Design: [docs/epics/E7_LOGIN.md](epics/E7_LOGIN.md). Tables: docs/SCHEMA.md section 7. API: docs/API.md section 7. Contract of task A1; implemented by A2-A5. **Status:** A2 is live: `src/modules/auth/` with sessions, refresh tokens, the session check in `get_current_user`, the startup checks of 4.7 and the hourly clean-up of ended sessions. A3-A5 add sign-in, invitations and passwords.
 
 ### 4.1 Place in the system
 - **Tables:** `src/modules/auth/` owns `core_user_identities` (moved from `property`), `auth_sessions`, `auth_refresh_tokens`, `auth_invitations`, `auth_tokens` and `auth_attempts`. `property` keeps users, apartments and memberships.

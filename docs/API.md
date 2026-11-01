@@ -731,18 +731,20 @@ reuses `DEVICE_LIMIT_REACHED`).
 
 ---
 
-## 7. Login and accounts (`auth`), epic E7 *(planned)*
+## 7. Login and accounts (`auth`), epic E7 *(in progress)*
 
-> **Status.** Contract of task A1 (issue #64); not implemented and not in `docs/openapi.json` yet.
-> Tasks A2-A5 implement it. Design and reasons: [docs/epics/E7_LOGIN.md](epics/E7_LOGIN.md). Every
+> **Status.** Contract of task A1 (issue #64). **Live since A2 (#65):** `POST …/refresh`,
+> `POST …/logout`, `GET` / `DELETE …/sessions` and the session check of access tokens (in
+> `docs/openapi.json`). There is no way to sign in yet: the sign-in endpoints come with
+> A3-A5. Design and reasons: [docs/epics/E7_LOGIN.md](epics/E7_LOGIN.md). Every
 > environment stays in demo mode for now (section 5); these endpoints work there too.
 
 ### Rules for every endpoint of this section
 - **No demo header.** `X-Demo-User-Id` never authenticates any endpoint of this section.
   Endpoints marked "signed in" need `Authorization: Bearer` from a sign-in, so in demo mode the
   account pages ("My residents", "People", "Security") need a real sign-in, not the role switcher.
-- **CSRF:** a request that uses or sets the refresh cookie must send `X-Requested-With: fetch`,
-  otherwise `403 CSRF_CHECK_FAILED`. These are:
+- **CSRF:** a request that uses or sets the refresh cookie must send `X-Requested-With` (any
+  non-empty value; the frontend sends `fetch`), otherwise `403 CSRF_CHECK_FAILED`. These are:
   - `…/magic-link/redeem`, `…/registration` and `…/password/login`, which set the cookie;
   - `…/refresh`, `…/logout` and `DELETE …/sessions`, which use it.
   The API sends no CORS headers, so other origins can never make credentialed calls.
