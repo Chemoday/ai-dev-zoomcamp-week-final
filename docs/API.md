@@ -733,10 +733,13 @@ reuses `DEVICE_LIMIT_REACHED`).
 
 ## 7. Login and accounts (`auth`), epic E7 *(in progress)*
 
-> **Status.** Contract of task A1 (issue #64). **Live since A2 (#65):** `POST …/refresh`,
-> `POST …/logout`, `GET` / `DELETE …/sessions` and the session check of access tokens (in
-> `docs/openapi.json`). There is no way to sign in yet: the sign-in endpoints come with
-> A3-A5. Design and reasons: [docs/epics/E7_LOGIN.md](epics/E7_LOGIN.md). Every
+> **Status.** Contract of task A1 (issue #64). **Live** (in `docs/openapi.json`):
+> - since A2 (#65): `POST …/refresh`, `POST …/logout`, `GET` / `DELETE …/sessions`, and the
+>   session check of access tokens;
+> - since A3 (#66): signing in with an e-mail link, `POST …/magic-link` and
+>   `POST …/magic-link/redeem` (only sign-in links; invitation links come with A4).
+>
+> Registration, invitations and passwords come with A4-A5. Design and reasons: [docs/epics/E7_LOGIN.md](epics/E7_LOGIN.md). Every
 > environment stays in demo mode for now (section 5); these endpoints work there too.
 
 ### Rules for every endpoint of this section

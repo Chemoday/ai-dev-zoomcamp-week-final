@@ -299,7 +299,8 @@ header, so they need a real sign-in even in demo mode.
 
 ### Screens
 - **Sign in:**
-  - An e-mail field and "Send me a link". After sending, always show "If this e-mail is
+  - An e-mail field (at most 254 characters after trimming; the server answers 422 beyond) and
+    "Send me a link". After sending, always show "If this e-mail is
     registered, a link is on its way", and allow "Resend" only after 60 seconds.
   - A second tab, "Sign in with a password". On `401 INVALID_CREDENTIALS` show one generic error
     text. On `429` show a countdown from `retry_after_seconds` and suggest the link.
