@@ -1,6 +1,6 @@
 # E1. Notifications
 
-- **Phase:** 2. **Status:** N1, N1b, N2, N3, N4 and N5 done (in-app notifications, the dispatcher, e-mail, Telegram and WebPush in `develop`; external channels send nowhere until a real login, 10.10); N6 next. **Epic issue:** [#39](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/39).
+- **Phase:** 2. **Status:** N1, N1b and N2-N6 done (in-app notifications, the dispatcher, e-mail, Telegram, WebPush, reading reminders and clean-up in `develop`; external channels send nowhere until a real login, 10.10); N7 (mobile push) waits for B-7. **Epic issue:** [#39](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/39).
 - **Goal:** one pluggable notification system that every module uses, instead of each feature
   sending its own messages. Reminders, emergency alerts and (later) voting all go through it.
 
@@ -50,7 +50,7 @@ section 10 wins.**
 |---|---|---|---|---|
 | `EmergencyAlertPublished` | communication | users in the alert target plus chairman and board, once per user (10.3) | yes | `emergency:{post_id}` |
 | `EmergencyAlertResolved` | communication | users whose `emergency:{post_id}` delivery was SENT (10.5) | no | `emergency_resolved:{post_id}` |
-| `ReadingDeadlineApproaching` (new, from the scheduler) | notifications | members with `can_submit_readings` of apartments missing a reading | no | `reading_deadline:{period_id}` |
+| reading deadline near (the scheduler, no domain event; 7) | notifications | members with `can_submit_readings` of apartments missing a reading | no | `reading_deadline:{period_id}` |
 | `ReadingPeriodStatusChanged` -> `REVIEW_BY_BOARD` | meters | chairman and accountants | no | `period_review:{period_id}:{event_id}` |
 
 - The user who caused an event (`published_by_user_id`, `changed_by_user_id`, ...) is not notified
@@ -324,12 +324,14 @@ Both start in the app lifespan, stop gracefully on shutdown, and can be switched
 call one tick directly).
 
 - **Dispatcher** (every 5 s): claims due rows with a lease (protocol in 10.2).
-- **Scheduler** (every 10 min): each tick runs in a short transaction under
-  `pg_try_advisory_xact_lock`, so only one process works per tick. It
-  1. publishes `ReadingDeadlineApproaching` for open periods whose `due_date` is within
-     `READING_REMINDER_DAYS_BEFORE` (default 2). The `dedup_key` per period makes it once per
-     period, also across restarts. `due_date` is stored in UTC; texts show it in the instance
-     time zone `INSTANCE_TIMEZONE` (default `Europe/Tallinn`).
+- **Scheduler** (every 10 min): each tick runs in short transactions under
+  `pg_try_advisory_xact_lock`, so only one process works at a time. It
+  1. inserts READING_DEADLINE notifications for open periods: from `READING_REMINDER_DAYS_BEFORE`
+     (default 2) days before the local deadline day, 09:00-21:00 local time
+     (`INSTANCE_TIMEZONE`, default `Europe/Tallinn`; `due_date` is stored in UTC). The rows
+     themselves mark the period as reminded, so it is once per period, also across restarts; no
+     domain event is published (docs/ARCHITECTURE.md 3.3).
+  2. deletes old deliveries, revoked bindings and link rows (docs/SCHEMA.md 5).
 
 ### Wiring
 The subscriber, the dispatcher and the scheduler get a session factory and the plugin registry

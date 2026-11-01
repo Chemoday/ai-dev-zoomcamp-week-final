@@ -5,11 +5,12 @@ Apartments and author badges come from PropertyService; property models are neve
 """
 
 import uuid
+from datetime import datetime
 from decimal import Decimal
 
 from fastapi import Depends
 from opentelemetry import trace
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database import DbSession, get_event_outbox
@@ -32,6 +33,7 @@ from src.modules.meters.schemas import (
     DashboardApartment,
     DashboardMeter,
     DashboardResponse,
+    DuePeriodRefDTO,
     EstimatedReading,
     EstimateResponse,
     HistoryEntry,
@@ -88,12 +90,62 @@ def _period_dto(period: ReadingPeriod) -> PeriodDTO:
 
 class MetersService:
     def __init__(
-        self, session: AsyncSession, property_service: PropertyService, outbox: EventOutbox
+        self,
+        session: AsyncSession,
+        property_service: PropertyService,
+        outbox: EventOutbox | None = None,
     ):
         self.session = session
         self.property_service = property_service
         # Events go out only after the request's transaction commits (docs/BACKEND_CONVENTIONS.md).
+        # None only for system-level readers (e.g. notifications), which never write.
         self.outbox = outbox
+
+    # --- System-level reads (no caller; used by the notifications module) -----------------------
+
+    async def open_periods_due_within(
+        self, until: datetime, *, now: datetime
+    ) -> list[DuePeriodRefDTO]:
+        """Periods open for residents whose deadline is after `now` and not after `until`."""
+        rows = await self.session.scalars(
+            select(ReadingPeriod)
+            .where(
+                ReadingPeriod.status == PeriodStatus.OPEN_FOR_RESIDENTS,
+                ReadingPeriod.due_date > now,
+                ReadingPeriod.due_date <= until,
+            )
+            .order_by(ReadingPeriod.due_date, ReadingPeriod.id)
+        )
+        return [
+            DuePeriodRefDTO(
+                period_id=period.id,
+                building_id=period.building_id,
+                period_code=period.period_code,
+                due_date=period.due_date,
+            )
+            for period in rows
+        ]
+
+    async def apartments_missing_readings(self, period_id: uuid.UUID) -> list[uuid.UUID]:
+        """Apartments of the period's building with an active meter that has no reading in it."""
+        period = await self.session.get(ReadingPeriod, period_id)
+        if period is None:
+            return []
+        has_reading = exists().where(
+            MeterReading.meter_id == MeterDevice.id, MeterReading.period_id == period_id
+        )
+        rows = await self.session.scalars(
+            select(MeterDevice.apartment_id)
+            .where(
+                MeterDevice.building_id == period.building_id,
+                MeterDevice.apartment_id.is_not(None),
+                MeterDevice.is_active.is_(True),
+                ~has_reading,
+            )
+            .distinct()
+            .order_by(MeterDevice.apartment_id)
+        )
+        return [apartment_id for apartment_id in rows if apartment_id is not None]
 
     # --- Submitting readings --------------------------------------------------------------------
 
@@ -101,6 +153,7 @@ class MetersService:
         self, user: CurrentUserDTO, request: ReadingSubmitRequest
     ) -> ReadingResponse:
         """POST /readings. Every exit sets meters.outcome on a dedicated span (Task 8)."""
+        self._writer_outbox()  # before any change
         with tracer.start_as_current_span(
             "meters.submit_reading", record_exception=False, set_status_on_exception=False
         ) as span:
@@ -555,6 +608,7 @@ class MetersService:
     # --- Estimates for missing apartments -------------------------------------------------------
 
     async def estimate_missing(self, user: CurrentUserDTO, period_code: str) -> EstimateResponse:
+        self._writer_outbox()  # before any change
         period = await self._period(user.building_id, period_code, lock="update")
         if period.status != PeriodStatus.REVIEW_BY_BOARD:
             raise DomainError(
@@ -655,9 +709,10 @@ class MetersService:
                     "allowed_statuses": sorted(s.value for s in PERIOD_TRANSITIONS[current]),
                 },
             )
+        outbox = self._writer_outbox()
         period.status = target
         await self.session.flush()
-        self.outbox.add(
+        outbox.add(
             ReadingPeriodStatusChanged(
                 period_id=period.id,
                 building_id=period.building_id,
@@ -857,10 +912,16 @@ class MetersService:
             is_anomaly_confirmed=reading.is_anomaly_confirmed,
         )
 
+    def _writer_outbox(self) -> EventOutbox:
+        """The request outbox; a system-level reader (no outbox) must never write."""
+        if self.outbox is None:
+            raise RuntimeError("MetersService writes need the request outbox")
+        return self.outbox
+
     def _add_submitted_event(
         self, reading: MeterReading, meter: MeterDevice, period: ReadingPeriod
     ) -> None:
-        self.outbox.add(
+        self._writer_outbox().add(
             MeterReadingSubmitted(
                 reading_id=reading.id,
                 building_id=meter.building_id,

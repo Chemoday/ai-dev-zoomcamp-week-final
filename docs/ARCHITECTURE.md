@@ -42,7 +42,7 @@ src/
 
 Design and the reasoning behind it: [docs/epics/E1_NOTIFICATIONS.md](epics/E1_NOTIFICATIONS.md). Tables: docs/SCHEMA.md section 5. API: docs/API.md section 6.
 
-**Status:** the module, the subscriber, the in-app channel, the feed and preferences exist since task N2 (`src/modules/notifications/`); the dispatcher and the e-mail channel since N3; Telegram linking, the webhook and `common.telegram` since N4; WebPush subscriptions and `common.webpush` since N5. `NotificationChannel`, `OutgoingMessage` and `DeliveryResult` (3.2) are in `src/plugins/registry.py` since N7's stub together with `register_channel` / `channel` / `channels`, and `InboundChannel` / `InboundLink` since N4; the scheduler (3.3) and the FCM plugin (3.2) are planned for N6 and N7. Clients poll for in-app notifications; there is no WebSocket (docs/epics/E1_NOTIFICATIONS.md 6.5).
+**Status:** the module, the subscriber, the in-app channel, the feed and preferences exist since task N2 (`src/modules/notifications/`); the dispatcher and the e-mail channel since N3; Telegram linking, the webhook and `common.telegram` since N4; WebPush subscriptions and `common.webpush` since N5. `NotificationChannel`, `OutgoingMessage` and `DeliveryResult` (3.2) are in `src/plugins/registry.py` since N7's stub together with `register_channel` / `channel` / `channels`, and `InboundChannel` / `InboundLink` since N4; the scheduler (3.3) since N6; the FCM plugin (3.2) is planned for N7. Clients poll for in-app notifications; there is no WebSocket (docs/epics/E1_NOTIFICATIONS.md 6.5).
 
 ### 3.1 Place in the system
 - It **only consumes**: it subscribes to domain events and calls other modules' system-level service methods (3.4). No other module imports it, so `NOTIFICATIONS_ENABLED=false` removes it (no subscriber, no loops, no routes) and everything else works unchanged.
@@ -95,11 +95,11 @@ Both start in the app lifespan, stop on shutdown, and have switches (`NOTIFICATI
 - **Dispatcher** (every 5 s), lease protocol:
   1. A short transaction claims up to 10 rows: `(status = 'PENDING' AND next_attempt_at <= now()) OR (status = 'SENDING' AND lease_until < now())`, both with `attempts < 5`, `ORDER BY priority, next_attempt_at FOR UPDATE SKIP LOCKED`. It sets `SENDING`, `lease_until = now() + 5 min`, `attempts = attempts + 1`. In the same transaction, expired `SENDING` rows with `attempts = 5` become `FAILED` (`LEASE_EXPIRED`, `lease_until = NULL`), also selected with `SKIP LOCKED`.
   2. Send-time checks (`SKIPPED` with an `error_code`): the alert was resolved, the binding is revoked, the user is inactive, the e-mail is gone, a non-mandatory preference was switched off, demo mode, an `EMERGENCY_PUBLISHED` delivery whose row is more than 1 hour old (`EMERGENCY_TOO_OLD`, any external channel: the retry backoff must not bring an alert late). Then the sends run one after another with no transaction open, each cut off after 10 s as a whole (`CHANNEL_TIMEOUT`, retryable; the SMTP client may spend up to 10 s more saying goodbye, so about 20 s at worst; WebPush: no redirects), so a batch of 10 fits in the 5-minute lease. A row whose checks or rendering fail (`PREPARE_ERROR`, retryable) never stops the rest of the batch.
-  3. One short transaction per row records `SENT`, `FAILED`, `SKIPPED` or the next retry, **fenced**: `UPDATE … WHERE id = :id AND status = 'SENDING' AND attempts = :claimed_attempts`. Zero updated rows means another worker took over after the lease expired, and the result is dropped. Every move out of `SENDING` sets `lease_until = NULL`. A retryable failure on the fifth attempt becomes `FAILED`, never `PENDING`.
+  3. One short transaction per row records `SENT`, `FAILED`, `SKIPPED`, the next retry or a deferral (a reading reminder outside 09:00–21:00 local time: `PENDING` until the next 09:00, the attempt not counted), **fenced**: `UPDATE … WHERE id = :id AND status = 'SENDING' AND attempts = :claimed_attempts`. Zero updated rows means another worker took over after the lease expired, and the result is dropped. Every move out of `SENDING` sets `lease_until = NULL`. A retryable failure on the fifth attempt becomes `FAILED`, never `PENDING`.
   An expired lease is claimed again, so delivery is at least once. Retry backoff: 1 min, 5 min, 30 min, 2 h (5 attempts in total).
-- **Scheduler** (every 10 min), each tick in a short transaction under `pg_try_advisory_xact_lock`:
-  - publishes reading reminders inside the 09:00–21:00 local window;
-  - deletes deliveries older than the retention period, and link codes and link attempts older than 24 hours.
+- **Scheduler** (`src/modules/notifications/scheduler.py`, every 10 min). A tick has two short transactions, reminders and then clean-up, each under `pg_try_advisory_xact_lock` (a process that does not get the lock skips); a failing stage never blocks the other, and each period runs in its own savepoint, so one broken period never blocks the rest:
+  - **reading reminders:** for every open period whose deadline is near (`policies.reminder_due`: from `READING_REMINDER_DAYS_BEFORE` days before the local deadline day, 09:00–21:00 local time, never after `due_date`) that has no `reading_deadline:{period_id}` rows yet, it inserts `READING_DEADLINE` notifications for `reading_submitters(apartments_missing_readings(period))`, through the subscriber's `notify` (preferences, external targets). The rows are the "done" marker, so a period is reminded once, also after a restart; a period without a row (nothing missing, nobody to ask, or every recipient switched reminders off) is checked again on the next tick. The rows are inserted in the tick's transaction rather than through a domain event: the scheduler is part of this module, and the rows and the marker must be one unit. The dispatcher skips a reminder whose `due_date` has passed (`DEADLINE_PASSED`), and one that would go out outside 09:00–21:00 local time (a retry, an outage) goes back to `PENDING` until the next 09:00 without spending an attempt (or is skipped when that is after `due_date`);
+  - **clean-up:** deliveries older than `NOTIFICATIONS_RETENTION_DAYS` (also the "published" rows of an emergency still active after that long, so its "resolved" then reaches nobody; accepted, alerts are resolved within days); then bindings revoked before that which no delivery refers to; link codes and link attempts older than 24 hours. Plain `DELETE`s: enough at the scale of a building; batch them and index `binding_id` if volumes grow.
 
 ### 3.4 Contracts with other modules
 System-level methods (no `CurrentUserDTO`), returning DTOs, used only by notifications:
@@ -109,13 +109,13 @@ System-level methods (no `CurrentUserDTO`), returning DTOs, used only by notific
 | `property` | `resolve_recipients(building_id, scope, entrance, apartment_ids)` | `list[RecipientDTO(user_id, locale)]`: active users with a membership in a targeted apartment |
 | `property` | `users_with_roles(building_id, roles)` | `list[RecipientDTO]` |
 | `property` | `has_delivery_email(user_id)` | `bool`, for the channel list of the preferences (the address never leaves) |
-| `property` | *(N6)* `reading_submitters(apartment_ids)` | `list[RecipientDTO]`: active members with `can_submit_readings` |
+| `property` | `reading_submitters(apartment_ids)` | `list[RecipientDTO]`: active members with `can_submit_readings` |
 | `property` | `with_delivery_email(user_ids)` | `set[UUID]`: who of them has an e-mail address, for the subscriber (one query per event) |
 | `property` | `get_delivery_contact(user_id)` | `DeliveryContactDTO(email)` or `None` (inactive users get `None`) |
 | `property` | `is_user_active(user_id)` | `bool` (send-time check) |
 | `property` | `get_recipient(user_id)` | `RecipientDTO` of an active user or `None`: who redeems a Telegram link code, and the language of the bot's reply |
-| `meters` | *(N6)* `open_periods_due_within(until)` | `list[DuePeriodRefDTO(period_id, building_id, period_code, due_date)]` |
-| `meters` | *(N6)* `apartments_missing_readings(period_id)` | `list[UUID]`: apartments with an active meter and no reading |
+| `meters` | `open_periods_due_within(until, *, now)` (status `OPEN_FOR_RESIDENTS`, `now < due_date <= until`) | `list[DuePeriodRefDTO(period_id, building_id, period_code, due_date)]` |
+| `meters` | `apartments_missing_readings(period_id)` | `list[UUID]`: apartments with an active meter and no reading |
 | `communication` | `get_emergency_ref(post_id, lock_for_share=False)` | `EmergencyRefDTO` regardless of status, or `None`. The subscriber reads it with a share lock and notifies nobody about an alert that is already resolved: events are unordered, and the lock makes a concurrent resolve wait until the "published" rows are stored |
 
 - `EmergencyRefDTO`: `post_id`, `building_id`, `author_user_id`, `is_active`, `target_scope`, `target_entrance`, `target_apartment_ids`, `title`, `body`, `category`. The body is read only by the dispatcher, right before an emergency message is rendered, and never logged.
@@ -129,7 +129,7 @@ System-level methods (no `CurrentUserDTO`), returning DTOs, used only by notific
 | :--- | :--- | :--- |
 | `NOTIFICATIONS_ENABLED` | `true` | The whole module |
 | `NOTIFICATIONS_DISPATCHER_ENABLED` / `NOTIFICATIONS_SCHEDULER_ENABLED` | `true` | The loops |
-| `NOTIFICATIONS_RETENTION_DAYS` | `180` | Deletion of old deliveries |
+| `NOTIFICATIONS_RETENTION_DAYS` | `180` | Deletion of old deliveries and of bindings revoked before that |
 | `READING_REMINDER_DAYS_BEFORE` | `2` | Reminder lead time; sent between 09:00 and 21:00 local time |
 | `INSTANCE_TIMEZONE` | `Europe/Tallinn` | Local time for `due_date` and texts |
 | `DEFAULT_LOCALE` | `et` | Language when `core_users.locale` is `NULL` |
@@ -141,4 +141,4 @@ System-level methods (no `CurrentUserDTO`), returning DTOs, used only by notific
 | `FCM_PROJECT_ID`, `FCM_SERVICE_ACCOUNT_FILE` | | `common.fcm_push` *(N7)*: the Firebase project and the path of a mounted service account key file (never the key itself in the environment) |
 
 ### 3.6 Privacy and observability
-No names, e-mails, phones, chat ids, push endpoints and their keys, FCM tokens, link codes, bot tokens or message bodies in logs or spans (httpx request logs are silenced because Bot API URLs carry the token, and the scrubber masks token patterns). Spans carry `event_type`, `channel`, `status`, `delivery_id`; the send span `notifications.deliver` joins the trace of the request that caused the event (`notif_deliveries.trace_id`). Metrics: `notifications.deliveries` (counter by `channel` and `status`: sent, failed, skipped, retry), revoked bindings.
+No names, e-mails, phones, chat ids, push endpoints and their keys, FCM tokens, link codes, bot tokens or message bodies in logs or spans (httpx request logs are silenced because Bot API URLs carry the token, and the scrubber masks token patterns). Spans carry `event_type`, `channel`, `status`, `delivery_id`; the send span `notifications.deliver` joins the trace of the request that caused the event (`notif_deliveries.trace_id`). Metrics: `notifications.deliveries` (counter by `channel` and `status`: sent, failed, skipped, retry), `notifications.revoked_bindings`, `notifications.reminded_periods` and `notifications.deleted_rows` (by `table`).

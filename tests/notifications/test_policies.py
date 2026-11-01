@@ -3,6 +3,7 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import get_args
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -15,8 +16,11 @@ from src.modules.notifications.policies import (
     external_channels_allowed,
     is_enabled,
     is_mandatory,
+    next_reminder_hours,
     period_review_key,
     priority_for,
+    reminder_deadline,
+    reminder_due,
 )
 from src.modules.notifications.schemas import Channel, NotificationEventType, UnavailableReason
 from src.modules.property.policies import apartment_in_target
@@ -104,3 +108,48 @@ def test_the_shared_targeting_rule() -> None:
 def test_the_default_locale_setting_offers_exactly_the_supported_languages() -> None:
     annotation = Settings.model_fields["DEFAULT_LOCALE"].annotation
     assert set(get_args(annotation)) == {locale.value for locale in Locale}
+
+
+@pytest.mark.parametrize(
+    ("local", "days_before", "expected"),
+    [
+        ((2026, 11, 2, 9, 0), 2, True),  # the first moment of the window
+        ((2026, 11, 2, 8, 59), 2, False),
+        ((2026, 11, 4, 20, 59), 2, True),  # the deadline day itself
+        ((2026, 11, 4, 21, 0), 2, False),
+        ((2026, 11, 1, 12, 0), 2, False),  # too early
+        ((2026, 11, 4, 12, 0), 0, True),  # lead time 0: the deadline day only
+        ((2026, 11, 3, 12, 0), 0, False),
+        ((2026, 11, 5, 12, 0), 2, False),  # after the deadline
+    ],
+)
+def test_reminder_window(local: tuple[int, ...], days_before: int, expected: bool) -> None:
+    tallinn = ZoneInfo("Europe/Tallinn")
+    due = datetime(2026, 11, 4, 23, 59, 59, tzinfo=tallinn).astimezone(UTC)
+    now = datetime(*local, tzinfo=tallinn).astimezone(UTC)
+
+    assert reminder_due(due, now, tallinn, days_before) is expected
+
+
+def test_reminder_window_across_the_end_of_summer_time() -> None:
+    # Summer time ends on 25 October 2026 in Tallinn (UTC+3 -> UTC+2); the window is local.
+    tallinn = ZoneInfo("Europe/Tallinn")
+    due = datetime(2026, 10, 27, 23, 59, 59, tzinfo=tallinn).astimezone(UTC)
+
+    assert reminder_due(due, datetime(2026, 10, 25, 7, 0, tzinfo=UTC), tallinn, 2)  # 09:00 local
+    assert not reminder_due(due, datetime(2026, 10, 25, 6, 59, tzinfo=UTC), tallinn, 2)
+    assert not reminder_due(due, datetime(2026, 10, 24, 6, 30, tzinfo=UTC), tallinn, 2)
+
+
+def test_the_next_reminder_hours_start_at_nine_local() -> None:
+    tallinn = ZoneInfo("Europe/Tallinn")
+    late = datetime(2026, 11, 2, 21, 30, tzinfo=tallinn).astimezone(UTC)
+    early = datetime(2026, 11, 3, 3, 0, tzinfo=tallinn).astimezone(UTC)
+    nine = datetime(2026, 11, 3, 9, 0, tzinfo=tallinn).astimezone(UTC)
+
+    assert next_reminder_hours(late, tallinn) == nine
+    assert next_reminder_hours(early, tallinn) == nine
+    assert reminder_deadline({"due_date": "2026-11-04T21:59:59+00:00"}) is not None
+    assert reminder_deadline({}) is None
+    assert reminder_deadline({"due_date": "2026-11-04T21:59:59"}) is None  # not aware
+    assert reminder_deadline({"due_date": "soon"}) is None

@@ -20,6 +20,7 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import structlog
 from opentelemetry import metrics, trace
@@ -43,8 +44,11 @@ from src.modules.notifications.policies import (
     MIN_HASH_SECRET_BYTES,
     OTHER_MESSAGE_TTL,
     emergency_too_old,
+    in_reminder_hours,
     is_enabled,
     is_mandatory,
+    next_reminder_hours,
+    reminder_deadline,
     retry_delay,
 )
 from src.modules.notifications.schemas import (
@@ -99,9 +103,11 @@ class Claimed:
 
 @dataclass(frozen=True)
 class Outcome:
-    status: str  # "SENT", "FAILED", "SKIPPED" or "RETRY"
+    status: str  # "SENT", "FAILED", "SKIPPED", "RETRY" or "DEFER"
     error_code: str | None = None
     revoke_binding: bool = False  # e.g. the user blocked the bot
+    # DEFER: back to PENDING until then, without spending the attempt (a reminder at night).
+    defer_until: datetime | None = None
 
 
 # External channels the dispatcher can send on (mobile push: N7).
@@ -170,6 +176,7 @@ class Dispatcher:
         self._session_factory_provider = session_factory_provider
         self._plugins = plugins
         self._settings = settings
+        self._timezone = ZoneInfo(settings.INSTANCE_TIMEZONE)
 
     def _session(self) -> AbstractAsyncContextManager[AsyncSession]:
         return self._session_factory_provider()()
@@ -283,6 +290,17 @@ class Dispatcher:
             return skip("CHANNEL_NOT_ENABLED")
         if emergency_too_old(row.event_type, row.created_at, now):
             return skip("EMERGENCY_TOO_OLD")
+        if row.event_type == NotificationEventType.READING_DEADLINE:
+            # Created only in reminder hours, but a retry or a dispatcher outage must not send it
+            # at night or after the deadline.
+            deadline = reminder_deadline(row.params)
+            if deadline is None or now >= deadline:
+                return skip("DEADLINE_PASSED")
+            if not in_reminder_hours(now, self._timezone):
+                resume = next_reminder_hours(now, self._timezone)
+                if resume >= deadline:
+                    return skip("DEADLINE_PASSED")
+                return _Prepared(row=row, outcome=Outcome("DEFER", defer_until=resume))
         properties = PropertyService(session)
         if not await properties.is_user_active(row.user_id):
             return skip("USER_INACTIVE")
@@ -387,6 +405,14 @@ class Dispatcher:
     ) -> None:
         values: dict[str, Any] = {"lease_until": None, "error_code": outcome.error_code}
         status = outcome.status
+        if status == "DEFER":
+            assert outcome.defer_until is not None
+            del values["error_code"]  # keep the last failure of a row that was retrying
+            values |= {
+                "status": DeliveryStatus.PENDING,
+                "next_attempt_at": outcome.defer_until,
+                "attempts": row.attempts - 1,  # nothing was tried
+            }
         if status == "RETRY":
             delay = retry_delay(row.attempts)
             if delay is None:
@@ -418,6 +444,8 @@ class Dispatcher:
                 .values(revoked_at=now, config=None)
             )
             _revoked_bindings.add(1, {"channel": row.channel.value})
+        if status == "DEFER":
+            return  # not an outcome yet
         _deliveries.add(1, {"channel": row.channel.value, "status": status.lower()})
         if status in ("FAILED", "RETRY"):
             logger.warning(
