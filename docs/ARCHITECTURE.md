@@ -146,7 +146,12 @@ No names, e-mails, phones, chat ids, push endpoints and their keys, FCM tokens, 
 
 ## 4. Module `auth` (epic E7) *(in progress)*
 
-Design: [docs/epics/E7_LOGIN.md](epics/E7_LOGIN.md). Tables: docs/SCHEMA.md section 7. API: docs/API.md section 7. Contract of task A1; implemented by A2-A5. **Status:** A2 is live: `src/modules/auth/` with sessions, refresh tokens, the session check in `get_current_user`, the startup checks of 4.7 and the hourly clean-up of ended sessions. A3-A5 add sign-in, invitations and passwords.
+Design: [docs/epics/E7_LOGIN.md](epics/E7_LOGIN.md). Tables: docs/SCHEMA.md section 7. API: docs/API.md section 7. Contract of task A1; implemented by A2-A5. **Status:** A2 and A3 are live:
+- `src/modules/auth/` with sessions and refresh tokens, and the session check in `get_current_user`;
+- signing in with an e-mail link, with the silent limits and the demo-mode rule (`links.py`), and the auth e-mails (`mail.py`, `messages.csv`, with the catalog loader in `src/core/messages.py`);
+- the startup checks of 4.7, and the hourly clean-up of sessions, links and attempts.
+
+A4-A5 add invitations, registration and passwords.
 
 ### 4.1 Place in the system
 - **Tables:** `src/modules/auth/` owns `core_user_identities` (moved from `property`), `auth_sessions`, `auth_refresh_tokens`, `auth_invitations`, `auth_tokens` and `auth_attempts`. `property` keeps users, apartments and memberships.
@@ -205,7 +210,7 @@ Every query that resolves people filters closed accounts (`core_users.is_active`
 
 ### 4.5 E-mails of `auth`
 - **Sender:** the e-mail plugin (`registry.channel("email")`, `common.email_smtp`) directly, not through notifications. Login must not depend on `NOTIFICATIONS_ENABLED`, and a token must never be stored in a delivery row.
-- **When:** after the commit, in a background task of the request (FastAPI `BackgroundTasks`, which the app already uses for the Telegram reply).
+- **When:** in detached work (`src/modules/auth/background.py`, an `asyncio` task the app keeps and drains on shutdown), after its own commit. Not FastAPI `BackgroundTasks`: Starlette runs those inside the response call, so the request's duration in logs, spans and metrics would show whether an account exists.
   - The plain token lives only in memory until then.
   - A failed send is logged with the error code only; the person asks again, or the inviter resends.
 - **Texts:** en, ru and et in `src/modules/auth/messages.csv`, with the catalog format of E1.
@@ -248,6 +253,6 @@ Every query that resolves people filters closed accounts (`core_users.is_active`
 - **Spans** carry `auth.method`, `auth.outcome` (`signed_in`, `failed`, `throttled`) and the session id.
 - **Metrics:** `auth.sign_ins` (by method and outcome) and `auth.revoked_sessions` (by reason).
 - **Hashing:** Argon2id runs in a thread pool, at most 2 at a time, so a burst of logins cannot use up the memory of a small server.
-- **Response headers:** `src/core/frontend.py` (the SPA) and the API responses send `Referrer-Policy: no-referrer`, so a link page never leaks its URL.
-- **Client IP:** the per-IP limits use the address uvicorn takes from `X-Forwarded-For` (`--proxy-headers`). Caddy sets that header, and the backend port is published only to Caddy, never to the internet.
+- **Response headers:** every answer (the SPA and the API) carries `Referrer-Policy: no-referrer` (`src/core/headers.py`), so a link page never leaks its URL.
+- **Client IP:** the per-IP limits use the address uvicorn takes from `X-Forwarded-For` (`--proxy-headers`); an IPv6 address counts by its /64. Spans never carry it: the scrubber also redacts `net.peer.ip`, `net.sock.peer.addr` and `client.address`. Caddy sets that header, and the backend port is published only to Caddy, never to the internet.
 - **Logs:** uvicorn runs without an access log. The reverse proxy keeps its access log off, or excludes `Cookie` and `Authorization`.

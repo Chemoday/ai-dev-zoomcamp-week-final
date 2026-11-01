@@ -6,12 +6,12 @@ docs/SCHEMA.md section 7.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.core.database import Base, uuid_pk, varchar_enum
-from src.modules.auth.schemas import AuthMethod, DeviceKind
+from src.modules.auth.schemas import AttemptKind, AuthMethod, DeviceKind, TokenPurpose
 
 
 class AuthSession(Base):
@@ -62,3 +62,41 @@ class RefreshToken(Base):
     replaced_by_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("auth_refresh_tokens.id"), nullable=True
     )
+
+
+class AuthToken(Base):
+    """A one-time link (sign-in now; invitation and registration with A4). Only its keyed hash is
+    stored; the plain token exists in the e-mail and in memory while it is sent."""
+
+    __tablename__ = "auth_tokens"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    purpose: Mapped[TokenPurpose] = mapped_column(
+        varchar_enum(TokenPurpose, "ck_auth_tokens_purpose", length=16), nullable=False
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("core_users.id"), nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AuthAttempt(Base):
+    """One counted request for the limits (by keyed hash of an e-mail, an address or both)."""
+
+    __tablename__ = "auth_attempts"
+    __table_args__ = (
+        Index("ix_auth_attempts_kind_subject_time", "kind", "subject_hash", "attempted_at"),
+    )
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    kind: Mapped[AttemptKind] = mapped_column(
+        varchar_enum(AttemptKind, "ck_auth_attempts_kind", length=16), nullable=False
+    )
+    subject_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    succeeded: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    attempted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

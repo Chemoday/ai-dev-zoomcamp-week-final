@@ -12,8 +12,17 @@ from fastapi.responses import JSONResponse
 from src.core.database import DbSession
 from src.core.exceptions import AUTH_ERRORS, DomainError, domain_error_handler, error_responses
 from src.core.security import TokenClaims, get_bearer_user
+from src.modules.auth.links import LinkService, deliver_magic_link
 from src.modules.auth.policies import CSRF_HEADER, REFRESH_COOKIE
-from src.modules.auth.schemas import SessionResponse, SessionView
+from src.modules.auth.schemas import (
+    MagicLinkAccepted,
+    MagicLinkRequest,
+    RedeemRequest,
+    SessionResponse,
+    SessionView,
+    SignInResponse,
+    SignInStatus,
+)
 from src.modules.auth.service import AuthService, clear_refresh_cookie, set_refresh_cookie
 from src.modules.property.schemas import CurrentUserDTO
 
@@ -40,6 +49,15 @@ def require_csrf_header(
             error_code="CSRF_CHECK_FAILED",
             message=f"The {CSRF_HEADER} header is required.",
         )
+
+
+def get_link_service(request: Request, session: DbSession) -> LinkService:
+    return LinkService(session, request.app.state.settings)
+
+
+def client_address(request: Request) -> str:
+    """The caller's address as uvicorn saw it (X-Forwarded-For from Caddy, --proxy-headers)."""
+    return request.client.host if request.client else "unknown"
 
 
 def _claims(request: Request) -> TokenClaims | None:
@@ -135,3 +153,43 @@ async def end_all_sessions(
     response = Response(status_code=204)
     clear_refresh_cookie(response)
     return response
+
+
+# --- Sign in with an e-mail link (A3) -------------------------------------------------------------
+
+
+@router.post(
+    "/magic-link",
+    status_code=202,
+    response_model=MagicLinkAccepted,
+    responses=error_responses({422: ["VALIDATION_ERROR"]}),
+)
+async def magic_link(body: MagicLinkRequest, request: Request) -> MagicLinkAccepted:
+    """Always 202: the link is sent by detached work, if the e-mail has an account and no silent
+    limit applies, so the answer and its timing are the same for every e-mail."""
+    request.app.state.auth_background.spawn(
+        deliver_magic_link(request.app, body.email, client_address(request)), name="magic-link"
+    )
+    return MagicLinkAccepted()
+
+
+@router.post(
+    "/magic-link/redeem",
+    response_model=SignInResponse,
+    responses=error_responses({400: ["INVALID_LINK"], 429: ["RATE_LIMITED"], **CSRF_ERRORS}),
+    dependencies=[Depends(require_csrf_header)],
+)
+async def redeem_link(
+    body: RedeemRequest,
+    request: Request,
+    response: Response,
+    links: LinkService = Depends(get_link_service),
+) -> SignInResponse:
+    """Sign in with the token of an e-mail link; sets the refresh cookie."""
+    issued = await links.redeem(
+        body.token, client_address(request), request.headers.get("user-agent")
+    )
+    if issued.refresh_token is None:  # a new session always has one
+        raise RuntimeError("a new session has no refresh token")
+    set_refresh_cookie(response, issued.refresh_token, issued.expires_at)
+    return SignInResponse(status=SignInStatus.SIGNED_IN, session=issued.response)

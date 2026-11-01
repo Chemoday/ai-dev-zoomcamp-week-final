@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database import DbSession
 from src.core.exceptions import DomainError
+from src.core.validation import canonical_email
 from src.modules.property.models import Apartment, ApartmentMembership, Building, User
 from src.modules.property.policies import (
     apartment_in_target,
@@ -32,6 +33,7 @@ from src.modules.property.schemas import (
     RecipientDTO,
     RoleBadge,
     TargetScope,
+    UserRefDTO,
 )
 
 # Shown when a post or comment outlives its author's account.
@@ -227,6 +229,24 @@ class PropertyService:
             .order_by(User.id)
         )
         return [RecipientDTO(user_id=user_id, locale=locale) for user_id, locale in rows.all()]
+
+    async def find_active_user_by_email(self, email: str) -> UserRefDTO | None:
+        """The active user with this canonical e-mail (module auth: sign-in links), or None."""
+        row = (
+            await self.session.execute(
+                select(User.id, User.building_id, User.building_role, User.locale).where(
+                    User.email == canonical_email(email), User.is_active.is_(True)
+                )
+            )
+        ).first()
+        if row is None:
+            return None
+        return UserRefDTO(
+            user_id=row.id,
+            building_id=row.building_id,
+            building_role=row.building_role,
+            locale=row.locale,
+        )
 
     async def is_user_active(self, user_id: uuid.UUID) -> bool:
         active = await self.session.scalar(select(User.is_active).where(User.id == user_id))

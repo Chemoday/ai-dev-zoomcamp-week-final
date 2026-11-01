@@ -42,8 +42,13 @@ class Settings(BaseSettings):
     # Accept access tokens without a session id (create_access_token in tests). Only allowed for
     # ENVIRONMENT local, dev or test.
     AUTH_ALLOW_SESSIONLESS_TOKENS: bool = False
-    # The hourly clean-up of expired sessions (and, later, links and attempts).
+    # The hourly clean-up of ended sessions, used or expired links and old attempts.
     AUTH_CLEANUP_ENABLED: bool = True
+    # Send login e-mails while demo mode is on (only ENVIRONMENT local, dev or test, and dev only
+    # behind a password gate: in demo mode anyone can act as the chairman).
+    AUTH_MAIL_IN_DEMO: bool = False
+    # Optional: in demo mode, only these recipient domains (comma-separated) get login e-mails.
+    AUTH_DEMO_MAIL_DOMAINS: str = ""
 
     # Comma-separated plugin modules under src/plugins/ (docs/ARCHITECTURE.md).
     ENABLED_PLUGINS: str = "common.csv_export"

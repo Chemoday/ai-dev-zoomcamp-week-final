@@ -14,9 +14,12 @@ from src.core.domain_events import run_relay_loop
 from src.core.event_bus import InMemoryEventBus
 from src.core.exceptions import register_exception_handlers
 from src.core.frontend import mount_frontend
+from src.core.headers import SecurityHeadersMiddleware
 from src.core.health import router as health_router
 from src.core.telemetry import configure_logging, setup_telemetry, shutdown_tracing
+from src.modules.auth.background import BackgroundWork
 from src.modules.auth.cleanup import run_cleanup_loop
+from src.modules.auth.mail import auth_catalog
 from src.modules.auth.policies import validate_auth_settings
 from src.modules.auth.router import router as auth_router
 from src.modules.communication.router import router as communication_router
@@ -66,6 +69,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             )
         )
     yield
+    await app.state.auth_background.drain(
+        within_seconds=10, cancel=True
+    )  # let a link being sent go out
     for loop in loops:
         loop.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -77,7 +83,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(level=settings.LOG_LEVEL, json_logs=settings.LOG_JSON)
-    validate_auth_settings(settings)  # no app without the secrets every sign-in depends on
 
     app = FastAPI(title=settings.APP_NAME, version=settings.APP_VERSION, lifespan=lifespan)
     app.state.settings = settings
@@ -95,6 +100,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Plugins with incomplete settings raise here, so the app does not start half-configured.
     plugins = build_plugin_registry(settings)
     app.state.plugin_registry = plugins
+    validate_auth_settings(settings, plugins)  # no app without the secrets of every sign-in
+    auth_catalog()  # a broken messages.csv fails now, not after a 202
+    app.state.auth_background = BackgroundWork()
     if settings.NOTIFICATIONS_ENABLED:
         validate_channel_settings(settings, plugins)
         app.include_router(notifications_router)
@@ -120,6 +128,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     mount_frontend(app, settings.FRONTEND_DIST_DIR)
 
     setup_telemetry(app, settings)
+    # Outermost, so even the JSON 500 of the telemetry middleware carries the headers.
+    app.add_middleware(SecurityHeadersMiddleware)
     return app
 
 

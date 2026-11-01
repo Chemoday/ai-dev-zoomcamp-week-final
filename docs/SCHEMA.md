@@ -332,7 +332,7 @@ Rows of `notif_link_codes` and `notif_link_attempts` older than 24 hours are del
 
 ## 7. Module: `auth` (epic E7) *(in progress)*
 
-*Design: [docs/epics/E7_LOGIN.md](epics/E7_LOGIN.md). API: docs/API.md section 7. `auth_sessions` and `auth_refresh_tokens` exist since A2 (migration 008, which also stores the existing `core_users.email` values in canonical form); the other tables come with A3-A5.*
+*Design: [docs/epics/E7_LOGIN.md](epics/E7_LOGIN.md). API: docs/API.md section 7. `auth_sessions` and `auth_refresh_tokens` exist since A2 (migration 008, which also stores the existing `core_users.email` values in canonical form). `auth_tokens` (without `invitation_id` yet) and `auth_attempts` exist since A3 (migration 009). `auth_invitations`, the invitation columns and `core_user_identities` come with A4-A5.*
 
 *All hashes are keyed HMAC-SHA-256 (hex, 64 characters) with `AUTH_HASH_SECRET`; a prefix such as `ip:` or `user:` is part of the hashed input, never stored. Rotating the secret ends every session and voids every open link and invitation.*
 
@@ -418,7 +418,7 @@ Columns as in section 1, plus:
 | :--- | :--- | :--- | :--- |
 | `id` | `UUID` | `PK` | |
 | `kind` | `VARCHAR(16)` | `NOT NULL, CHECK IN ('MAGIC_LINK', 'REDEEM', 'PASSWORD', 'INVITATION')` | |
-| `subject_hash` | `VARCHAR(64)` | `NOT NULL` | Keyed hash of what is counted: `email:<canonical e-mail>`, `ip:<address>`, `pair:<e-mail>\|<address>` or `user:<inviter id>` |
+| `subject_hash` | `VARCHAR(64)` | `NOT NULL` | Keyed hash of what is counted: `email:<canonical e-mail>`, `ip:<address>`, `pair:<e-mail>\|<address>` or `user:<inviter id>`; an IPv6 address counts by its /64 |
 | `succeeded` | `BOOLEAN` | `NOT NULL` | |
 | `attempted_at` | `TIMESTAMPTZ` | `NOT NULL` | |
 | `INDEX` | `(kind, subject_hash, attempted_at)` | | |

@@ -450,6 +450,158 @@
         }
       }
     },
+    "/api/v1/auth/magic-link": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Magic Link",
+        "description": "Always 202: the link is sent by detached work, if the e-mail has an account and no silent\nlimit applies, so the answer and its timing are the same for every e-mail.",
+        "operationId": "magic_link_api_v1_auth_magic_link_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MagicLinkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MagicLinkAccepted"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error. error_code: `INTERNAL_SERVER_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input. error_code: `VALIDATION_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/magic-link/redeem": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Redeem Link",
+        "description": "Sign in with the token of an e-mail link; sets the refresh cookie.",
+        "operationId": "redeem_link_api_v1_auth_magic_link_redeem_post",
+        "parameters": [
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Requested-With"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RedeemRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignInResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error. error_code: `INTERNAL_SERVER_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request. error_code: `INVALID_LINK`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden. error_code: `CSRF_CHECK_FAILED`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input. error_code: `VALIDATION_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests (see retry_after_seconds and the Retry-After header). error_code: `RATE_LIMITED`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/property/me": {
       "get": {
         "tags": [
@@ -3818,6 +3970,33 @@
         "title": "LocaleUpdate",
         "description": "Request and response of PATCH /api/v1/property/me/locale."
       },
+      "MagicLinkAccepted": {
+        "properties": {
+          "accepted": {
+            "type": "boolean",
+            "title": "Accepted",
+            "default": true
+          }
+        },
+        "type": "object",
+        "title": "MagicLinkAccepted"
+      },
+      "MagicLinkRequest": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "maxLength": 320,
+            "minLength": 3,
+            "title": "Email"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "email"
+        ],
+        "title": "MagicLinkRequest"
+      },
       "MasterMeterRow": {
         "properties": {
           "meter_id": {
@@ -4893,6 +5072,22 @@
         ],
         "title": "ReadingSummary"
       },
+      "RedeemRequest": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Token"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "title": "RedeemRequest"
+      },
       "RelationType": {
         "type": "string",
         "enum": [
@@ -5067,6 +5262,38 @@
           "current"
         ],
         "title": "SessionView"
+      },
+      "SignInResponse": {
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/SignInStatus"
+          },
+          "session": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "SignInResponse",
+        "description": "The answer of redeeming a link (docs/API.md 7); A3 knows only SIGNED_IN."
+      },
+      "SignInStatus": {
+        "type": "string",
+        "enum": [
+          "SIGNED_IN",
+          "REGISTRATION_REQUIRED",
+          "SIGN_IN_TO_ACCEPT"
+        ],
+        "title": "SignInStatus"
       },
       "SubjectType": {
         "type": "string",

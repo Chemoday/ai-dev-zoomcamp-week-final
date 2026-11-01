@@ -5,12 +5,11 @@ Two kinds (owner decision, E1 section 5):
 - system: every other text comes from messages.csv (`key,en,ru,et`), in the delivery's locale,
   with English when a cell is empty. The chairman cannot change them.
 
-Placeholders are `{name}` and are substituted once, so text that people wrote is never parsed as a
-template (a title containing "{body}" stays literal).
+The catalog format and its loader live in src/core/messages.py (shared with module auth).
 """
 
-import csv
-import re
+__all__ = ["MessageCatalog", "MessageCatalogError", "compose", "default_catalog", "placeholders"]
+
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -19,59 +18,18 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from src.core.messages import MessageCatalog, MessageCatalogError, placeholders
 from src.modules.notifications.schemas import NotificationEventType
 from src.modules.property.schemas import Locale
 from src.plugins.registry import SIGNATURE_SEPARATOR
 
 CATALOG_FILE = Path(__file__).with_name("messages.csv")
-FALLBACK_LOCALE = Locale.EN
-_PLACEHOLDER = re.compile(r"\{([a-z_]+)\}")
-
-
-class MessageCatalogError(ValueError):
-    pass
-
-
-def placeholders(template: str) -> set[str]:
-    return set(_PLACEHOLDER.findall(template))
-
-
-@dataclass(frozen=True)
-class MessageCatalog:
-    texts: Mapping[str, Mapping[str, str]]  # key -> locale -> template
-
-    @classmethod
-    def from_csv(cls, path: Path) -> "MessageCatalog":
-        with path.open(encoding="utf-8", newline="") as file:
-            reader = csv.DictReader(file)
-            columns = [c for c in reader.fieldnames or [] if c != "key"]
-            if set(columns) != {locale.value for locale in Locale}:
-                raise MessageCatalogError(f"{path.name}: columns {columns} do not match Locale")
-            texts: dict[str, dict[str, str]] = {}
-            for row in reader:
-                key = row["key"]
-                if key in texts:
-                    raise MessageCatalogError(f"{path.name}: duplicate key {key!r}")
-                english = row[FALLBACK_LOCALE.value]
-                if not english:
-                    raise MessageCatalogError(f"{path.name}: {key!r} has no English text")
-                for locale in columns:
-                    if row[locale] and placeholders(row[locale]) != placeholders(english):
-                        raise MessageCatalogError(
-                            f"{path.name}: {key!r} [{locale}] uses other placeholders than en"
-                        )
-                texts[key] = {locale: row[locale] for locale in columns}
-        return cls(texts)
-
-    def render(self, key: str, locale: str, **values: Any) -> str:
-        cells = self.texts[key]
-        template = cells.get(locale) or cells[FALLBACK_LOCALE.value]
-        return _PLACEHOLDER.sub(lambda match: str(values[match.group(1)]), template)
+LOCALES = tuple(locale.value for locale in Locale)
 
 
 @cache
 def default_catalog() -> MessageCatalog:
-    return MessageCatalog.from_csv(CATALOG_FILE)
+    return MessageCatalog.from_csv(CATALOG_FILE, LOCALES)
 
 
 @dataclass(frozen=True)
