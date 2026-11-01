@@ -5,8 +5,14 @@ tests/core/test_openapi.py fails while the committed file is out of date.
 """
 
 import json
+import os
 from pathlib import Path
 from typing import Any
+
+# The app refuses to start without its secrets; the contract does not depend on them, so the
+# generator brings placeholders (never used for anything else).
+os.environ.setdefault("JWT_SECRET_KEY", "openapi-generator-placeholder-secret-32-bytes")
+os.environ.setdefault("AUTH_HASH_SECRET", "openapi-generator-placeholder-secret-32-bytes")
 
 CONTRACT_PATH = Path(__file__).resolve().parents[2] / "docs" / "openapi.json"
 

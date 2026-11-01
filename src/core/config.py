@@ -27,10 +27,23 @@ class Settings(BaseSettings):
     # Off unless enabled explicitly: a real association must never get fictitious residents.
     SEED_DEMO_DATA: bool = False
 
-    # Bearer tokens are rejected while no secret is configured (safe default: no forgeable key).
+    # Required: the app refuses to start without it (src/modules/auth/policies.py,
+    # validate_auth_settings). Empty here only so that tools importing the settings still work.
     JWT_SECRET_KEY: str = ""
     JWT_ALGORITHM: str = "HS256"
-    JWT_ACCESS_TOKEN_TTL_MINUTES: int = 60
+    JWT_ACCESS_TOKEN_TTL_MINUTES: int = Field(default=15, ge=1)
+
+    # Login (module auth, docs/ARCHITECTURE.md 4.7). Key of every auth hash: required, at least
+    # 32 bytes; rotating it ends every session and voids every open link and invitation.
+    AUTH_HASH_SECRET: SecretStr = SecretStr("")
+    # The refresh cookie lives this long and is extended on use; a session ends after the cap.
+    AUTH_SESSION_IDLE_DAYS: int = Field(default=7, ge=1)
+    AUTH_SESSION_MAX_DAYS: int = Field(default=90, ge=1)
+    # Accept access tokens without a session id (create_access_token in tests). Only allowed for
+    # ENVIRONMENT local, dev or test.
+    AUTH_ALLOW_SESSIONLESS_TOKENS: bool = False
+    # The hourly clean-up of expired sessions (and, later, links and attempts).
+    AUTH_CLEANUP_ENABLED: bool = True
 
     # Comma-separated plugin modules under src/plugins/ (docs/ARCHITECTURE.md).
     ENABLED_PLUGINS: str = "common.csv_export"

@@ -16,6 +16,9 @@ from src.core.exceptions import register_exception_handlers
 from src.core.frontend import mount_frontend
 from src.core.health import router as health_router
 from src.core.telemetry import configure_logging, setup_telemetry, shutdown_tracing
+from src.modules.auth.cleanup import run_cleanup_loop
+from src.modules.auth.policies import validate_auth_settings
+from src.modules.auth.router import router as auth_router
 from src.modules.communication.router import router as communication_router
 from src.modules.meters.router import router as meters_router
 from src.modules.notifications.dispatcher import (
@@ -56,6 +59,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         loops.append(
             asyncio.create_task(run_scheduler_loop(scheduler), name="notifications-scheduler")
         )
+    if settings.AUTH_CLEANUP_ENABLED:
+        loops.append(
+            asyncio.create_task(
+                run_cleanup_loop(lambda: app.state.auth_session_factory), name="auth-cleanup"
+            )
+        )
     yield
     for loop in loops:
         loop.cancel()
@@ -68,6 +77,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(level=settings.LOG_LEVEL, json_logs=settings.LOG_JSON)
+    validate_auth_settings(settings)  # no app without the secrets every sign-in depends on
 
     app = FastAPI(title=settings.APP_NAME, version=settings.APP_VERSION, lifespan=lifespan)
     app.state.settings = settings
@@ -75,6 +85,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.event_bus = InMemoryEventBus()
     register_exception_handlers(app)
     app.include_router(health_router)
+    app.include_router(auth_router)
+    # Read on every tick, so tests can swap the factory after create_app.
+    app.state.auth_session_factory = async_session_factory
     app.include_router(property_router)
     app.include_router(meters_router)
     app.include_router(communication_router)

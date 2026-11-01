@@ -3,6 +3,13 @@ import os
 # Demo impersonation is off by default; the suite authenticates with X-Demo-User-Id. This must be
 # set before src.core.config builds the cached settings on import.
 os.environ.setdefault("DEMO_MODE_ENABLED", "true")
+# Login secrets are required at startup (docs/ARCHITECTURE.md 4.7); test-only values. Tokens
+# without a session (create_access_token) are allowed in the test environment only.
+os.environ.setdefault("ENVIRONMENT", "test")
+os.environ.setdefault("JWT_SECRET_KEY", "test-only-jwt-secret-at-least-32-bytes")
+os.environ.setdefault("AUTH_HASH_SECRET", "test-only-auth-hash-secret-at-least-32-bytes")
+os.environ.setdefault("AUTH_ALLOW_SESSIONLESS_TOKENS", "true")
+os.environ.setdefault("AUTH_CLEANUP_ENABLED", "false")
 
 # Metric readers can only be attached when the global meter provider is created, and importing
 # src.main creates an app (and the provider) right away. So register the test reader first.

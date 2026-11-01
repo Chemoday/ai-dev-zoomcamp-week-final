@@ -5,6 +5,7 @@ PostgreSQL rejects NUL bytes in text columns, so an unchecked "\\u0000" in any f
 """
 
 import re
+import unicodedata
 from typing import Annotated
 
 from pydantic import AfterValidator, Field
@@ -51,3 +52,9 @@ def optional_safe_text(max_length: int) -> object:
         Annotated[str, AfterValidator(clean_text), Field(max_length=max_length)] | None,
         AfterValidator(_blank_to_none),
     ]
+
+
+def canonical_email(value: str) -> str:
+    """The form e-mail addresses are stored and matched in: trimmed, NFKC, lower case
+    (docs/SCHEMA.md 1), so the unique index of core_users.email ignores case."""
+    return unicodedata.normalize("NFKC", value).strip().lower()

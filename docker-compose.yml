@@ -21,6 +21,9 @@ services:
       DATABASE_URL: postgresql+asyncpg://app:app@db:5432/app
       ENVIRONMENT: local
       DEMO_MODE_ENABLED: "true"
+      # Local-only login secrets (docs/ARCHITECTURE.md 4.7); deployed environments use their .env.
+      JWT_SECRET_KEY: local-only-jwt-secret-change-me-0123456789
+      AUTH_HASH_SECRET: local-only-auth-hash-secret-change-me-0123456789
       SEED_DEMO_DATA: "true"
       LOG_LEVEL: INFO
       # Traces, metrics and logs go to the collector, then to Grafana (docs/OBSERVABILITY.md).
