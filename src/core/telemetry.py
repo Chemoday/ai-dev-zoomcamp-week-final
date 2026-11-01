@@ -54,6 +54,8 @@ SENSITIVE_KEY_MARKERS: tuple[str, ...] = (
     "personal_code",
     "subject_hash",
     "chat_id",
+    "refresh",  # the refresh cookie and its token (module auth)
+    "user_agent",  # only a coarse device kind is ever kept
     "endpoint",  # a WebPush endpoint is a capability URL: whoever has it can push to the device
     "p256dh",
 )

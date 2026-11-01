@@ -103,6 +103,7 @@ class ErrorResponse(BaseModel):
 AUTH_ERRORS = ("NOT_AUTHENTICATED", "INVALID_TOKEN", "UNKNOWN_USER")
 
 _STATUS_TITLES = {
+    400: "Bad request",
     401: "Not authenticated",
     403: "Forbidden",
     404: "Not found (or not visible to the caller)",

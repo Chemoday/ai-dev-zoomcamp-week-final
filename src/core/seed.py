@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.config import settings
 from src.core.database import build_engine, transaction
 from src.core.telemetry import configure_logging
+from src.core.validation import canonical_email
 from src.modules.communication.models import Comment, Post
 from src.modules.communication.schemas import PostCategory, PostType, TargetScope
 from src.modules.meters.models import MeterDevice, MeterReading, MeterReadingLog, ReadingPeriod
@@ -106,7 +107,7 @@ class DemoUser:
 
     @property
     def email(self) -> str:
-        return f"{self.full_name.lower().replace(' ', '.')}@demo.invalid"
+        return canonical_email(f"{self.full_name.replace(' ', '.')}@demo.invalid")
 
 
 DEMO_USERS: tuple[DemoUser, ...] = (
