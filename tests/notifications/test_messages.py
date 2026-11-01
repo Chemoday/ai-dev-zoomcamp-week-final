@@ -118,7 +118,7 @@ def test_an_empty_cell_falls_back_to_english(tmp_path: Path) -> None:
 )
 def test_a_broken_catalog_is_rejected(tmp_path: Path, text: str, error: str) -> None:
     with pytest.raises(MessageCatalogError, match=error):
-        MessageCatalog.from_csv(write_catalog(tmp_path, text))
+        MessageCatalog.from_csv(write_catalog(tmp_path, text), [locale.value for locale in Locale])
 
 
 def test_a_title_with_line_breaks_becomes_a_one_line_subject() -> None:
