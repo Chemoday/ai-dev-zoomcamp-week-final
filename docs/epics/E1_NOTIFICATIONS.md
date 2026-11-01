@@ -1,6 +1,6 @@
 # E1. Notifications
 
-- **Phase:** 2. **Status:** N1, N1b and N2-N6 done (in-app notifications, the dispatcher, e-mail, Telegram, WebPush, reading reminders and clean-up in `develop`; external channels send nowhere until a real login, 10.10); N7 (mobile push) waits for B-7. **Epic issue:** [#39](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/39).
+- **Phase:** 2. **Status:** N1, N1b and N2-N6 done (in-app notifications, the dispatcher, e-mail, Telegram, WebPush, reading reminders and clean-up in `develop`; external channels send nowhere until a real login, 10.10); N8 (unsubscribe) next; N7 (mobile push) after E7 (login). **Epic issue:** [#39](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/39).
 - **Goal:** one pluggable notification system that every module uses, instead of each feature
   sending its own messages. Reminders, emergency alerts and (later) voting all go through it.
 
@@ -359,7 +359,8 @@ review before merge (see AGENTS.md).
 | N4 | `common.telegram` with webhook linking | tests with a fake Telegram API: alert reaches a linked private chat; group chats and reused codes are rejected; demo mode links nothing |
 | N5 | `common.webpush` (backend) | tests with a fake push service: push to every device of a user; non-allowlisted endpoints rejected; 410 revokes; demo mode subscribes nothing |
 | N6 | Scheduler: reading reminders and clean-up | one reminder per period and user, also after a restart; old deliveries and link codes are deleted |
-| N7 | `common.fcm_push`: push to the native phone app (6.4). Plan and stub done (#57); implementation later | see "Done when" in 6.4 |
+| N7 | `common.fcm_push`: push to the native phone app (6.4). Plan and stub done (#57); implementation after E7 (login) | see "Done when" in 6.4 |
+| N8 | Unsubscribe (owner decision 2026-11-01). Every non-mandatory notification e-mail gets a link to a page with an "Unsubscribe" button, and the headers `List-Unsubscribe` and `List-Unsubscribe-Post` for the one-click POST of RFC 8058, so link scanners cannot unsubscribe anyone. The token is an HMAC of the delivery (`NOTIFICATIONS_HASH_SECRET` with its own prefix, so it never collides with the address hashes; the key then becomes required with e-mail too). A link stops working once its delivery row is deleted after the retention period (accepted: by then the mail is old). Telegram gets `/stop`. Emergencies stay mandatory: their footer says that only unlinking the channel or removing the e-mail stops them. Login e-mails (E7) are transactional and carry no unsubscribe | one click turns the e-mail off without signing in; mail clients show their unsubscribe button; `/stop` unlinks the chat; tests |
 
 ## 10. Decisions settled before N1
 

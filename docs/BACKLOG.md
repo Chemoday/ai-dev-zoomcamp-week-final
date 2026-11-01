@@ -203,7 +203,7 @@ Delivery itself reuses epic E1 (a new event type, e.g. `PaymentOverdue`).
 
 ## B-7. Real login before external notifications
 
-- **Status:** open. Blocks real use of e-mail, Telegram and WebPush (epic E1). Raised 2026-10-31.
+- **Status:** open, **tracked in epic E7** ([docs/epics/E7_LOGIN.md](epics/E7_LOGIN.md)). Blocks real use of e-mail, Telegram and WebPush (epic E1). Raised 2026-10-31.
 
 ### Problem
 There is no login: users act through `X-Demo-User-Id` (demo mode) or a Bearer JWT that only an
