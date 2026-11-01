@@ -1,4 +1,4 @@
-"""The repository is English only; the one exception is the notifications localization CSV."""
+"""The repository is English only; the exceptions are the localization CSVs of the modules."""
 
 import re
 import shutil
@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-ALLOWED = {"src/modules/notifications/messages.csv"}
+ALLOWED = {"src/modules/notifications/messages.csv", "src/modules/auth/messages.csv"}
 CYRILLIC = re.compile("[\u0400-\u04ff]")
 
 
@@ -21,7 +21,7 @@ def tracked_files() -> list[str]:
     return output.splitlines()
 
 
-def test_only_the_localization_file_contains_cyrillic() -> None:
+def test_only_the_localization_files_contain_cyrillic() -> None:
     offenders = []
     for name in tracked_files():
         if name in ALLOWED:

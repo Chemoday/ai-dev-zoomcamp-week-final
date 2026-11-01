@@ -145,6 +145,17 @@ class DeliveryContactDTO(BaseModel):
     __str__ = __repr__
 
 
+class UserRefDTO(BaseModel):
+    """An active user as module auth needs it (docs/ARCHITECTURE.md 4.2): ids, role, language."""
+
+    model_config = ConfigDict(frozen=True)
+
+    user_id: uuid.UUID
+    building_id: uuid.UUID
+    building_role: BuildingRole
+    locale: Locale | None
+
+
 class RecipientDTO(BaseModel):
     """A notification recipient: an id and a language, never contact data."""
 

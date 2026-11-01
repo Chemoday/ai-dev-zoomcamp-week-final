@@ -5,7 +5,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from src.core.validation import canonical_email, clean_text
+
+MAX_EMAIL_LENGTH = 254
 
 
 class AuthMethod(StrEnum):
@@ -18,6 +22,55 @@ class DeviceKind(StrEnum):
     DESKTOP_BROWSER = "DESKTOP_BROWSER"
     MOBILE_BROWSER = "MOBILE_BROWSER"
     UNKNOWN = "UNKNOWN"
+
+
+class TokenPurpose(StrEnum):
+    MAGIC_LINK = "MAGIC_LINK"
+    INVITATION = "INVITATION"
+    REGISTRATION = "REGISTRATION"
+
+
+class AttemptKind(StrEnum):
+    MAGIC_LINK = "MAGIC_LINK"
+    REDEEM = "REDEEM"
+    PASSWORD = "PASSWORD"
+    INVITATION = "INVITATION"
+
+
+class SignInStatus(StrEnum):
+    SIGNED_IN = "SIGNED_IN"
+    REGISTRATION_REQUIRED = "REGISTRATION_REQUIRED"  # A4
+    SIGN_IN_TO_ACCEPT = "SIGN_IN_TO_ACCEPT"  # A4
+
+
+class MagicLinkRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    email: str = Field(min_length=3, max_length=320)
+
+    @field_validator("email")
+    @classmethod
+    def _looks_like_an_address(cls, value: str) -> str:
+        canonical = canonical_email(clean_text(value))  # control characters (NUL) are refused
+        local, _, domain = canonical.rpartition("@")
+        if (
+            not local
+            or "." not in domain
+            or any(c.isspace() for c in canonical)
+            or len(canonical) > MAX_EMAIL_LENGTH
+        ):
+            raise ValueError("not an e-mail address")
+        return canonical
+
+
+class MagicLinkAccepted(BaseModel):
+    accepted: bool = True
+
+
+class RedeemRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    token: str = Field(min_length=1, max_length=128)
 
 
 class SessionResponse(BaseModel):
@@ -46,3 +99,10 @@ class IssuedSession:
     response: SessionResponse
     refresh_token: str | None
     expires_at: datetime  # of the session, for the cookie's Max-Age
+
+
+class SignInResponse(BaseModel):
+    """The answer of redeeming a link (docs/API.md 7); A3 knows only SIGNED_IN."""
+
+    status: SignInStatus
+    session: SessionResponse | None = None
