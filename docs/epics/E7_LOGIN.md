@@ -1,15 +1,16 @@
 # E7. Login
 
 - **Phase:** 2. **Status:** design reviewed by the owner and by the CTO review (2026-11-01);
-  contract (A1, [#64](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/64)) next.
-  **Backlog:** docs/BACKLOG.md B-7. **Epic issue:**
+  contract (A1, [#64](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/64)) written,
+  waiting for the owner's approval. **Backlog:** docs/BACKLOG.md B-7. **Epic issue:**
   [#69](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/69).
 - **Goal:** people sign in as themselves, and only people the association invited can sign in.
   Today every environment runs in demo mode (`X-Demo-User-Id`: anyone can act as the chairman),
   so the external notification channels of E1 cannot be used for real.
 
-This page is the design. The binding contract comes with task A1 (docs/SCHEMA.md, docs/API.md,
-docs/ARCHITECTURE.md); where they differ, the contract wins. Background: the planning session of
+This page is the design. The binding contract is task A1: docs/SCHEMA.md sections 1, 2 and 7,
+docs/API.md sections 0 and 7, docs/ARCHITECTURE.md section 4 and docs/FRONTEND_GUIDE.md section
+12. Where they differ, the contract wins. Background: the planning session of
 2026-11-01 (docs/cli_planning/2026-11-01-login-and-profiles.md).
 
 ## 1. Owner decisions (2026-11-01)
@@ -45,8 +46,8 @@ In scope:
 - Signing in with an e-mail link, and with an optional password (set, change, reset).
 - Invitations by the chairman (owners, staff) and by owners (tenants); resend and revoke;
   completing the registration; replacing a tenant.
-- Granting an existing person another apartment or a staff role (chairman), e.g. an owner of two
-  flats, or a board member who is also an owner.
+- Giving an existing person another apartment or a staff role (an invitation they accept), e.g. an
+  owner of two flats, or a board member who is also an owner.
 - Ending a membership and closing an account, with the clean-up in other modules.
 - The first chairman of a new installation (an operator command).
 - E-mail texts (en, ru, et) and sending through the e-mail plugin.
@@ -54,8 +55,8 @@ In scope:
 
 Out of scope:
 - Smart-ID, the ID card, two-factor authentication.
-- Changing one's own e-mail address (later; the chairman can correct an e-mail of an owner or
-  staff member until then).
+- Changing an e-mail address: later, by the person, with a confirmation of both addresses. Nobody
+  else may change it, since redirecting someone's e-mail would hand over their account.
 - Leaving demo mode in any environment: a separate owner decision with the checklist in 3.8.
 - Apartment profiles and threads between the board and an apartment (E8).
 
@@ -68,14 +69,15 @@ Out of scope:
     registration);
   - `auth_attempts`.
 - `property` keeps users, apartments and memberships. `auth` changes them only through new
-  `PropertyService` system methods: create a pending user, activate, add or end a membership, set
-  a role, close. `property` never imports `auth`, so the dependency points one way only.
+  `PropertyService` system methods (ARCHITECTURE 4.2): create a user at registration, open or end
+  a membership, set a role, close. `property` never imports `auth`, so the dependency points one way only.
 - **Routes:** `/api/v1/auth/...`, invitations included. The chairman's user administration
-  (grant, role, close) also lives in `auth`'s router and calls `PropertyService`.
-- **Closing an account** stores a durable domain event `UserAccountClosed(user_id)` (ids only, in
-  the same transaction). Notifications subscribes to it and deletes the person's bindings,
+  (role, memberships, close) also lives in `auth`'s router and calls `PropertyService`.
+- **Closing an account** stores a durable domain event `UserAccountClosed(user_id, building_id)`
+  (ids only, in the same transaction). Notifications subscribes to it and deletes the person's bindings,
   preferences and link codes, and its pending deliveries are skipped (`USER_INACTIVE`). This fits
-  E1's rule that notifications only consumes.
+  E1's rule that notifications only consumes. Its clean-up does the same for every inactive user,
+  for the time notifications were switched off (ARCHITECTURE 4.1).
 
 ### 3.2 E-mail addresses
 - **Canonical form:** trimmed, NFKC-normalised, lower-cased. Users store it and are looked up by
@@ -97,8 +99,8 @@ Out of scope:
     prod never share it);
   - valid 7 days and extended on every refresh; a session ends after 90 days at the latest.
 - **Tables:** `auth_sessions` is one row per sign-in: user, `authenticated_at`, `auth_method`,
-  `expires_at`, the 90-day cap, `revoked_at` and a neutral device label such as "browser on
-  desktop". `auth_refresh_tokens` holds the keyed hash, `rotated_at` and `replaced_by`.
+  `expires_at`, the 90-day cap, `revoked_at` and a coarse `device_kind` (`DESKTOP_BROWSER`,
+  `MOBILE_BROWSER`, `UNKNOWN`), which the frontend localizes. `auth_refresh_tokens` holds the keyed hash, `rotated_at` and `replaced_by`.
 - **Rotation:** every refresh replaces the token.
   - Within a 60-second grace window, a refresh with the token just replaced returns a new access
     token for the same session and **no** `Set-Cookie`: tabs share one cookie jar, so the browser
@@ -122,14 +124,16 @@ Out of scope:
 2. Only for an **active** user with that e-mail, a one-time token is created: 32 random bytes,
    valid 15 minutes, stored as its keyed hash (`AUTH_HASH_SECRET`). The e-mail links to
    `PUBLIC_BASE_URL/login/link#<token>`. For a person whose invitation is still pending, the
-   invitation is resent instead (like Resend: it cancels the old link, the 7 days start again, and
-   it counts toward the 5-per-hour limit).
+   invitation is resent instead: a new link cancels the old one, and the expiry stays the same
+   (only the inviter or the chairman can extend it).
 3. The frontend page reads the fragment, removes it at once (`history.replaceState`), and calls
    `POST /auth/magic-link/redeem {"token"}` only after the person clicks "Sign in". Link scanners
    of mail providers therefore cannot use it up. The page sends `Referrer-Policy: no-referrer`.
 4. Limits:
-   - 5 links per e-mail per hour, 20 per IP address per hour (over the limit: still `202`,
-     nothing sent);
+   - 5 links per e-mail and IP address together per hour, 20 per e-mail per day, 20 per IP
+     address per hour (over a limit: still `202`, nothing sent). Counting the e-mail together
+     with the address means somebody else cannot use up a person's links; the daily cap stops
+     mail bombing;
    - 20 redeem attempts per IP address per hour.
    - Each valid link works once; a newer link does not cancel an older one.
 
@@ -148,45 +152,51 @@ Out of scope:
 - **Login:** `POST /auth/password/login {"email", "password"}`.
   - Any failure gets one generic `401 INVALID_CREDENTIALS`, with the same timing (a dummy hash
     for an unknown e-mail).
-- **Throttling,** counted in `auth_attempts` by the hash of the submitted e-mail (whether it
-  exists or not) and by the IP address:
-  - after 5 failures in 15 minutes for an e-mail, or 30 for an IP address, a growing delay
-    applies (`429` with `Retry-After`, the same for known and unknown e-mails);
-  - there is no lockout, so nobody can lock another person out.
+- **Throttling,** counted in `auth_attempts` by hashes of the submitted e-mail (whether it exists
+  or not) and the IP address:
+  - after 5 failures in 15 minutes for the e-mail and IP address together, or 30 for an IP
+    address, a growing delay applies (`429` with `Retry-After`, the same for known and unknown
+    e-mails);
+  - after 100 failures for an e-mail within a day, its password is refused until its owner has
+    signed in with an e-mail link once;
+  - there is no lockout of signing in. Accepted residual risk: the silent daily cap on links can
+    block a person's new sign-ins for at most a day; a live session is unaffected.
 - **Forgotten password:** sign in with an e-mail link and set a new one.
 - The mailbox is the recovery root for both ways in. The password is a convenience, not a second
   factor.
 
 ### 3.6 Invitations and registration
+*(Refined by the contract, A1: docs/API.md section 7 is binding.)*
 - **Invite** (`POST /auth/invitations`):
-  - the chairman: `{email, apartment_number}` for an owner, or `{email, role}` for staff;
-  - an owner: `{email}` for a tenant of an apartment they own; it may name the apartment if they
-    own several.
-- **Pending state:** the invitation creates a pending user: `is_active = false`, `invited_at`
-  set, `full_name` = "Invited", with a membership whose relation is `OWNER` or `TENANT`. A pending
-  person cannot sign in, receives no notifications and is not a recipient. The inviter's list
-  shows them as "invited". Most user queries already filter `is_active`, but not all (e.g.
-  `has_delivery_email`, membership lists). A1 lists every user and membership query with its
-  filter, and adds tests.
-- **The invitation e-mail** holds a one-time link valid 7 days (purpose `invitation`).
-  - Redeeming it returns no session, but a short-lived registration token (purpose
-    `registration`, 30 minutes).
-  - `POST /auth/registration {token, full_name, phone?, locale, privacy_display_mode}` completes
-    the registration, activates the account (`activated_at`) and returns the session. Closing
-    the tab only means using the link again while it is valid.
-- **An e-mail that already belongs to an account:**
-  - The chairman gets `409 EMAIL_ALREADY_REGISTERED`; the chairman sees all accounts anyway. To
-    give that person another apartment or a staff role, the chairman uses "grant" (2. Scope).
-  - An owner always gets `202`, so an owner can never test whether an e-mail has an account. If
-    the e-mail is taken, no membership is created, and the holder gets an e-mail that suggests
-    asking the chairman.
-- **Resend** creates a new link and cancels the old one. **Revoke** deletes a pending invitation
-  together with its pending user and membership.
-- **Limits:** at most 10 invitations or resends per inviter per hour (`auth_attempts`, kind
-  `invitation`), and at most one "this e-mail already has an account" mail per address per day.
-- **Expiry:** an invitation whose newest link expired unused (7 days after the last send) is
-  removed by the clean-up, together with the pending user and membership. That frees the e-mail
-  and the tenant slot.
+  - the chairman: `{kind: OWNER, email, apartment_number}` or `{kind: STAFF, email, building_role}`;
+  - an owner: `{kind: TENANT, email, apartment_id}` for an apartment they own.
+- **No pending users.** An invitation is its own row (`auth_invitations`) holding the e-mail and
+  the target. No account exists until it is accepted, so nobody half-registered can sign in,
+  receive notifications or count as a resident. Pending tenant invitations count toward the
+  tenant limit.
+- **The invitation e-mail** holds a one-time link valid 7 days.
+  - **A new person:** redeeming the link returns a registration token (30 minutes).
+    `POST /auth/registration` creates the account with the membership or role and signs the
+    person in. Closing the tab only means opening the link again while it is valid.
+  - **An existing account** (an owner of a second flat, a board member who is also an owner):
+    the link never creates a session (a 7-day link must not become a sign-in). The person signs
+    in the usual way, sees what the invitation grants, and clicks "Accept"
+    (`POST /auth/invitations/accept`).
+  - **It never lowers anything:** an existing membership in the apartment stays as it is (an
+    owner invited as a tenant stays an owner), and a staff invitation applies only to an account
+    without a staff role (a `CHAIRMAN` invitation raises any role, for recovery).
+  - **Answers:** the inviter gets the same answer for an e-mail with or without an account
+    (`201`). There is no `409 EMAIL_ALREADY_REGISTERED` for inviters, no separate "grant"
+    endpoint, and no "already registered" e-mail.
+- **One open invitation per target,** from anyone (so two co-owners cannot both use up tenant
+  slots for the same person). **Resend** works on pending and expired invitations: it creates a new
+  link, cancels the old one, and starts the 7 days again. **Delete** removes an open invitation.
+- **Limits:** at most 10 invitations or resends per inviter per hour.
+- **Expiry:** an invitation whose newest link expired unused shows as `EXPIRED`. Accepted and
+  expired invitations are deleted after 30 days.
+- **An invitation stops applying** when a `TENANT` invitation's apartment has no active owner any
+  more, an `OWNER` or `STAFF` invitation's building has no active chairman, the apartment is gone,
+  or the account belongs to another building.
 - **Replace tenant** (`POST /auth/apartments/{id}/tenants/{user_id}/replace {email}`, by an owner
   of that apartment) runs in one transaction: it ends the old tenant's membership (3.7) and
   invites the new e-mail.
@@ -220,7 +230,8 @@ Out of scope:
   on, and never for the account endpoints (3.3).
 - **Login e-mails in demo mode** are sent only with `AUTH_MAIL_IN_DEMO=true`. Otherwise the
   endpoints answer as usual and send nothing; without the e-mail plugin nothing is sent either way.
-  - The app refuses to start with `AUTH_MAIL_IN_DEMO=true` and `ENVIRONMENT=prod`.
+  - The app refuses to start with `AUTH_MAIL_IN_DEMO=true` unless `ENVIRONMENT` is `local`, `dev`
+    or `test` (an allowlist, so an unknown name fails closed).
   - **A precondition of A3 for dev:** a password gate for `DEV_HOST` (Caddy `basic_auth`, a note
     in docs/DEPLOYMENT.md). Today `deploy/edge/Caddyfile` serves dev openly, so dev keeps
     `AUTH_MAIL_IN_DEMO=false` until the gate exists. Otherwise anyone acting as the chairman could
@@ -233,8 +244,10 @@ Out of scope:
   docs/DEPLOYMENT.md note, so `docker compose up --build` and `pytest` keep working. Rotating
   `AUTH_HASH_SECRET` signs everyone out and voids all open links and invitations.
 - **First chairman:** `uv run python -m src.modules.auth create-chairman --email ...` (an operator
-  command) creates a pending chairman and prints nothing secret; the invitation goes out by
-  e-mail.
+  command) creates a `CHAIRMAN` staff invitation and sends it.
+  - `--force` also works when a chairman exists, as a recovery when the only chairman lost their
+    mailbox.
+  - `--print-link` prints the link to the operator's terminal when mail cannot go out.
 - **Leaving demo mode later** (a checklist for that decision):
   1. rotate `JWT_SECRET_KEY` and `AUTH_HASH_SECRET`, which revokes every session and link;
   2. delete all password identities (every one of them dates from the demo period);
@@ -254,49 +267,20 @@ Out of scope:
   (`tests/core/test_repository_language.py`) is extended to allow Cyrillic in both CSV files.
 - These e-mails are transactional: they carry no unsubscribe link (E1/N8).
 
-## 4. Data model (draft; final version in docs/SCHEMA.md, task A1)
-- `core_users`: plus `invited_at`, `activated_at`; `email` stored canonical with a unique index.
-- `property_memberships`: plus `ended_at`.
-- `core_user_identities`: moves to `auth`. Its descriptions are updated: Argon2id, and a keyed
-  HMAC for subjects.
-- `auth_sessions`, `auth_refresh_tokens` (3.3).
-- `auth_tokens`: `user_id`, `purpose` (`magic_link`, `invitation`, `registration`),
-  `token_hash` (unique), `created_at`, `expires_at`, `used_at`, `invited_by_user_id`.
-- `auth_attempts`: `kind` (`magic_link`, `redeem`, `password`, `invitation`), `subject_hash`
-  (keyed hash of the e-mail, the IP address or the inviter's user id), `succeeded`,
-  `attempted_at`. Rows older than a day are deleted.
+## 4. Data model
+Final version: docs/SCHEMA.md section 1 (`core_users`, `core_user_identities`), section 2
+(`property_memberships.ended_at`) and section 7 (`auth_sessions`, `auth_refresh_tokens`,
+`auth_invitations`, `auth_tokens`, `auth_attempts`).
 
-## 5. API (draft; final version in docs/API.md, task A1)
-
-| Method | Path | Who | Purpose |
-|---|---|---|---|
-| POST | `/api/v1/auth/magic-link` | anyone | send a sign-in link (always 202) |
-| POST | `/api/v1/auth/magic-link/redeem` | a link holder | sign in, or start the registration of an invitation |
-| POST | `/api/v1/auth/registration` | a registration token | complete the registration, get the session |
-| POST | `/api/v1/auth/password/login` | anyone | sign in with a password |
-| PUT | `/api/v1/auth/password` | signed in, recently | set or change the password |
-| POST | `/api/v1/auth/refresh` | refresh cookie | new access token, rotated cookie |
-| POST | `/api/v1/auth/logout` | refresh cookie | end this session |
-| GET / DELETE | `/api/v1/auth/sessions[/{id}]` | signed in | own sessions; end one or all |
-| POST / GET | `/api/v1/auth/invitations` | chairman (owners, staff), owner (tenants) | invite; list own open invitations |
-| POST | `/api/v1/auth/invitations/{id}/resend` | the inviter, chairman | new link |
-| DELETE | `/api/v1/auth/invitations/{id}` | the inviter, chairman | revoke |
-| POST | `/api/v1/auth/apartments/{id}/tenants/{user_id}/replace` | owner of the apartment | replace a tenant |
-| DELETE | `/api/v1/auth/apartments/{id}/tenants/{user_id}` | owner of the apartment | end a tenant's membership |
-| POST | `/api/v1/auth/users/{id}/memberships` | chairman | grant another apartment to an existing person |
-| PUT | `/api/v1/auth/users/{id}/role` | chairman | set the staff role (last-chairman rule) |
-| DELETE | `/api/v1/auth/users/{id}/memberships/{membership_id}` | chairman | end one membership |
-| DELETE | `/api/v1/auth/users/{id}` | chairman | close an account |
-
-- Answers that could reveal whether an e-mail has an account are the same for both cases. The
-  only exception is the chairman's `409 EMAIL_ALREADY_REGISTERED`.
-- What the lists show: the chairman sees full e-mails of invitations; an owner sees the e-mails
-  they invited. Who may see phone numbers is decided with E8.
+## 5. API
+Final version: docs/API.md section 7 (and section 0 for the Bearer token). FRONTEND_GUIDE section
+12 describes the screens; ARCHITECTURE section 4 the module, its contracts with `property`, the
+query filters, the demo rules and the settings.
 
 ## 6. Privacy and security
 - **Never in logs or spans:** e-mails, tokens, passwords, cookies or IP addresses; only keyed
-  hashes are stored. New scrubber markers: `refresh`, `magic`, `client_ip`, `ip_address` (it
-  already has `token`, `email`, `password`, `secret`, `cookie`).
+  hashes are stored. New scrubber markers: `refresh`, `magic`, `client_ip`, `ip_address`,
+  `user_agent` (it already has `token`, `email`, `password`, `secret`, `cookie`).
 - **Tokens** are 32 random bytes from `secrets` and are found by hash lookup.
 - uvicorn already runs without an access log. The reverse proxy keeps its access log off, or
   excludes `Cookie` and `Authorization` (a note in docs/DEPLOYMENT.md).
@@ -311,5 +295,5 @@ review before merge (AGENTS.md section 4).
 | A1 | Contract: SCHEMA, API, ARCHITECTURE (module `auth`, ownership, the demo and e-mail rules), FRONTEND_GUIDE (sign-in, registration, invitations, sessions, my residents) | the owner approved the API |
 | A2 | Module `auth`, sessions: tables, refresh with rotation, grace window and reuse detection, logout, sessions list, `sid`/`auth_time`, the 15-minute access token, the canonical e-mail migration | tests: rotation, two tabs at once, a reused token revokes, expiry and the 90-day cap, cookie flags, the CSRF header, the demo header rejected on account endpoints |
 | A3 | Sign in with an e-mail link, and the auth e-mail sender; precondition for dev: the password gate (3.8) | the same answer and timing for known and unknown e-mails; one-time, 15 minutes; limits; demo-mode mail rule; tests with the test SMTP server |
-| A4 | Invitations, registration, grant, roles, ending a membership, closing an account, replace tenant, the first-chairman command | tests: the pending user cannot sign in or receive notifications; registration activates; the chairman invites only owners and staff; owners only tenants, at most 3 with pending ones; the owner never learns whether an e-mail exists; closing wipes personal data and notifications drops the bindings; the last chairman stays |
+| A4 | Invitations (new and existing accounts), registration, roles, ending a membership, closing an account, replace tenant, the first-chairman command | tests: nobody is created before an invitation is accepted; registration creates the account; an existing account accepts by link; the chairman invites only owners and staff; owners only tenants, at most 3 with pending ones; the owner never learns whether an e-mail exists; closing wipes personal data and notifications drops the bindings; the last chairman stays |
 | A5 | Optional password | Argon2id; 15 characters; one generic error and timing; throttling without lockout; a change revokes other sessions; a reset through the e-mail link |

@@ -36,7 +36,7 @@ Repositories, commits and the way a frontend change reaches dev (Google AI Studi
 
 ## 2. Acting as a user (demo mode)
 
-There is **no login endpoint** in the MVP. The UI acts as a seeded user:
+There is **no login endpoint** in the MVP (sign-in is planned in epic E7, section 12). The UI acts as a seeded user:
 
 1. `GET /api/v1/demo/users` (no auth) returns the role switcher entries:
    `user_id`, `label` ("Owner Apt 14"), `building_role`, `apartment_number`, `relation_type`.
@@ -272,3 +272,84 @@ not of the feed.
      first) with the served key. If they differ (the server's key was
      changed), delete the stored binding, call `unsubscribe()` and subscribe again; otherwise the
      device keeps failing and still counts towards the 10 devices.
+
+## 12. Sign-in and accounts *(planned, epic E7)*
+
+Contract: docs/API.md section 7. It is not in `docs/openapi.json` until tasks A2-A5 land.
+
+**Demo mode.** Until an environment leaves demo mode, keep the role switcher of section 2. The
+sign-in screens work next to it. Account pages (Security, My residents, People) refuse the demo
+header, so they need a real sign-in even in demo mode.
+
+### Tokens
+- **Access token in memory only:** a module-level variable, never `localStorage`,
+  `sessionStorage` or a readable cookie.
+- **Refresh:**
+  - On app start, call `POST /auth/refresh` with `credentials: "same-origin"` and
+    `X-Requested-With: fetch`. `200` means signed in; `401 SESSION_EXPIRED` means show the
+    sign-in screen.
+  - Refresh again about a minute before `expires_in` runs out.
+  - On `401 INVALID_TOKEN` from any call, refresh once and repeat that call once.
+  - `401 UNKNOWN_USER` means the account was closed: drop the token and show the sign-in screen.
+  - Allow one refresh at a time per tab. Several tabs at once are fine: the server has a grace
+    window.
+- **Bearer and demo header:** send `Authorization: Bearer <access_token>`. Once signed in, do not
+  send `X-Demo-User-Id`.
+- **CSRF header:** send `X-Requested-With: fetch` on every `/api/v1/auth/*` call.
+
+### Screens
+- **Sign in:**
+  - An e-mail field and "Send me a link". After sending, always show "If this e-mail is
+    registered, a link is on its way", and allow "Resend" only after 60 seconds.
+  - A second tab, "Sign in with a password". On `401 INVALID_CREDENTIALS` show one generic error
+    text. On `429` show a countdown from `retry_after_seconds` and suggest the link.
+- **Link page** `/login/link#<token>`:
+  1. Read the token from `location.hash`, then remove the hash at once with
+     `history.replaceState(null, "", "/login/link")`.
+  2. Show a "Continue" button, and call `POST /auth/magic-link/redeem` only on its click (mail
+     scanners open links but do not click).
+  3. Then:
+     - `SIGNED_IN`: go to the app;
+     - `REGISTRATION_REQUIRED`: show the registration form;
+     - `SIGN_IN_TO_ACCEPT`: show the invitation ("You are invited as a tenant of apartment 14").
+       First try `POST /auth/refresh`: if the person is signed in, show "Accept" at once.
+       Otherwise show "Sign in to accept". Signing in by link opens another tab, so this page
+       may be reloaded; the invitation link stays valid, and opening it again is the simple way
+       back. "Accept" calls `POST /auth/invitations/accept` with the token. "Not now" only closes
+       the page; there is no decline call, and the invitation simply expires;
+     - `400 INVALID_LINK`: "This link is used, expired or no longer valid", plus the sign-in
+       form.
+- **Registration** (after an invitation link):
+  - The heading comes from `invitation`, e.g. "You are invited as the owner of apartment 14".
+  - Fields: full name, an optional phone, the language, and how the name is shown to neighbours
+    (the preview of section 1). Hide the last one for `STAFF`.
+  - Submit to `POST /auth/registration` within 30 minutes. After that, open the link again.
+  - On `409 EMAIL_ALREADY_REGISTERED`: "Sign in, then accept the invitation".
+- **Settings > Security:**
+  - Set, change or remove the password. Ask for the current password, or offer a new sign-in link,
+    when the answer is `403 REAUTHENTICATION_REQUIRED`. Rules to show: at least 15 characters; a
+    phrase of a few words is fine.
+  - The list of sessions: `device_kind` localized, with "Sign out" per session and "Sign out
+    everywhere".
+- **Sign out:** first delete the WebPush binding (section 11, it needs the Bearer token), then
+  call `POST /auth/logout` and drop the access token from memory.
+- **My residents** (owners, one block per owned apartment), from
+  `GET /auth/apartments/{id}/residents`:
+  - residents, with `invited_email` where the owner invited them, so tenants who all show as
+    "Apt. 14" can be told apart;
+  - "Invite a tenant" (an e-mail), plus "Replace" and "Remove" for each tenant;
+  - "Resend" and "Cancel" for each pending invitation;
+  - on `409 TENANT_LIMIT_REACHED`: "At most 3 tenants".
+- **Chairman > People:**
+  - Invite an owner (an e-mail and the apartment number) or staff (an e-mail and a role).
+  - The invitation list with its statuses (`NO_LONGER_VALID` explained). E-mails typed by owners
+    appear masked.
+  - For each person: change the role (explain `409 LAST_CHAIRMAN`), end a membership, or close
+    the account. The confirmation names the effects: signed out everywhere, personal data
+    removed. If `account_closed` comes back, say so.
+
+### Privacy
+- The API returns e-mail addresses only from invitations: in full to the person who typed them
+  in, and masked to the chairman for invitations typed by owners. It never returns phone numbers.
+- Do not put e-mails or tokens into analytics, URLs (except the fragment of the link page) or
+  logs.

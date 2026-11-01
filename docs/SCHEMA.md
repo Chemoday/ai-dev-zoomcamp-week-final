@@ -11,23 +11,23 @@ All tables use `UUID` primary keys (`uuid4`), UTC timestamps (`TIMESTAMPTZ`), an
 | :--- | :--- | :--- | :--- |
 | `id` | `UUID` | `PK` | Internal user ID |
 | `building_id` | `UUID` | `FK(property_buildings.id), NOT NULL, INDEX` | Building the user belongs to. `building_role` applies to this building, and it is the source of `CurrentUserDTO.building_id` (also for staff without an apartment membership) |
-| `email` | `VARCHAR(255)` | `UNIQUE, NULLABLE` | Email (optional for offline/PIN-only elderly residents) |
-| `full_name` | `VARCHAR(255)` | `NOT NULL` | Real name (NEVER exposed raw in forum APIs or telemetry logs) |
-| `phone` | `VARCHAR(50)` | `NULLABLE` | Emergency contact phone (visible only to Chairman/Board) |
+| `email` | `VARCHAR(255)` | `UNIQUE, NULLABLE` | Email (optional for offline/PIN-only elderly residents). *(Planned, E7:)* stored in canonical form (trimmed, NFKC, lower case), so the unique index is case-insensitive; a migration lower-cases the existing rows and stops if two collide. `NULL` after an account is closed |
+| `full_name` | `VARCHAR(255)` | `NOT NULL` | Real name (NEVER exposed raw in forum APIs or telemetry logs). *(Planned, E7:)* entered by the person at registration; `"Former resident"` after the account is closed |
+| `phone` | `VARCHAR(50)` | `NULLABLE` | Emergency contact phone (visible only to Chairman/Board). *(Planned, E7:)* `NULL` after the account is closed |
 | `locale` | `VARCHAR(5)` | `NULLABLE, CHECK IN ('et', 'ru', 'en')` | Language of notifications sent outside the app. `NULL` = the instance default `DEFAULT_LOCALE` |
 | `building_role` | `VARCHAR(32)` | `NOT NULL, DEFAULT 'USER'` | Enum: `CHAIRMAN`, `BOARD`, `ACCOUNTANT`, `USER` |
-| `is_active` | `BOOLEAN` | `NOT NULL, DEFAULT TRUE` | Account status |
+| `is_active` | `BOOLEAN` | `NOT NULL, DEFAULT TRUE` | Account status. *(Planned, E7:)* `false` only for a closed account (there is no reversible deactivation) |
 | `created_at` | `TIMESTAMPTZ` | `NOT NULL` | Creation timestamp |
 
 ### Table: `core_user_identities`
-*(Decouples authentication from user profile; ready for Estonian Smart-ID / Web eID / Magic Links without storing raw `isikukood` in plain text)*
+*(Decouples authentication from user profile; ready for Estonian Smart-ID / Web eID / Magic Links without storing raw `isikukood` in plain text.)* *(Planned, E7:)* owned by module `auth` (its model moves to `src/modules/auth/models.py`), which also adds `created_at`. For `provider = 'password'`, `subject_hash` is the keyed HMAC (`AUTH_HASH_SECRET`) of the user id and `secret_data` the encoded Argon2id hash; future eID providers store the keyed HMAC of the personal code. All rows of a user are deleted when the account is closed.
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
 | `id` | `UUID` | `PK` | Identity record ID |
 | `user_id` | `UUID` | `FK(core_users.id), INDEX` | Linked user |
 | `provider` | `VARCHAR(50)` | `NOT NULL` | `'password'`, `'pin_token'`, `'ee_smart_id'`, `'ee_id_card'` |
-| `subject_hash` | `VARCHAR(128)` | `NOT NULL, INDEX` | Salted SHA-256 hash of identifier (e.g., `hash("EE:3850101xxxx")`) |
-| `secret_data` | `VARCHAR(255)` | `NULLABLE` | Bcrypt password hash or token hash |
+| `subject_hash` | `VARCHAR(128)` | `NOT NULL, INDEX` | Keyed HMAC-SHA-256 of the identifier (e.g. of `"EE:3850101xxxx"`) |
+| `secret_data` | `VARCHAR(255)` | `NULLABLE` | Argon2id password hash (encoded, with its parameters) |
 | `UNIQUE` | `(provider, subject_hash)` | | Prevents duplicate external identities |
 
 ---
@@ -68,6 +68,7 @@ All tables use `UUID` primary keys (`uuid4`), UTC timestamps (`TIMESTAMPTZ`), an
 | `can_view_bills` | `BOOLEAN` | `NOT NULL, DEFAULT TRUE` | Allowed to see apartment invoices |
 | `can_vote` | `BOOLEAN` | `NOT NULL, DEFAULT FALSE` | `TRUE` only for `OWNER` |
 | `privacy_display_mode`| `VARCHAR(32)`| `NOT NULL, DEFAULT 'APARTMENT_ONLY'` | Enum: `APARTMENT_ONLY`, `INITIALS`, `FULL_NAME` |
+| `ended_at` | `TIMESTAMPTZ` | `NULLABLE` | *(Planned, E7.)* Set when the membership ends (a tenant replaced or removed, a flat sold, an account closed). Every membership query filters `ended_at IS NULL` (docs/ARCHITECTURE.md 4.3); an ended membership is reopened, not duplicated, when the person is invited to the same apartment again |
 | `UNIQUE` | `(apartment_id, user_id)` | | One membership record per user per apartment |
 
 ---
@@ -326,3 +327,105 @@ Rows of `notif_link_codes` and `notif_link_attempts` older than 24 hours are del
 - `ix_core_domain_events_building_time`: `(building_id, occurred_at)`, for statistics.
 - **Retention:** the relay deletes published rows older than `DOMAIN_EVENTS_RETENTION_DAYS` (default 365; `0` keeps them forever). Unpublished and failed rows are kept for investigation.
 - Seeding (`src/core/seed.py`) writes no events.
+
+---
+
+## 7. Module: `auth` (epic E7) *(planned)*
+
+*Design: [docs/epics/E7_LOGIN.md](epics/E7_LOGIN.md). API: docs/API.md section 7. Not implemented yet (tasks A2-A5).*
+
+*All hashes are keyed HMAC-SHA-256 (hex, 64 characters) with `AUTH_HASH_SECRET`; a prefix such as `ip:` or `user:` is part of the hashed input, never stored. Rotating the secret ends every session and voids every open link and invitation.*
+
+### Table: `core_user_identities` (moved here from `property`)
+Columns as in section 1, plus:
+- `created_at` `TIMESTAMPTZ NOT NULL`;
+- `requires_link_sign_in` `BOOLEAN NOT NULL DEFAULT false`: set on a password after 100 failures
+  in a day; cleared when the person signs in with an e-mail link. While set, the password login
+  answers like any failure.
+
+### Table: `auth_sessions`
+*(One sign-in on one device; its refresh tokens rotate.)*
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PK` | Session id, the `sid` claim of access tokens |
+| `user_id` | `UUID` | `FK(core_users.id), NOT NULL, INDEX` | |
+| `auth_method` | `VARCHAR(16)` | `NOT NULL, CHECK IN ('MAGIC_LINK', 'PASSWORD', 'REGISTRATION')` | How the person signed in |
+| `authenticated_at` | `TIMESTAMPTZ` | `NOT NULL` | When the person proved control (the `auth_time` claim); a refresh does not change it |
+| `last_used_at` | `TIMESTAMPTZ` | `NOT NULL` | Last refresh |
+| `expires_at` | `TIMESTAMPTZ` | `NOT NULL` | 7 days after the last refresh, never after `max_expires_at` |
+| `max_expires_at` | `TIMESTAMPTZ` | `NOT NULL` | `authenticated_at + 90 days` |
+| `revoked_at` | `TIMESTAMPTZ` | `NULLABLE` | Logout, "sign out everywhere", a reused refresh token, a password change, an account closed |
+| `device_kind` | `VARCHAR(16)` | `NOT NULL, CHECK IN ('DESKTOP_BROWSER', 'MOBILE_BROWSER', 'UNKNOWN')` | Coarse, from the `User-Agent`; the raw header is never stored |
+
+### Table: `auth_refresh_tokens`
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PK` | |
+| `session_id` | `UUID` | `FK(auth_sessions.id) ON DELETE CASCADE, NOT NULL, INDEX` | |
+| `token_hash` | `VARCHAR(64)` | `NOT NULL, UNIQUE` | Keyed hash of the 32-byte cookie value |
+| `created_at` | `TIMESTAMPTZ` | `NOT NULL` | |
+| `rotated_at` | `TIMESTAMPTZ` | `NULLABLE` | Set when replaced; a use more than 60 s later revokes the session |
+| `replaced_by_id` | `UUID` | `FK(auth_refresh_tokens.id), NULLABLE` | The successor |
+
+- Partial unique index `uq_auth_refresh_tokens_current`: `(session_id) WHERE rotated_at IS NULL`, so a session has one current token.
+- A refresh locks the token row (`SELECT … FOR UPDATE`), so two refreshes of one token are serialized.
+
+### Table: `auth_invitations`
+*(The only way into the system and the only way to another apartment or a staff role: docs/API.md section 7, "Invitations".)*
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PK` | |
+| `building_id` | `UUID` | `FK(property_buildings.id), NOT NULL` | |
+| `kind` | `VARCHAR(16)` | `NOT NULL, CHECK IN ('OWNER', 'TENANT', 'STAFF')` | |
+| `email` | `VARCHAR(255)` | `NOT NULL, INDEX` | Canonical form |
+| `apartment_id` | `UUID` | `FK(property_apartments.id), NULLABLE` | Set exactly for `OWNER` and `TENANT` |
+| `building_role` | `VARCHAR(32)` | `NULLABLE, CHECK IN ('BOARD', 'ACCOUNTANT', 'CHAIRMAN')` | Set exactly for `STAFF` |
+| `invited_by_user_id` | `UUID` | `FK(core_users.id), NULLABLE` | `NULL` for the operator command (first chairman) |
+| `created_at` | `TIMESTAMPTZ` | `NOT NULL` | |
+| `last_sent_at` | `TIMESTAMPTZ` | `NOT NULL` | |
+| `expires_at` | `TIMESTAMPTZ` | `NOT NULL` | `last_sent_at + 7 days`; a resend by the inviter or the chairman moves it, a resend through `POST …/magic-link` does not |
+| `accepted_at` | `TIMESTAMPTZ` | `NULLABLE` | |
+| `accepted_user_id` | `UUID` | `FK(core_users.id), NULLABLE` | Set with `accepted_at` |
+| `membership_id` | `UUID` | `FK(property_memberships.id), NULLABLE` | The membership this invitation created or reopened (API `invited_email`); `NULL` for `STAFF` and when acceptance changed nothing |
+| `applied` | `BOOLEAN` | `NULLABLE` | Set with `accepted_at`: whether acceptance changed anything |
+
+- `ck_auth_invitations_target`: `apartment_id IS NOT NULL` exactly when `kind IN ('OWNER', 'TENANT')`, and `building_role IS NOT NULL` exactly when `kind = 'STAFF'`.
+- Partial unique index `uq_auth_invitations_open`: `UNIQUE NULLS NOT DISTINCT (kind, email, apartment_id, building_role) WHERE accepted_at IS NULL`. One open invitation per target, from anyone. A new invitation for a target whose open one has expired replaces it in the same transaction.
+- Partial index `ix_auth_invitations_open_tenants`: `(apartment_id) WHERE kind = 'TENANT' AND accepted_at IS NULL`, for the tenant limit. The limit counts unexpired rows together with the active tenant memberships, under a lock on the apartment's row (`SELECT … FOR UPDATE` through `PropertyService`).
+
+### Table: `auth_tokens`
+*(One-time links. The plain token exists only in the e-mail and in memory while it is sent.)*
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PK` | |
+| `purpose` | `VARCHAR(16)` | `NOT NULL, CHECK IN ('MAGIC_LINK', 'INVITATION', 'REGISTRATION')` | `…/magic-link/redeem` accepts `MAGIC_LINK` and `INVITATION`, `…/registration` only `REGISTRATION`, `…/invitations/accept` only `INVITATION` |
+| `token_hash` | `VARCHAR(64)` | `NOT NULL, UNIQUE` | Keyed hash of the 32 random bytes |
+| `user_id` | `UUID` | `FK(core_users.id), NULLABLE, INDEX` | Set exactly for `MAGIC_LINK` |
+| `invitation_id` | `UUID` | `FK(auth_invitations.id) ON DELETE CASCADE, NULLABLE, INDEX` | Set exactly for `INVITATION` and `REGISTRATION` |
+| `created_at` | `TIMESTAMPTZ` | `NOT NULL` | |
+| `expires_at` | `TIMESTAMPTZ` | `NOT NULL, INDEX` | 15 minutes (`MAGIC_LINK`), the invitation's `expires_at` (`INVITATION`), 30 minutes (`REGISTRATION`) |
+| `used_at` | `TIMESTAMPTZ` | `NULLABLE` | A used token is rejected |
+
+- **The invitation token's life:**
+  - It is used up only when the invitation is accepted (registration or accept).
+  - Each redeem that answers `REGISTRATION_REQUIRED` deletes the invitation's previous `REGISTRATION` token and creates a new one.
+  - A resend deletes all the invitation's tokens and creates a new `INVITATION` token.
+  - At most one `INVITATION` token per invitation (partial unique index on `(invitation_id) WHERE purpose = 'INVITATION'`).
+
+### Table: `auth_attempts`
+*(Limits counted across processes, like `notif_link_attempts`.)*
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PK` | |
+| `kind` | `VARCHAR(16)` | `NOT NULL, CHECK IN ('MAGIC_LINK', 'REDEEM', 'PASSWORD', 'INVITATION')` | |
+| `subject_hash` | `VARCHAR(64)` | `NOT NULL` | Keyed hash of what is counted: `email:<canonical e-mail>`, `ip:<address>`, `pair:<e-mail>\|<address>` or `user:<inviter id>` |
+| `succeeded` | `BOOLEAN` | `NOT NULL` | |
+| `attempted_at` | `TIMESTAMPTZ` | `NOT NULL` | |
+| `INDEX` | `(kind, subject_hash, attempted_at)` | | |
+
+**Retention** (the `auth` clean-up loop, hourly):
+- attempts older than 24 hours;
+- used or expired tokens;
+- sessions expired or revoked more than 7 days ago (their refresh tokens cascade);
+- open invitations whose `expires_at` is more than 30 days ago (one that no longer applies expires like any other);
+- accepted invitations with a `membership_id`: 30 days after that membership ended (`PropertyService.membership_end_times`); all other accepted invitations (`STAFF`, `applied = false`): 30 days after acceptance.

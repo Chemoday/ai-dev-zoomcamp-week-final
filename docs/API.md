@@ -13,15 +13,16 @@ All responses include `X-Trace-Id` header populated by OpenTelemetry middleware 
 
 Error `message` texts are **English only**. They are meant for developers and logs; the frontend shows localized texts chosen by `error_code`. The backend contains no Russian at all: author badges are English too (`Apt. 14`, `Chairman`).
 
-Every `/api/v1` endpoint requires an authenticated user, except `GET /api/v1/demo/users` (section 5) and the planned Telegram webhook (section 6), which Telegram calls with its own secret:
-- `Authorization: Bearer <jwt>`: HS256 token with `sub = <user uuid>` and `exp`. It is accepted only when `JWT_SECRET_KEY` is configured.
-- `X-Demo-User-Id: <user uuid>`: accepted only when `DEMO_MODE_ENABLED=true` (local Docker, tests and the public demo). If both headers are sent, the Bearer token wins.
+Every `/api/v1` endpoint requires an authenticated user, except `GET /api/v1/demo/users` (section 5), the Telegram webhook (section 6, called by Telegram with its own secret) and the sign-in endpoints of section 7 *(planned, E7)*:
+- `Authorization: Bearer <jwt>`: HS256 token with `sub = <user uuid>` and `exp`. It is accepted only when `JWT_SECRET_KEY` is configured. *(Planned, E7:)* the key becomes required; the app issues the token at sign-in (section 7) with the claims `sid` and `auth_time` and a lifetime of 15 minutes, and rejects a token whose session was revoked. Tokens without `sid` (minted by tests) are accepted only with `AUTH_ALLOW_SESSIONLESS_TOKENS=true`.
+- `X-Demo-User-Id: <user uuid>`: accepted only when `DEMO_MODE_ENABLED=true` (local Docker, tests and the public demo). If both headers are sent, the Bearer token wins. It never authenticates the account endpoints of section 7.
 
 All errors share one JSON shape, `{"error_code": "...", "message": "...", ...extra}`:
 
 | Status | `error_code` | When |
 | :--- | :--- | :--- |
 | 401 | `NOT_AUTHENTICATED` / `INVALID_TOKEN` / `UNKNOWN_USER` | No credentials, a bad or expired token, or an unknown or inactive user (sent with `WWW-Authenticate: Bearer`) |
+| 400 | `INVALID_LINK` *(planned, E7)* | A sign-in or invitation link that is unknown, used, expired or no longer applies (section 7) |
 | 403 | `FORBIDDEN` | Authenticated, but the building role or a membership flag (e.g. `can_submit_readings`) does not allow it |
 | 404 | `NOT_FOUND`, `MEMBERSHIP_NOT_FOUND`, `METER_NOT_FOUND`, `PERIOD_NOT_FOUND`, `READING_NOT_FOUND`, `POST_NOT_FOUND`, `NOTIFICATION_NOT_FOUND`, `EXPORTER_NOT_ENABLED` | Unknown route, a resource that does not exist or is not visible to you, or a disabled plugin |
 | 409 | `ANOMALY_CONFIRMATION_STEP_1/2`, `PERIOD_CLOSED`, `PERIOD_LOCKED`, `PERIOD_NOT_IN_REVIEW`, `INVALID_PERIOD_TRANSITION`, `READING_SET_BY_BOARD`, `LATER_READING_EXISTS`, `COMMENTS_DISABLED`, `POST_NOT_DELETABLE` | The request is valid, but conflicts with the current state |
@@ -29,6 +30,8 @@ All errors share one JSON shape, `{"error_code": "...", "message": "...", ...ext
 | 422 | `VALIDATION_ERROR`, `READING_BELOW_PREVIOUS`, `REASON_REQUIRED`, `ESTIMATE_OUT_OF_RANGE`, `INVALID_TARGET`, `INVALID_AUTHOR_APARTMENT`, `PREFERENCE_MANDATORY` | Invalid input; for `VALIDATION_ERROR` the details are in `errors`. Free-text fields reject control characters, e.g. NUL |
 | 500 | `INTERNAL_SERVER_ERROR` | Unhandled error; the body carries `trace_id` |
 | other | `HTTP_<status>` | Any other framework-level HTTP error |
+
+*(Planned, E7:)* section 7 adds `INVALID_CREDENTIALS`, `SESSION_EXPIRED` (401), `CSRF_CHECK_FAILED`, `REAUTHENTICATION_REQUIRED` (403), `SESSION_NOT_FOUND`, `INVITATION_NOT_FOUND`, `APARTMENT_NOT_FOUND`, `USER_NOT_FOUND` (404), `EMAIL_ALREADY_REGISTERED`, `TENANT_LIMIT_REACHED`, `INVITATION_ALREADY_PENDING`, `INVITATION_ACCEPTED`, `LAST_CHAIRMAN` (409) and `PASSWORD_TOO_WEAK` (422); it reuses `RATE_LIMITED` (429) of section 6.
 
 ### Author badge rules (`property.policies.format_author_badge`)
 | `privacy_display_mode` | With apartment | Without apartment context |
@@ -76,7 +79,7 @@ The payload never contains the raw `full_name`, `email` or `phone`, not even the
 ```
 The payload also has `"locale": "et" | "ru" | "en" | null`: the language of notifications sent outside the app (`null` = the instance default). It is not personal data.
 
-Memberships are ordered by entrance, then apartment number in natural order (`2`, `10`, `14`, `14A`). The top-level `privacy_display_mode` is the most private mode across the memberships (`APARTMENT_ONLY` when there are none); it is the mode used when the user acts without an apartment context. Only memberships of apartments in the user's own building are returned.
+*(Planned, E7:)* ended memberships are not listed. Memberships are ordered by entrance, then apartment number in natural order (`2`, `10`, `14`, `14A`). The top-level `privacy_display_mode` is the most private mode across the memberships (`APARTMENT_ONLY` when there are none); it is the mode used when the user acts without an apartment context. Only memberships of apartments in the user's own building are returned.
 
 ### `GET /api/v1/property/building`
 The association and its building, for the app header and the dashboard. Any user of the building.
@@ -725,3 +728,337 @@ reuses `DEVICE_LIMIT_REACHED`).
 | 409 | `DEVICE_LIMIT_REACHED` |
 | 422 | `PREFERENCE_MANDATORY`, `INVALID_PUSH_ENDPOINT` |
 | 429 | `RATE_LIMITED` (new status; the body has `retry_after_seconds`, plus a `Retry-After` header) |
+
+---
+
+## 7. Login and accounts (`auth`), epic E7 *(planned)*
+
+> **Status.** Contract of task A1 (issue #64); not implemented and not in `docs/openapi.json` yet.
+> Tasks A2-A5 implement it. Design and reasons: [docs/epics/E7_LOGIN.md](epics/E7_LOGIN.md). Every
+> environment stays in demo mode for now (section 5); these endpoints work there too.
+
+### Rules for every endpoint of this section
+- **No demo header.** `X-Demo-User-Id` never authenticates any endpoint of this section.
+  Endpoints marked "signed in" need `Authorization: Bearer` from a sign-in, so in demo mode the
+  account pages ("My residents", "People", "Security") need a real sign-in, not the role switcher.
+- **CSRF:** a request that uses or sets the refresh cookie must send `X-Requested-With: fetch`,
+  otherwise `403 CSRF_CHECK_FAILED`. These are:
+  - `…/magic-link/redeem`, `…/registration` and `…/password/login`, which set the cookie;
+  - `…/refresh`, `…/logout` and `DELETE …/sessions`, which use it.
+  The API sends no CORS headers, so other origins can never make credentialed calls.
+- **Refresh cookie:** `__Secure-refresh`, `HttpOnly; Secure; SameSite=Lax; Path=/api/v1/auth`, no
+  `Domain`. It lives 7 days, every refresh extends it, and a session ends after 90 days at the
+  latest.
+- **E-mail addresses** are matched in canonical form: trimmed, NFKC, lower case. `email` is at
+  most 254 characters; otherwise `422 VALIDATION_ERROR`.
+- **No answer reveals whether an e-mail has an account,** neither its body, its status nor its
+  timing. The only exceptions reach only the holder of an invitation link, i.e. the mailbox
+  owner: the redeem answers `REGISTRATION_REQUIRED` / `SIGN_IN_TO_ACCEPT`, and the registration
+  `409`.
+- **Limits** answer `429 RATE_LIMITED` with `retry_after_seconds` and `Retry-After`, except where
+  a limit is silent (marked below). The client IP address comes from `X-Forwarded-For`: Caddy sets
+  it and uvicorn trusts it (`--proxy-headers`), and the backend port is never exposed directly.
+- **Status 400** is new in this API (`INVALID_LINK`).
+
+### Session object (`SessionResponse`)
+Returned when someone signs in; the refresh cookie is set in the same response.
+```json
+{ "access_token": "eyJ...", "token_type": "Bearer", "expires_in": 900, "session_id": "uuid" }
+```
+- The access token is a JWT with `sub`, `sid` (the session), `auth_time` (when the person signed
+  in, as a UNIX time), `iat`, `exp` and `typ = "access"`, and it lives 15 minutes.
+- The client keeps it in memory only.
+- A token whose session is revoked, expired or belongs to another user is rejected:
+  `401 INVALID_TOKEN`.
+
+### `POST /api/v1/auth/magic-link`
+Request `{"email": "ivan@example.com"}`. Response always `202 {"accepted": true}`.
+- **The work happens after the response:**
+  - for an active account, an e-mail with a one-time sign-in link, valid 15 minutes, goes out;
+  - for an e-mail with only pending invitations, each of them is sent again with a new link and
+    the same expiry (the old links stop working);
+  - otherwise nothing is sent.
+- **Silent limits:** 5 per e-mail and IP address together per hour, 20 per e-mail per day, 20 per
+  IP address per hour. Over a limit the answer is still `202` and nothing is sent.
+  - Counting the e-mail together with the IP address means somebody else's requests cannot use up
+    a person's links; the daily cap stops mail bombing.
+  - A person who is still signed in is not affected.
+- Each link works once; a newer link does not cancel an older one.
+- **Demo mode:** sends only with `AUTH_MAIL_IN_DEMO=true` (ARCHITECTURE 4.6).
+
+### `POST /api/v1/auth/magic-link/redeem`
+Redeems a link from an e-mail. The client takes `token` from the URL fragment. Request
+`{"token": "..."}`. The token must be a sign-in or an invitation token; registration tokens are
+refused. Responses `200`:
+- **A sign-in link:**
+  `{"status": "SIGNED_IN", "session": SessionResponse}`, with the cookie. The link is used up.
+- **An invitation, and no account has its e-mail:**
+  `{"status": "REGISTRATION_REQUIRED", "registration_token": "...", "expires_in": 1800, "invitation": InvitationPreview}`.
+  - No session yet.
+  - Each such redeem creates a new registration token and deletes the previous one.
+  - The invitation link stays valid until the invitation is accepted, so closing the tab only
+    means opening the link again.
+- **An invitation, and an account has its e-mail:**
+  `{"status": "SIGN_IN_TO_ACCEPT", "invitation": InvitationPreview}`. Nothing is applied and the
+  link is not used up. The person signs in the usual way and then accepts with
+  `POST /auth/invitations/accept`. An invitation link never creates a session for an existing
+  account.
+- `InvitationPreview` is `{"kind": "OWNER", "apartment_number": "14", "building_role": null}`.
+
+Errors:
+- `400 INVALID_LINK`: unknown, used or expired link, or an invitation that no longer applies. The
+  cause is never told.
+- `403 CSRF_CHECK_FAILED`.
+- `429 RATE_LIMITED`: 20 redeem attempts per IP address per hour.
+
+### `POST /api/v1/auth/registration`
+Completes the registration of an invited person and signs them in. Request:
+```json
+{ "registration_token": "...", "full_name": "Ivan Petrov", "phone": null, "locale": "et", "privacy_display_mode": "APARTMENT_ONLY" }
+```
+- `full_name`: 1..255 characters, safe text.
+- `phone`: optional, at most 50 characters.
+- `locale`: `et` / `ru` / `en`.
+- `privacy_display_mode`: as in section 1. It is ignored for `STAFF` invitations, which create no
+  membership; the default is `APARTMENT_ONLY`.
+
+Response `200 {"status": "SIGNED_IN", "session": SessionResponse}`, with the cookie. In one
+transaction it creates the account with the membership or the role, marks the invitation
+accepted, and uses up its link.
+
+Errors:
+- `400 INVALID_LINK`: the registration token is unknown, used or older than 30 minutes, or the
+  invitation no longer applies.
+- `409 EMAIL_ALREADY_REGISTERED`: an account with this e-mail was created in the meantime. The
+  person signs in and accepts instead. Only the invited person can reach this.
+- `422 VALIDATION_ERROR`.
+
+### `POST /api/v1/auth/password/login`
+Request `{"email": "...", "password": "..."}`. Response `200 SessionResponse`, with the cookie.
+- `401 INVALID_CREDENTIALS` for every failure: unknown e-mail, wrong password, no password set,
+  inactive account. The timing is the same for all of them.
+- `429 RATE_LIMITED`:
+  - after 5 failures within 15 minutes for the e-mail and IP address together, or 30 for the IP
+    address, each further attempt waits a growing delay;
+  - after 100 failures for an e-mail within 24 hours, the password of that e-mail is refused until
+    its owner signs in with an e-mail link once (a flag on the password identity). While refused,
+    the answer is the same `401 INVALID_CREDENTIALS` with the same timing, as for any other
+    failure.
+  - **Accepted residual risk:** the silent daily cap on links (20 per e-mail) means a persistent
+    attacker can block a person's new sign-ins for at most a day. A person who is still signed in
+    is not affected.
+
+### `PUT /api/v1/auth/password` (signed in)
+Sets or changes the password. Request `{"new_password": "...", "current_password": "..."}`.
+- `current_password` is needed only when the sign-in (`auth_time`) is older than 10 minutes. A
+  token without `auth_time` always needs it.
+- `new_password`: 15 to 128 characters after NFKC normalisation, and not on the list of common
+  passwords. Otherwise `422 PASSWORD_TOO_WEAK` with `reason`: `TOO_SHORT`, `TOO_LONG` or
+  `TOO_COMMON`.
+- Response `204 No Content`. All other sessions of the user are revoked, and a "your password was
+  changed" e-mail goes out.
+- `403 REAUTHENTICATION_REQUIRED`: the sign-in is too old, and `current_password` is missing or
+  wrong. A wrong one counts toward the login throttling (`429 RATE_LIMITED`).
+- **Forgotten password:** sign in with an e-mail link, then call this within 10 minutes.
+
+### `DELETE /api/v1/auth/password` (signed in)
+Removes the password, so only the e-mail link signs in. Request `{"current_password": "..."}` with
+the same rule as above.
+- Response `204`. The other sessions are revoked and the "your password was changed" e-mail goes
+  out.
+- Also `204` when no password is set.
+- `403 REAUTHENTICATION_REQUIRED` as above.
+
+### `POST /api/v1/auth/refresh`
+Needs the refresh cookie and `X-Requested-With`. Response `200 SessionResponse`, with the rotated
+cookie.
+- **Grace window:** within 60 seconds after a rotation, the token just replaced gets a new access
+  token for the same session and no `Set-Cookie`, so tabs that refresh at the same time stay
+  signed in.
+- `401 SESSION_EXPIRED`, and the cookie is cleared:
+  - no cookie, an unknown or expired one, or a revoked session;
+  - a rotated token used again after the grace window, which counts as theft and revokes the
+    session.
+- The client calls it on page load, before an access token runs out, and after a
+  `401 INVALID_TOKEN`.
+
+### `POST /api/v1/auth/logout`
+Needs the cookie and `X-Requested-With`; no access token. It revokes the session and clears the
+cookie. Always `204`, also without a valid cookie.
+
+### `GET /api/v1/auth/sessions` (signed in)
+The user's active sessions, newest first:
+```json
+[ { "session_id": "uuid", "device_kind": "DESKTOP_BROWSER", "auth_method": "MAGIC_LINK", "authenticated_at": "...", "last_used_at": "...", "current": true } ]
+```
+- `device_kind`: `DESKTOP_BROWSER`, `MOBILE_BROWSER`, `UNKNOWN`, coarsely derived from the
+  `User-Agent`. The frontend localizes it.
+- `auth_method`: `MAGIC_LINK`, `PASSWORD`, `REGISTRATION`.
+- `current` is `false` for every row when the token has no `sid`.
+
+### `DELETE /api/v1/auth/sessions/{session_id}` and `DELETE /api/v1/auth/sessions` (signed in)
+- **One session:** `204`. Someone else's, unknown or already ended: `404 SESSION_NOT_FOUND`.
+- **Without an id:** all sessions of the user end, the current one included ("sign out
+  everywhere"). `204`, the cookie is cleared, and `X-Requested-With` is needed.
+
+### Invitations
+An invitation is the only way into the system, and the only way an account gets another apartment
+or a staff role. Who invites whom:
+
+| Inviter | `kind` | Body | Effect when accepted |
+| :--- | :--- | :--- | :--- |
+| Chairman | `OWNER` | `{"kind": "OWNER", "email", "apartment_number": "14"}` | an `OWNER` membership in that apartment |
+| Chairman | `STAFF` | `{"kind": "STAFF", "email", "building_role": "BOARD"}` (`BOARD`, `ACCOUNTANT`, `CHAIRMAN`) | the building role, if the account has none yet |
+| Owner of the apartment | `TENANT` | `{"kind": "TENANT", "email", "apartment_id": "uuid"}` | a `TENANT` membership (`can_vote = false`) |
+
+Board members do not invite. Family members (`RESIDENT`) are not invited (owner decision).
+
+**Invitation object (`InvitationView`):**
+```json
+{ "invitation_id": "uuid", "kind": "TENANT", "email": "new@example.com", "apartment_id": "uuid", "apartment_number": "14", "building_role": null, "status": "PENDING", "mine": true, "created_at": "...", "expires_at": "..." }
+```
+- **`status`:**
+  - `PENDING`;
+  - `ACCEPTED`;
+  - `EXPIRED` (the 7 days passed);
+  - `NO_LONGER_VALID`: a `TENANT` invitation whose apartment has no active owner any more, or is
+    gone. `TENANT` invitations are sent on behalf of the apartment's owners, so a resend by a
+    co-owner keeps them valid; `OWNER` and `STAFF` invitations are sent on behalf of the board and
+    stay valid while the building has an active chairman. `NO_LONGER_VALID` rows do not count
+    toward the tenant limit.
+- **`email`** is shown in full only to the person who typed it in, and masked to everyone else who
+  may see the invitation (co-owners, the chairman, another chairman): `n***@example.com`.
+
+#### `POST /api/v1/auth/invitations` (signed in)
+Response `201 InvitationView`.
+- The answer is the same whether the e-mail has an account or not.
+- The invitation e-mail holds a link valid 7 days.
+- A new person registers through it. A person with an account signs in and accepts, so nobody is
+  added to an apartment or given a role without their consent.
+
+Errors:
+- `403 FORBIDDEN`: not the chairman, or (for `TENANT`) not an owner of that apartment.
+- `404 APARTMENT_NOT_FOUND`: no apartment with that number or id in the building.
+- `409 TENANT_LIMIT_REACHED`: the apartment already has `MAX_TENANTS_PER_APARTMENT` (default 3)
+  active tenants and pending tenant invitations together.
+- `409 INVITATION_ALREADY_PENDING`: an invitation of this kind for this e-mail and target is
+  already pending (from anyone); resend it instead. An expired one is replaced by the new one.
+- `422 VALIDATION_ERROR`.
+- `429 RATE_LIMITED`: 10 invitations and resends per inviter per hour.
+
+**Demo mode:** the invitation is stored, but its e-mail goes out only with `AUTH_MAIL_IN_DEMO=true`.
+
+#### `GET /api/v1/auth/invitations` (signed in)
+`InvitationView` items, newest first.
+- The chairman sees all of the building.
+- An owner sees the `TENANT` invitations of the apartments they own.
+
+#### `POST /api/v1/auth/invitations/{invitation_id}/resend` and `DELETE /api/v1/auth/invitations/{invitation_id}`
+- **Who:** the chairman; for a `TENANT` invitation, also any owner of the apartment.
+- **Resend:** a `PENDING` or `EXPIRED` invitation gets a new link, the old one stops working, and
+  the 7 days start again. Response `200 InvitationView`; the limit of `POST` applies.
+- **Delete:** a `PENDING`, `EXPIRED` or `NO_LONGER_VALID` invitation, with its links: `204`.
+- **Errors:**
+  - an accepted invitation: `409 INVITATION_ACCEPTED`; to take access away, end the membership;
+  - unknown, or not visible to the caller: `404 INVITATION_NOT_FOUND`.
+
+#### `POST /api/v1/auth/invitations/accept` (signed in)
+An existing account accepts an invitation after `SIGN_IN_TO_ACCEPT` and an explicit "Accept"
+click. Request `{"token": "..."}` (the invitation link's token).
+- **Who:** the e-mail of the invitation must be the signed-in account's e-mail; otherwise
+  `400 INVALID_LINK`, with no hint why.
+- **What happens:** in one transaction the invitation is applied, marked accepted and its link
+  used up. Response `200 {"applied": true}`, or `{"applied": false}` when there was nothing to
+  change.
+- **It never lowers anything:**
+  - an account that already has an active membership in that apartment keeps it unchanged (an
+    `OWNER` invited as `TENANT` stays `OWNER`);
+  - a `STAFF` invitation applies only to an account whose role is `USER`, except that a
+    `CHAIRMAN` invitation raises any other role (so the recovery command of "First chairman" works
+    for a board member); otherwise the role stays as it is (the chairman uses `PUT …/role`);
+  - an ended membership in the same apartment is reopened, not duplicated.
+- An invitation of another building, or one that no longer applies: `400 INVALID_LINK`.
+
+### Residents, roles and closing accounts
+#### `GET /api/v1/auth/apartments/{apartment_id}/residents` (owner of the apartment, chairman)
+For the "My residents" page:
+```json
+{
+  "residents": [ { "user_id": "uuid", "membership_id": "uuid", "relation_type": "TENANT", "display_label": "M. T. (Apt. 2)", "since": "...", "invited_email": "mari@example.com" } ],
+  "pending_invitations": [ InvitationView ]
+}
+```
+- `display_label` follows the person's own privacy mode for that apartment (section 0).
+- `invited_email` is the e-mail the caller typed when inviting that person, if that invitation
+  created or reopened this membership; otherwise `null`. Such an invitation is kept while its
+  membership is active.
+- No other e-mails and no phone numbers.
+- Not an owner of the apartment and not the chairman: `403 FORBIDDEN`.
+
+#### `DELETE /api/v1/auth/apartments/{apartment_id}/tenants/{user_id}` (owner of the apartment)
+Ends that person's `TENANT` membership in the apartment (`ended_at`). `204`.
+- Not a tenant there: `404 MEMBERSHIP_NOT_FOUND`.
+- Not an owner of the apartment: `403 FORBIDDEN`.
+- If it was the person's last active membership and they have no staff role, the account is
+  closed (below).
+
+#### `POST /api/v1/auth/apartments/{apartment_id}/tenants/{user_id}/replace` (owner of the apartment)
+Request `{"email": "new.tenant@example.com"}`. In one transaction it ends that tenant's membership
+as above and creates a `TENANT` invitation for the new e-mail. Response `201 InvitationView`.
+Errors as in the two endpoints above; the tenant limit counts without the replaced tenant.
+
+#### `DELETE /api/v1/auth/users/{user_id}/memberships/{membership_id}` (chairman)
+Ends one membership of a person of the building, e.g. an owner who sold one of two flats.
+- `204`. The same automatic closing applies.
+- `404 MEMBERSHIP_NOT_FOUND`: not that person's active membership.
+- `404 USER_NOT_FOUND`: unknown, closed or another building.
+
+#### `PUT /api/v1/auth/users/{user_id}/role` (chairman)
+Request `{"building_role": "BOARD"}` (`USER`, `BOARD`, `ACCOUNTANT`, `CHAIRMAN`). Response `200
+{"user_id", "building_role", "account_closed": false}`.
+- `409 LAST_CHAIRMAN`: it would leave the building without an active chairman. A handover is
+  "give the other person `CHAIRMAN`, then lower your own role".
+- Setting `USER` for a person without an active membership closes the account
+  (`"account_closed": true`). The frontend asks for a confirmation first.
+- `404 USER_NOT_FOUND`: unknown, closed or another building.
+
+#### `DELETE /api/v1/auth/users/{user_id}` (chairman)
+Closes an account. `204`; `404 USER_NOT_FOUND`; `409 LAST_CHAIRMAN`.
+
+**Closing:**
+- deactivates the account and ends all memberships;
+- revokes all sessions and deletes the person's links, the invitations to their e-mail and their
+  identities (passwords, later eID);
+- removes the personal data: e-mail and phone become `null`, the name becomes "Former resident";
+- notifications deletes the person's chat and device bindings, preferences and feed.
+
+What stays:
+- readings keep their apartment;
+- forum posts keep a masked badge (section 0: a former member shows as the apartment only);
+- the e-mail can be invited again later.
+
+There is no endpoint to change an e-mail address; changing one's own e-mail comes later (E7 page,
+scope).
+
+### First chairman of a new installation
+An operator command, not an endpoint: `uv run python -m src.modules.auth create-chairman --email
+chair@example.com`.
+- It creates a `STAFF` invitation with `CHAIRMAN` on behalf of the system, sends it, and prints
+  the invitation id.
+- **When it refuses:** the building already has an active chairman, unless `--force` is given
+  (recovery when the only chairman lost their mailbox: the new chairman then lowers or closes the
+  old account).
+- **No mail:** when mail cannot go out (no e-mail plugin, or demo mode without
+  `AUTH_MAIL_IN_DEMO`), it warns. With `--print-link`, it prints the invitation link to the
+  operator's terminal instead, and to nowhere else.
+
+### Error codes of this section
+| Status | `error_code` |
+| :--- | :--- |
+| 400 | `INVALID_LINK` (new status) |
+| 401 | `INVALID_CREDENTIALS`, `SESSION_EXPIRED`, `INVALID_TOKEN` |
+| 403 | `CSRF_CHECK_FAILED`, `REAUTHENTICATION_REQUIRED`, `FORBIDDEN` |
+| 404 | `SESSION_NOT_FOUND`, `INVITATION_NOT_FOUND`, `APARTMENT_NOT_FOUND`, `MEMBERSHIP_NOT_FOUND`, `USER_NOT_FOUND` |
+| 409 | `EMAIL_ALREADY_REGISTERED` (registration only), `TENANT_LIMIT_REACHED`, `INVITATION_ALREADY_PENDING`, `INVITATION_ACCEPTED`, `LAST_CHAIRMAN` |
+| 422 | `VALIDATION_ERROR`, `PASSWORD_TOO_WEAK` |
+| 429 | `RATE_LIMITED` |
