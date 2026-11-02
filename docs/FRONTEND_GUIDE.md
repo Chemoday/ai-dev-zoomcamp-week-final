@@ -327,6 +327,8 @@ header, so they need a real sign-in even in demo mode.
   - Submit to `POST /auth/registration` within 30 minutes. After that, open the link again.
   - On `409 EMAIL_ALREADY_REGISTERED`: "Sign in, then accept the invitation".
 - **Settings > Security:**
+  - `GET /auth/password` tells whether a password is set: show "Set a password", or "Change" and
+    "Remove". Fetch it again after a change or a removal.
   - Set, change or remove the password. Ask for the current password, or offer a new sign-in link,
     when the answer is `403 REAUTHENTICATION_REQUIRED`. Rules to show: at least 15 characters; a
     phrase of a few words is fine.
@@ -342,6 +344,11 @@ header, so they need a real sign-in even in demo mode.
   - "Resend" and "Cancel" for each pending invitation;
   - on `409 TENANT_LIMIT_REACHED`: "At most 3 tenants".
 - **Chairman > People:**
+  - The list of people comes from `GET /auth/users`: each person with a label, the role and the
+    memberships, plus the ids for the actions below. Labels follow the person's privacy mode, so
+    the page shows no names a person did not agree to show. `invited_email` helps tell apart
+    people you invited, staff included; `is_me` marks your own row (for a handover: make someone
+    else chairman, then lower your own role).
   - Invite an owner (an e-mail and the apartment number) or staff (an e-mail and a role).
   - The invitation list with its statuses (`NO_LONGER_VALID` explained). E-mails typed by owners
     appear masked.
@@ -351,6 +358,7 @@ header, so they need a real sign-in even in demo mode.
 
 ### Privacy
 - The API returns e-mail addresses only from invitations: in full to the person who typed them
-  in, and masked to the chairman for invitations typed by owners. It never returns phone numbers.
+  in, and masked to everyone else who may see the invitation (co-owners, the chairman, another
+  chairman). It never returns phone numbers.
 - Do not put e-mails or tokens into analytics, URLs (except the fragment of the link page) or
   logs.

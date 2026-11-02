@@ -68,6 +68,7 @@ All tables use `UUID` primary keys (`uuid4`), UTC timestamps (`TIMESTAMPTZ`), an
 | `can_view_bills` | `BOOLEAN` | `NOT NULL, DEFAULT TRUE` | Allowed to see apartment invoices |
 | `can_vote` | `BOOLEAN` | `NOT NULL, DEFAULT FALSE` | `TRUE` only for `OWNER` |
 | `privacy_display_mode`| `VARCHAR(32)`| `NOT NULL, DEFAULT 'APARTMENT_ONLY'` | Enum: `APARTMENT_ONLY`, `INITIALS`, `FULL_NAME` |
+| `started_at` | `TIMESTAMPTZ` | `NOT NULL, DEFAULT now()` | *(Planned, E7.)* When the membership started; reopening an ended membership sets it to now. API `since`. The migration fills existing rows with the time of the migration |
 | `ended_at` | `TIMESTAMPTZ` | `NULLABLE` | *(Planned, E7.)* Set when the membership ends (a tenant replaced or removed, a flat sold, an account closed). Every membership query filters `ended_at IS NULL` (docs/ARCHITECTURE.md 4.3); an ended membership is reopened, not duplicated, when the person is invited to the same apartment again |
 | `UNIQUE` | `(apartment_id, user_id)` | | One membership record per user per apartment |
 
@@ -386,7 +387,7 @@ Columns as in section 1, plus:
 | `expires_at` | `TIMESTAMPTZ` | `NOT NULL` | `last_sent_at + 7 days`; a resend by the inviter or the chairman moves it, a resend through `POST …/magic-link` does not |
 | `accepted_at` | `TIMESTAMPTZ` | `NULLABLE` | |
 | `accepted_user_id` | `UUID` | `FK(core_users.id), NULLABLE` | Set with `accepted_at` |
-| `membership_id` | `UUID` | `FK(property_memberships.id), NULLABLE` | The membership this invitation created or reopened (API `invited_email`); `NULL` for `STAFF` and when acceptance changed nothing |
+| `membership_id` | `UUID` | `FK(property_memberships.id), NULLABLE` | The membership this invitation created or reopened (API `invited_email`; for `STAFF`, `accepted_user_id` plays this part); `NULL` for `STAFF` and when acceptance changed nothing |
 | `applied` | `BOOLEAN` | `NULLABLE` | Set with `accepted_at`: whether acceptance changed anything |
 
 - `ck_auth_invitations_target`: `apartment_id IS NOT NULL` exactly when `kind IN ('OWNER', 'TENANT')`, and `building_role IS NOT NULL` exactly when `kind = 'STAFF'`.
@@ -428,4 +429,4 @@ Columns as in section 1, plus:
 - used or expired tokens;
 - sessions expired or revoked more than 7 days ago (their refresh tokens cascade);
 - open invitations whose `expires_at` is more than 30 days ago (one that no longer applies expires like any other);
-- accepted invitations with a `membership_id`: 30 days after that membership ended (`PropertyService.membership_end_times`); all other accepted invitations (`STAFF`, `applied = false`): 30 days after acceptance.
+- accepted invitations with a `membership_id`: 30 days after that membership ended (`PropertyService.membership_end_times`); an applied `STAFF` invitation (API `invited_email` of `GET /auth/users`): kept while `accepted_user_id` is active and holds that `building_role` (`PropertyService.building_roles`), then deleted by the next run; all other accepted invitations (`applied = false`): 30 days after acceptance.
