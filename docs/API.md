@@ -22,7 +22,7 @@ All errors share one JSON shape, `{"error_code": "...", "message": "...", ...ext
 | Status | `error_code` | When |
 | :--- | :--- | :--- |
 | 401 | `NOT_AUTHENTICATED` / `INVALID_TOKEN` / `UNKNOWN_USER` | No credentials, a bad or expired token, or an unknown or inactive user (sent with `WWW-Authenticate: Bearer`) |
-| 400 | `INVALID_LINK` *(planned, E7)* | A sign-in or invitation link that is unknown, used, expired or no longer applies (section 7) |
+| 400 | `INVALID_LINK` | A sign-in or invitation link that is unknown, used, expired or no longer applies (section 7) |
 | 403 | `FORBIDDEN` | Authenticated, but the building role or a membership flag (e.g. `can_submit_readings`) does not allow it |
 | 404 | `NOT_FOUND`, `MEMBERSHIP_NOT_FOUND`, `METER_NOT_FOUND`, `PERIOD_NOT_FOUND`, `READING_NOT_FOUND`, `POST_NOT_FOUND`, `NOTIFICATION_NOT_FOUND`, `EXPORTER_NOT_ENABLED` | Unknown route, a resource that does not exist or is not visible to you, or a disabled plugin |
 | 409 | `ANOMALY_CONFIRMATION_STEP_1/2`, `PERIOD_CLOSED`, `PERIOD_LOCKED`, `PERIOD_NOT_IN_REVIEW`, `INVALID_PERIOD_TRANSITION`, `READING_SET_BY_BOARD`, `LATER_READING_EXISTS`, `COMMENTS_DISABLED`, `POST_NOT_DELETABLE` | The request is valid, but conflicts with the current state |
@@ -31,7 +31,7 @@ All errors share one JSON shape, `{"error_code": "...", "message": "...", ...ext
 | 500 | `INTERNAL_SERVER_ERROR` | Unhandled error; the body carries `trace_id` |
 | other | `HTTP_<status>` | Any other framework-level HTTP error |
 
-*(Planned, E7:)* section 7 adds `INVALID_CREDENTIALS`, `SESSION_EXPIRED` (401), `CSRF_CHECK_FAILED`, `REAUTHENTICATION_REQUIRED` (403), `SESSION_NOT_FOUND`, `INVITATION_NOT_FOUND`, `APARTMENT_NOT_FOUND`, `USER_NOT_FOUND` (404), `EMAIL_ALREADY_REGISTERED`, `TENANT_LIMIT_REACHED`, `INVITATION_ALREADY_PENDING`, `INVITATION_ACCEPTED`, `LAST_CHAIRMAN` (409) and `PASSWORD_TOO_WEAK` (422); it reuses `RATE_LIMITED` (429) of section 6.
+Section 7 adds `INVALID_CREDENTIALS`, `SESSION_EXPIRED` (401), `CSRF_CHECK_FAILED`, `REAUTHENTICATION_REQUIRED` (403), `SESSION_NOT_FOUND`, `INVITATION_NOT_FOUND`, `APARTMENT_NOT_FOUND`, `USER_NOT_FOUND` (404), `EMAIL_ALREADY_REGISTERED`, `TENANT_LIMIT_REACHED`, `INVITATION_ALREADY_PENDING`, `INVITATION_ACCEPTED`, `INVITATION_NO_LONGER_VALID`, `LAST_CHAIRMAN` (409) and `PASSWORD_TOO_WEAK` (422); it reuses `RATE_LIMITED` (429) of section 6. `INVALID_CREDENTIALS`, `REAUTHENTICATION_REQUIRED` and `PASSWORD_TOO_WEAK` come with A5.
 
 ### Author badge rules (`property.policies.format_author_badge`)
 | `privacy_display_mode` | With apartment | Without apartment context |
@@ -79,7 +79,7 @@ The payload never contains the raw `full_name`, `email` or `phone`, not even the
 ```
 The payload also has `"locale": "et" | "ru" | "en" | null`: the language of notifications sent outside the app (`null` = the instance default). It is not personal data.
 
-*(Planned, E7:)* ended memberships are not listed. Memberships are ordered by entrance, then apartment number in natural order (`2`, `10`, `14`, `14A`). The top-level `privacy_display_mode` is the most private mode across the memberships (`APARTMENT_ONLY` when there are none); it is the mode used when the user acts without an apartment context. Only memberships of apartments in the user's own building are returned.
+Ended memberships are not listed. Memberships are ordered by entrance, then apartment number in natural order (`2`, `10`, `14`, `14A`). The top-level `privacy_display_mode` is the most private mode across the memberships (`APARTMENT_ONLY` when there are none); it is the mode used when the user acts without an apartment context. Only memberships of apartments in the user's own building are returned.
 
 ### `GET /api/v1/property/building`
 The association and its building, for the app header and the dashboard. Any user of the building.
@@ -737,9 +737,12 @@ reuses `DEVICE_LIMIT_REACHED`).
 > - since A2 (#65): `POST …/refresh`, `POST …/logout`, `GET` / `DELETE …/sessions`, and the
 >   session check of access tokens;
 > - since A3 (#66): signing in with an e-mail link, `POST …/magic-link` and
->   `POST …/magic-link/redeem` (only sign-in links; invitation links come with A4).
+>   `POST …/magic-link/redeem`;
+> - since A4 (#67): invitation links in `…/magic-link/redeem`, registration, invitations,
+>   accepting, residents, the chairman's list of people, roles, ending memberships, closing
+>   accounts, and the first-chairman command.
 >
-> Registration, invitations and passwords come with A4-A5. Design and reasons: [docs/epics/E7_LOGIN.md](epics/E7_LOGIN.md). Every
+> The password comes with A5. Design and reasons: [docs/epics/E7_LOGIN.md](epics/E7_LOGIN.md). Every
 > environment stays in demo mode for now (section 5); these endpoints work there too.
 
 ### Rules for every endpoint of this section
@@ -937,13 +940,17 @@ Board members do not invite. Family members (`RESIDENT`) are not invited (owner 
     co-owner keeps them valid; `OWNER` and `STAFF` invitations are sent on behalf of the board and
     stay valid while the building has an active chairman. `NO_LONGER_VALID` rows do not count
     toward the tenant limit.
+  An invitation sent by the system (the first-chairman command, no inviter) always applies: a
+  new installation has no chairman yet.
 - **`email`** is shown in full only to the person who typed it in, and masked to everyone else who
   may see the invitation (co-owners, the chairman, another chairman): `n***@example.com`.
 
 #### `POST /api/v1/auth/invitations` (signed in)
 Response `201 InvitationView`.
 - The answer is the same whether the e-mail has an account or not.
-- The invitation e-mail holds a link valid 7 days.
+- The invitation e-mail holds a link valid 7 days. It is written in the language of the account
+  with that e-mail, if one exists (only the mailbox owner sees which), otherwise in the instance
+  default (`DEFAULT_LOCALE`).
 - A new person registers through it. A person with an account signs in and accepts, so nobody is
   added to an apartment or given a role without their consent.
 
@@ -967,10 +974,12 @@ Errors:
 #### `POST /api/v1/auth/invitations/{invitation_id}/resend` and `DELETE /api/v1/auth/invitations/{invitation_id}`
 - **Who:** the chairman; for a `TENANT` invitation, also any owner of the apartment.
 - **Resend:** a `PENDING` or `EXPIRED` invitation gets a new link, the old one stops working, and
-  the 7 days start again. Response `200 InvitationView`; the limit of `POST` applies.
+  the 7 days start again. Response `200 InvitationView`; the limit of `POST` applies. An expired
+  `TENANT` invitation counts toward the tenant limit again (`409 TENANT_LIMIT_REACHED`).
 - **Delete:** a `PENDING`, `EXPIRED` or `NO_LONGER_VALID` invitation, with its links: `204`.
 - **Errors:**
   - an accepted invitation: `409 INVITATION_ACCEPTED`; to take access away, end the membership;
+  - resending a `NO_LONGER_VALID` invitation: `409 INVITATION_NO_LONGER_VALID`; delete it instead;
   - unknown, or not visible to the caller: `404 INVITATION_NOT_FOUND`.
 
 #### `POST /api/v1/auth/invitations/accept` (signed in)
@@ -983,7 +992,9 @@ click. Request `{"token": "..."}` (the invitation link's token).
   change.
 - **It never lowers anything:**
   - an account that already has an active membership in that apartment keeps it unchanged (an
-    `OWNER` invited as `TENANT` stays `OWNER`);
+    `OWNER` invited as `TENANT` stays `OWNER`), with one exception that raises: an `OWNER`
+    invitation turns an active `TENANT` or `RESIDENT` membership of that apartment into `OWNER`
+    (`can_vote = true`; the privacy mode stays), e.g. a tenant who bought the flat;
   - a `STAFF` invitation applies only to an account whose role is `USER`, except that a
     `CHAIRMAN` invitation raises any other role (so the recovery command of "First chairman" works
     for a board member); otherwise the role stays as it is (the chairman uses `PUT …/role`);
@@ -1122,6 +1133,6 @@ chair@example.com`.
 | 401 | `INVALID_CREDENTIALS`, `SESSION_EXPIRED`, `INVALID_TOKEN` |
 | 403 | `CSRF_CHECK_FAILED`, `REAUTHENTICATION_REQUIRED`, `FORBIDDEN` |
 | 404 | `SESSION_NOT_FOUND`, `INVITATION_NOT_FOUND`, `APARTMENT_NOT_FOUND`, `MEMBERSHIP_NOT_FOUND`, `USER_NOT_FOUND` |
-| 409 | `EMAIL_ALREADY_REGISTERED` (registration only), `TENANT_LIMIT_REACHED`, `INVITATION_ALREADY_PENDING`, `INVITATION_ACCEPTED`, `LAST_CHAIRMAN` |
+| 409 | `EMAIL_ALREADY_REGISTERED` (registration only), `TENANT_LIMIT_REACHED`, `INVITATION_ALREADY_PENDING`, `INVITATION_ACCEPTED`, `INVITATION_NO_LONGER_VALID`, `LAST_CHAIRMAN` |
 | 422 | `VALIDATION_ERROR`, `PASSWORD_TOO_WEAK` |
 | 429 | `RATE_LIMITED` |

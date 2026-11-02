@@ -11,12 +11,12 @@ All tables use `UUID` primary keys (`uuid4`), UTC timestamps (`TIMESTAMPTZ`), an
 | :--- | :--- | :--- | :--- |
 | `id` | `UUID` | `PK` | Internal user ID |
 | `building_id` | `UUID` | `FK(property_buildings.id), NOT NULL, INDEX` | Building the user belongs to. `building_role` applies to this building, and it is the source of `CurrentUserDTO.building_id` (also for staff without an apartment membership) |
-| `email` | `VARCHAR(255)` | `UNIQUE, NULLABLE` | Email (optional for offline/PIN-only elderly residents). *(Planned, E7:)* stored in canonical form (trimmed, NFKC, lower case), so the unique index is case-insensitive; a migration lower-cases the existing rows and stops if two collide. `NULL` after an account is closed |
-| `full_name` | `VARCHAR(255)` | `NOT NULL` | Real name (NEVER exposed raw in forum APIs or telemetry logs). *(Planned, E7:)* entered by the person at registration; `"Former resident"` after the account is closed |
-| `phone` | `VARCHAR(50)` | `NULLABLE` | Emergency contact phone (visible only to Chairman/Board). *(Planned, E7:)* `NULL` after the account is closed |
+| `email` | `VARCHAR(255)` | `UNIQUE, NULLABLE` | Email (optional for offline/PIN-only elderly residents). Stored in canonical form (trimmed, NFKC, lower case), so the unique index is case-insensitive; a migration lower-cases the existing rows and stops if two collide. `NULL` after an account is closed |
+| `full_name` | `VARCHAR(255)` | `NOT NULL` | Real name (NEVER exposed raw in forum APIs or telemetry logs). Entered by the person at registration; `"Former resident"` after the account is closed |
+| `phone` | `VARCHAR(50)` | `NULLABLE` | Emergency contact phone (visible only to Chairman/Board). `NULL` after the account is closed |
 | `locale` | `VARCHAR(5)` | `NULLABLE, CHECK IN ('et', 'ru', 'en')` | Language of notifications sent outside the app. `NULL` = the instance default `DEFAULT_LOCALE` |
 | `building_role` | `VARCHAR(32)` | `NOT NULL, DEFAULT 'USER'` | Enum: `CHAIRMAN`, `BOARD`, `ACCOUNTANT`, `USER` |
-| `is_active` | `BOOLEAN` | `NOT NULL, DEFAULT TRUE` | Account status. *(Planned, E7:)* `false` only for a closed account (there is no reversible deactivation) |
+| `is_active` | `BOOLEAN` | `NOT NULL, DEFAULT TRUE` | Account status. `false` only for a closed account (there is no reversible deactivation) |
 | `created_at` | `TIMESTAMPTZ` | `NOT NULL` | Creation timestamp |
 
 ### Table: `core_user_identities`
@@ -68,8 +68,8 @@ All tables use `UUID` primary keys (`uuid4`), UTC timestamps (`TIMESTAMPTZ`), an
 | `can_view_bills` | `BOOLEAN` | `NOT NULL, DEFAULT TRUE` | Allowed to see apartment invoices |
 | `can_vote` | `BOOLEAN` | `NOT NULL, DEFAULT FALSE` | `TRUE` only for `OWNER` |
 | `privacy_display_mode`| `VARCHAR(32)`| `NOT NULL, DEFAULT 'APARTMENT_ONLY'` | Enum: `APARTMENT_ONLY`, `INITIALS`, `FULL_NAME` |
-| `started_at` | `TIMESTAMPTZ` | `NOT NULL, DEFAULT now()` | *(Planned, E7.)* When the membership started; reopening an ended membership sets it to now. API `since`. The migration fills existing rows with the time of the migration |
-| `ended_at` | `TIMESTAMPTZ` | `NULLABLE` | *(Planned, E7.)* Set when the membership ends (a tenant replaced or removed, a flat sold, an account closed). Every membership query filters `ended_at IS NULL` (docs/ARCHITECTURE.md 4.3); an ended membership is reopened, not duplicated, when the person is invited to the same apartment again |
+| `started_at` | `TIMESTAMPTZ` | `NOT NULL, DEFAULT now()` | When the membership started; reopening an ended membership sets it to now. API `since`. The migration fills existing rows with the time of the migration |
+| `ended_at` | `TIMESTAMPTZ` | `NULLABLE` | Set when the membership ends (a tenant replaced or removed, a flat sold, an account closed). Every membership query filters `ended_at IS NULL` (docs/ARCHITECTURE.md 4.3); an ended membership is reopened, not duplicated, when the person is invited to the same apartment again |
 | `UNIQUE` | `(apartment_id, user_id)` | | One membership record per user per apartment |
 
 ---
@@ -333,7 +333,7 @@ Rows of `notif_link_codes` and `notif_link_attempts` older than 24 hours are del
 
 ## 7. Module: `auth` (epic E7) *(in progress)*
 
-*Design: [docs/epics/E7_LOGIN.md](epics/E7_LOGIN.md). API: docs/API.md section 7. `auth_sessions` and `auth_refresh_tokens` exist since A2 (migration 008, which also stores the existing `core_users.email` values in canonical form). `auth_tokens` (without `invitation_id` yet) and `auth_attempts` exist since A3 (migration 009). `auth_invitations`, the invitation columns and `core_user_identities` come with A4-A5.*
+*Design: [docs/epics/E7_LOGIN.md](epics/E7_LOGIN.md). API: docs/API.md section 7. `auth_sessions` and `auth_refresh_tokens` exist since A2 (migration 008, which also stores the existing `core_users.email` values in canonical form). `auth_tokens` and `auth_attempts` exist since A3 (migration 009). `auth_invitations` and the invitation column of `auth_tokens` exist since A4 (migration 010, which also adds `property_memberships.started_at` and `ended_at`). `core_user_identities` moves here with A5.*
 
 *All hashes are keyed HMAC-SHA-256 (hex, 64 characters) with `AUTH_HASH_SECRET`; a prefix such as `ip:` or `user:` is part of the hashed input, never stored. Rotating the secret ends every session and voids every open link and invitation.*
 
@@ -411,7 +411,8 @@ Columns as in section 1, plus:
   - It is used up only when the invitation is accepted (registration or accept).
   - Each redeem that answers `REGISTRATION_REQUIRED` deletes the invitation's previous `REGISTRATION` token and creates a new one.
   - A resend deletes all the invitation's tokens and creates a new `INVITATION` token.
-  - At most one `INVITATION` token per invitation (partial unique index on `(invitation_id) WHERE purpose = 'INVITATION'`).
+  - At most one `INVITATION` token per invitation (partial unique index `uq_auth_tokens_invitation_link` on `(invitation_id) WHERE purpose = 'INVITATION'`).
+- `ck_auth_tokens_owner`: `user_id` is set exactly for `MAGIC_LINK`, `invitation_id` exactly for the other purposes.
 
 ### Table: `auth_attempts`
 *(Limits counted across processes, like `notif_link_attempts`.)*

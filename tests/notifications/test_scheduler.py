@@ -345,6 +345,7 @@ async def test_old_rows_are_deleted(
         "bindings": 1,
         "link_codes": 1,
         "link_attempts": 1,
+        "closed_accounts": 0,
     }
     remaining = set(await db_session.scalars(select(Delivery.id)))
     assert ids["new"] in remaining and ids["old"] not in remaining
@@ -468,6 +469,7 @@ async def test_a_failing_reminder_stage_does_not_stop_the_clean_up(
         "bindings",
         "link_codes",
         "link_attempts",
+        "closed_accounts",
     }
     assert "notification_reminders_failed" in log_capture.raw
 
@@ -516,3 +518,34 @@ async def test_one_broken_period_does_not_block_the_others(
     assert result.reminded_periods == 1
     assert {r.subject_id for r in await reminders(db_session)} == {meters.period.id}
     assert "notification_reminder_failed" in log_capture.raw
+
+
+async def test_the_clean_up_drops_the_rows_of_closed_accounts(
+    scheduler: Scheduler, world: NotifWorld, db_session: AsyncSession
+) -> None:
+    """The backstop of UserAccountClosed (docs/ARCHITECTURE.md 4.1): rows of a closed account
+    go even when the event reached nobody; an active person's rows stay."""
+    now = IN_WINDOW
+    for user in (world.inactive_16, world.owner_14):
+        db_session.add_all(
+            [
+                delivery(user.id, now),
+                Preference(
+                    user_id=user.id, event_type="READING_DEADLINE", channel="email", enabled=False
+                ),
+                LinkCode(
+                    user_id=user.id,
+                    code_hash=uuid.uuid4().hex * 2,
+                    created_at=now,
+                    expires_at=now + timedelta(minutes=10),
+                ),
+            ]
+        )
+    await db_session.flush()
+
+    result = await scheduler.tick(now=now)
+
+    assert dict(result.deleted)["closed_accounts"] == 3
+    for model in (Delivery, Preference, LinkCode):
+        owners = set(await db_session.scalars(select(model.user_id)))
+        assert world.inactive_16.id not in owners and world.owner_14.id in owners

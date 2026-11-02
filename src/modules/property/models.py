@@ -142,3 +142,13 @@ class ApartmentMembership(Base):
         default=DisplayMode.APARTMENT_ONLY,
         server_default=DisplayMode.APARTMENT_ONLY.value,
     )
+    # When the membership started; reopening an ended one sets it to now (API `since`).
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        server_default=func.now(),
+    )
+    # Set when the membership ends; every membership query filters `ended_at IS NULL`
+    # (docs/ARCHITECTURE.md 4.3). An ended membership is reopened, never duplicated.
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

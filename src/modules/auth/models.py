@@ -6,12 +6,19 @@ docs/SCHEMA.md section 7.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, String, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.core.database import Base, uuid_pk, varchar_enum
-from src.modules.auth.schemas import AttemptKind, AuthMethod, DeviceKind, TokenPurpose
+from src.modules.auth.schemas import (
+    AttemptKind,
+    AuthMethod,
+    DeviceKind,
+    InvitationKind,
+    StaffRole,
+    TokenPurpose,
+)
 
 
 class AuthSession(Base):
@@ -64,11 +71,84 @@ class RefreshToken(Base):
     )
 
 
+class AuthInvitation(Base):
+    """An invitation into an apartment or a staff role (docs/SCHEMA.md 7). No account exists until
+    it is accepted."""
+
+    __tablename__ = "auth_invitations"
+    __table_args__ = (
+        CheckConstraint(
+            "(apartment_id IS NOT NULL) = (kind IN ('OWNER', 'TENANT')) "
+            "AND (building_role IS NOT NULL) = (kind = 'STAFF')",
+            name="ck_auth_invitations_target",
+        ),
+        # One open invitation per target, from anyone.
+        Index(
+            "uq_auth_invitations_open",
+            "kind",
+            "email",
+            "apartment_id",
+            "building_role",
+            unique=True,
+            postgresql_where=text("accepted_at IS NULL"),
+            postgresql_nulls_not_distinct=True,
+        ),
+        Index(
+            "ix_auth_invitations_open_tenants",
+            "apartment_id",
+            postgresql_where=text("kind = 'TENANT' AND accepted_at IS NULL"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    building_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("property_buildings.id"), nullable=False, index=True
+    )
+    kind: Mapped[InvitationKind] = mapped_column(
+        varchar_enum(InvitationKind, "ck_auth_invitations_kind", length=16), nullable=False
+    )
+    email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    apartment_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("property_apartments.id"), nullable=True
+    )
+    building_role: Mapped[StaffRole | None] = mapped_column(
+        varchar_enum(StaffRole, "ck_auth_invitations_building_role"), nullable=True
+    )
+    invited_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("core_users.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    accepted_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("core_users.id"), nullable=True
+    )
+    membership_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("property_memberships.id"), nullable=True
+    )
+    applied: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+
+
 class AuthToken(Base):
-    """A one-time link (sign-in now; invitation and registration with A4). Only its keyed hash is
-    stored; the plain token exists in the e-mail and in memory while it is sent."""
+    """A one-time link: a sign-in, an invitation, or a registration after an invitation. Only its
+    keyed hash is stored; the plain token exists in the e-mail and in memory while it is sent."""
 
     __tablename__ = "auth_tokens"
+    __table_args__ = (
+        CheckConstraint(
+            "(purpose = 'MAGIC_LINK' AND user_id IS NOT NULL AND invitation_id IS NULL) "
+            "OR (purpose <> 'MAGIC_LINK' AND user_id IS NULL AND invitation_id IS NOT NULL)",
+            name="ck_auth_tokens_owner",
+        ),
+        # At most one invitation link per invitation (a resend replaces it).
+        Index(
+            "uq_auth_tokens_invitation_link",
+            "invitation_id",
+            unique=True,
+            postgresql_where=text("purpose = 'INVITATION'"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = uuid_pk()
     purpose: Mapped[TokenPurpose] = mapped_column(
@@ -77,6 +157,12 @@ class AuthToken(Base):
     token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("core_users.id"), nullable=True, index=True
+    )
+    invitation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("auth_invitations.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(

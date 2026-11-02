@@ -8,6 +8,7 @@ stores it.
 """
 
 import uuid
+from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 from typing import Annotated
@@ -200,3 +201,60 @@ class PrivacyUpdateResponse(BaseModel):
     membership_id: uuid.UUID
     privacy_display_mode: DisplayMode
     preview_badge: AuthorBadgeDTO
+
+
+# --- System-level contracts with module auth (docs/ARCHITECTURE.md 4.2) --------------------------
+
+
+class ApartmentRefDTO(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    apartment_id: uuid.UUID
+    building_id: uuid.UUID
+    number: str
+
+
+class MembershipRefDTO(BaseModel):
+    """An active membership as module auth needs it: ids and the relation, no people."""
+
+    model_config = ConfigDict(frozen=True)
+
+    membership_id: uuid.UUID
+    user_id: uuid.UUID
+    apartment_id: uuid.UUID
+    building_id: uuid.UUID
+    relation_type: RelationType
+
+
+class ResidentDTO(BaseModel):
+    """A member of one apartment, shown under the badge rules (no name beyond consent)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    user_id: uuid.UUID
+    membership_id: uuid.UUID
+    relation_type: RelationType
+    display_label: str
+    since: datetime
+
+
+class PersonMembershipDTO(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    membership_id: uuid.UUID
+    apartment_id: uuid.UUID
+    apartment_number: str
+    relation_type: RelationType
+    display_label: str
+    since: datetime
+
+
+class PersonDTO(BaseModel):
+    """An active person of the building for the chairman's list, under the badge rules."""
+
+    model_config = ConfigDict(frozen=True)
+
+    user_id: uuid.UUID
+    building_role: BuildingRole
+    display_label: str
+    memberships: tuple[PersonMembershipDTO, ...]

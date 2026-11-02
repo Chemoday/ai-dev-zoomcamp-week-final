@@ -1,7 +1,8 @@
-"""Thin HTTP layer of the auth module: sessions (docs/API.md section 7, task E7/A2).
+"""Thin HTTP layer of the auth module (docs/API.md section 7): sessions (A2), e-mail links (A3),
+invitations, registration, residents and the chairman's administration (A4).
 
-Sign-in endpoints (e-mail link, registration, password) come with A3-A5 and end in
-AuthService.start_session.
+Every sign-in ends in AuthService.start_session. E-mails go out by detached work after the
+request's commit, so the plain token lives only in memory and never in a stored row.
 """
 
 import uuid
@@ -9,15 +10,30 @@ import uuid
 from fastapi import APIRouter, Cookie, Depends, Header, Request, Response
 from fastapi.responses import JSONResponse
 
-from src.core.database import DbSession
+from src.core.database import DbSession, get_event_outbox
+from src.core.event_bus import EventOutbox
 from src.core.exceptions import AUTH_ERRORS, DomainError, domain_error_handler, error_responses
 from src.core.security import TokenClaims, get_bearer_user
+from src.modules.auth.accounts import AccountService
+from src.modules.auth.invitations import InvitationService
 from src.modules.auth.links import LinkService, deliver_magic_link
+from src.modules.auth.mail import AuthMail, send_auth_mails
 from src.modules.auth.policies import CSRF_HEADER, REFRESH_COOKIE
 from src.modules.auth.schemas import (
+    AcceptRequest,
+    AcceptResponse,
+    InvitationCreate,
+    InvitationView,
+    IssuedSession,
     MagicLinkAccepted,
     MagicLinkRequest,
+    PeopleResponse,
     RedeemRequest,
+    RegistrationRequest,
+    ReplaceTenantRequest,
+    ResidentsResponse,
+    RoleUpdate,
+    RoleUpdateResponse,
     SessionResponse,
     SessionView,
     SignInResponse,
@@ -185,11 +201,279 @@ async def redeem_link(
     response: Response,
     links: LinkService = Depends(get_link_service),
 ) -> SignInResponse:
-    """Sign in with the token of an e-mail link; sets the refresh cookie."""
-    issued = await links.redeem(
+    """Redeem an e-mail link. A sign-in link signs in and sets the refresh cookie; an invitation
+    link answers REGISTRATION_REQUIRED or SIGN_IN_TO_ACCEPT, without a session."""
+    answer, issued = await links.redeem(
         body.token, client_address(request), request.headers.get("user-agent")
     )
+    if issued is not None:
+        _set_new_session_cookie(response, issued)
+    return answer
+
+
+def _set_new_session_cookie(response: Response, issued: IssuedSession) -> None:
     if issued.refresh_token is None:  # a new session always has one
         raise RuntimeError("a new session has no refresh token")
     set_refresh_cookie(response, issued.refresh_token, issued.expires_at)
+
+
+# --- Invitations and registration (A4) -----------------------------------------------------------
+
+SIGNED_IN = {401: AUTH_ERRORS, 422: ["VALIDATION_ERROR"]}
+INVITE_ERRORS = {
+    **SIGNED_IN,
+    403: ["FORBIDDEN"],
+    404: ["APARTMENT_NOT_FOUND"],
+    409: ["TENANT_LIMIT_REACHED", "INVITATION_ALREADY_PENDING"],
+    429: ["RATE_LIMITED"],
+}
+
+
+def get_invitation_service(request: Request, session: DbSession) -> InvitationService:
+    return InvitationService(session, request.app.state.settings)
+
+
+def get_account_service(
+    request: Request, session: DbSession, outbox: EventOutbox = Depends(get_event_outbox)
+) -> AccountService:
+    return AccountService(session, request.app.state.settings, outbox)
+
+
+async def _send_after_commit(request: Request, session: DbSession, mails: list[AuthMail]) -> None:
+    """Commit first, so a link in an e-mail always exists; then send by detached work."""
+    await session.commit()
+    app = request.app
+    app.state.auth_background.spawn(
+        send_auth_mails(app.state.plugin_registry, app.state.settings, mails),
+        name="invitation-mail",
+    )
+
+
+@router.post(
+    "/invitations",
+    status_code=201,
+    response_model=InvitationView,
+    responses=error_responses(INVITE_ERRORS),
+)
+async def create_invitation(
+    body: InvitationCreate,
+    request: Request,
+    session: DbSession,
+    user: CurrentUserDTO = Depends(get_bearer_user),
+    invitations: InvitationService = Depends(get_invitation_service),
+) -> InvitationView:
+    """Invite an owner or staff (the chairman) or a tenant (an owner of the apartment). The
+    answer is the same whether the e-mail has an account."""
+    view, mail = await invitations.create(user, body)
+    await _send_after_commit(request, session, [mail])
+    return view
+
+
+@router.get(
+    "/invitations", response_model=list[InvitationView], responses=error_responses(SIGNED_IN)
+)
+async def list_invitations(
+    user: CurrentUserDTO = Depends(get_bearer_user),
+    invitations: InvitationService = Depends(get_invitation_service),
+) -> list[InvitationView]:
+    """The chairman: the building's invitations; an owner: the TENANT invitations of their
+    apartments. Newest first."""
+    return await invitations.list_for(user)
+
+
+@router.post(
+    "/invitations/accept",
+    response_model=AcceptResponse,
+    responses=error_responses({**SIGNED_IN, 400: ["INVALID_LINK"]}),
+)
+async def accept_invitation(
+    body: AcceptRequest,
+    user: CurrentUserDTO = Depends(get_bearer_user),
+    invitations: InvitationService = Depends(get_invitation_service),
+) -> AcceptResponse:
+    """An existing account accepts an invitation after SIGN_IN_TO_ACCEPT."""
+    return AcceptResponse(applied=await invitations.accept(user, body.token))
+
+
+@router.post(
+    "/invitations/{invitation_id}/resend",
+    response_model=InvitationView,
+    responses=error_responses(
+        {
+            **SIGNED_IN,
+            404: ["INVITATION_NOT_FOUND"],
+            409: ["INVITATION_ACCEPTED", "INVITATION_NO_LONGER_VALID", "TENANT_LIMIT_REACHED"],
+            429: ["RATE_LIMITED"],
+        }
+    ),
+)
+async def resend_invitation(
+    invitation_id: uuid.UUID,
+    request: Request,
+    session: DbSession,
+    user: CurrentUserDTO = Depends(get_bearer_user),
+    invitations: InvitationService = Depends(get_invitation_service),
+) -> InvitationView:
+    view, mail = await invitations.resend(user, invitation_id)
+    await _send_after_commit(request, session, [mail])
+    return view
+
+
+@router.delete(
+    "/invitations/{invitation_id}",
+    status_code=204,
+    responses=error_responses(
+        {**SIGNED_IN, 404: ["INVITATION_NOT_FOUND"], 409: ["INVITATION_ACCEPTED"]}
+    ),
+)
+async def delete_invitation(
+    invitation_id: uuid.UUID,
+    user: CurrentUserDTO = Depends(get_bearer_user),
+    invitations: InvitationService = Depends(get_invitation_service),
+) -> Response:
+    await invitations.delete(user, invitation_id)
+    return Response(status_code=204)
+
+
+@router.post(
+    "/registration",
+    response_model=SignInResponse,
+    responses=error_responses(
+        {400: ["INVALID_LINK"], 409: ["EMAIL_ALREADY_REGISTERED"], **CSRF_ERRORS}
+    ),
+    dependencies=[Depends(require_csrf_header)],
+)
+async def register(
+    body: RegistrationRequest,
+    request: Request,
+    response: Response,
+    invitations: InvitationService = Depends(get_invitation_service),
+) -> SignInResponse:
+    """Complete the registration of an invited person and sign them in (sets the cookie)."""
+    issued = await invitations.register(body, request.headers.get("user-agent"))
+    _set_new_session_cookie(response, issued)
     return SignInResponse(status=SignInStatus.SIGNED_IN, session=issued.response)
+
+
+# --- Residents, roles and closing accounts (A4) --------------------------------------------------
+
+
+@router.get(
+    "/apartments/{apartment_id}/residents",
+    response_model=ResidentsResponse,
+    responses=error_responses({**SIGNED_IN, 403: ["FORBIDDEN"]}),
+)
+async def apartment_residents(
+    apartment_id: uuid.UUID,
+    user: CurrentUserDTO = Depends(get_bearer_user),
+    accounts: AccountService = Depends(get_account_service),
+) -> ResidentsResponse:
+    """For "My residents": an owner of the apartment, or the chairman."""
+    return await accounts.residents(user, apartment_id)
+
+
+@router.delete(
+    "/apartments/{apartment_id}/tenants/{user_id}",
+    status_code=204,
+    responses=error_responses({**SIGNED_IN, 403: ["FORBIDDEN"], 404: ["MEMBERSHIP_NOT_FOUND"]}),
+)
+async def remove_tenant(
+    apartment_id: uuid.UUID,
+    user_id: uuid.UUID,
+    user: CurrentUserDTO = Depends(get_bearer_user),
+    accounts: AccountService = Depends(get_account_service),
+) -> Response:
+    await accounts.remove_tenant(user, apartment_id, user_id)
+    return Response(status_code=204)
+
+
+@router.post(
+    "/apartments/{apartment_id}/tenants/{user_id}/replace",
+    status_code=201,
+    response_model=InvitationView,
+    responses=error_responses(
+        {
+            **SIGNED_IN,
+            403: ["FORBIDDEN"],
+            404: ["MEMBERSHIP_NOT_FOUND"],
+            409: ["TENANT_LIMIT_REACHED", "INVITATION_ALREADY_PENDING"],
+            429: ["RATE_LIMITED"],
+        }
+    ),
+)
+async def replace_tenant(
+    apartment_id: uuid.UUID,
+    user_id: uuid.UUID,
+    body: ReplaceTenantRequest,
+    request: Request,
+    session: DbSession,
+    user: CurrentUserDTO = Depends(get_bearer_user),
+    accounts: AccountService = Depends(get_account_service),
+) -> InvitationView:
+    """End a tenant's membership and invite the new e-mail, in one transaction."""
+    view, mail = await accounts.replace_tenant(user, apartment_id, user_id, body.email)
+    await _send_after_commit(request, session, [mail])
+    return view
+
+
+@router.get(
+    "/users",
+    response_model=PeopleResponse,
+    responses=error_responses({**SIGNED_IN, 403: ["FORBIDDEN"]}),
+)
+async def list_people(
+    user: CurrentUserDTO = Depends(get_bearer_user),
+    accounts: AccountService = Depends(get_account_service),
+) -> PeopleResponse:
+    """The chairman's list of people, under the badge rules (no name beyond consent)."""
+    return await accounts.people(user)
+
+
+@router.delete(
+    "/users/{user_id}/memberships/{membership_id}",
+    status_code=204,
+    responses=error_responses(
+        {**SIGNED_IN, 403: ["FORBIDDEN"], 404: ["MEMBERSHIP_NOT_FOUND", "USER_NOT_FOUND"]}
+    ),
+)
+async def end_membership(
+    user_id: uuid.UUID,
+    membership_id: uuid.UUID,
+    user: CurrentUserDTO = Depends(get_bearer_user),
+    accounts: AccountService = Depends(get_account_service),
+) -> Response:
+    await accounts.end_membership(user, user_id, membership_id)
+    return Response(status_code=204)
+
+
+@router.put(
+    "/users/{user_id}/role",
+    response_model=RoleUpdateResponse,
+    responses=error_responses(
+        {**SIGNED_IN, 403: ["FORBIDDEN"], 404: ["USER_NOT_FOUND"], 409: ["LAST_CHAIRMAN"]}
+    ),
+)
+async def set_role(
+    user_id: uuid.UUID,
+    body: RoleUpdate,
+    user: CurrentUserDTO = Depends(get_bearer_user),
+    accounts: AccountService = Depends(get_account_service),
+) -> RoleUpdateResponse:
+    return await accounts.set_role(user, user_id, body.building_role)
+
+
+@router.delete(
+    "/users/{user_id}",
+    status_code=204,
+    responses=error_responses(
+        {**SIGNED_IN, 403: ["FORBIDDEN"], 404: ["USER_NOT_FOUND"], 409: ["LAST_CHAIRMAN"]}
+    ),
+)
+async def close_account(
+    user_id: uuid.UUID,
+    user: CurrentUserDTO = Depends(get_bearer_user),
+    accounts: AccountService = Depends(get_account_service),
+) -> Response:
+    """Close an account: signed out everywhere, personal data removed."""
+    await accounts.close(user, user_id)
+    return Response(status_code=204)

@@ -12,7 +12,7 @@ checklist. Each task then gets its own issue, branch and pull request.
 | E4 IoT readings API | 2 | in docs/ROADMAP_MVP.md | idea |
 | E5 Bulk import of apartments and owners | 2 | in docs/ROADMAP_MVP.md | idea |
 | E6 AI OCR of meter photos | 3 | in docs/ROADMAP_MVP.md | idea |
-| E7 Login | 2 | [E7_LOGIN.md](E7_LOGIN.md) | design reviewed; contract (A1) next |
+| E7 Login | 2 | [E7_LOGIN.md](E7_LOGIN.md) | sessions, e-mail link and invitations done (A2-A4); password (A5) next |
 | E8 Apartment profiles | 2 | [E8_APARTMENT_PROFILES.md](E8_APARTMENT_PROFILES.md) | idea, after E7 |
 
 Background for these choices: [docs/cli_planning/2026-10-31-post-course-epics.md](../cli_planning/2026-10-31-post-course-epics.md)

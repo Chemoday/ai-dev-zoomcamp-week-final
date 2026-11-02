@@ -273,9 +273,10 @@ not of the feed.
      changed), delete the stored binding, call `unsubscribe()` and subscribe again; otherwise the
      device keeps failing and still counts towards the 10 devices.
 
-## 12. Sign-in and accounts *(planned, epic E7)*
+## 12. Sign-in and accounts (epic E7)
 
-Contract: docs/API.md section 7. It is not in `docs/openapi.json` until tasks A2-A5 land.
+Contract: docs/API.md section 7. Everything except the password (task A5) is in
+`docs/openapi.json`.
 
 **Demo mode.** Until an environment leaves demo mode, keep the role switcher of section 2. The
 sign-in screens work next to it. Account pages (Security, My residents, People) refuse the demo
