@@ -49,6 +49,8 @@ class Settings(BaseSettings):
     AUTH_MAIL_IN_DEMO: bool = False
     # Optional: in demo mode, only these recipient domains (comma-separated) get login e-mails.
     AUTH_DEMO_MAIL_DOMAINS: str = ""
+    # Active tenants plus pending tenant invitations allowed per apartment (owner decision).
+    MAX_TENANTS_PER_APARTMENT: int = Field(default=3, ge=1)
 
     # Comma-separated plugin modules under src/plugins/ (docs/ARCHITECTURE.md).
     ENABLED_PLUGINS: str = "common.csv_export"

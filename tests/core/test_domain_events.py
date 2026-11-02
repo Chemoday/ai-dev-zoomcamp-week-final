@@ -27,6 +27,7 @@ from src.core.domain_events import (
 )
 from src.core.event_bus import DomainEvent, EventOutbox, InMemoryEventBus
 from src.core.events_registry import EventRegistry, UnknownEventTypeError, get_event_registry
+from src.modules.auth.events import UserAccountClosed
 from src.modules.communication.events import EmergencyAlertPublished, EmergencyAlertResolved
 from src.modules.communication.schemas import PostCategory, TargetScope
 from src.modules.meters.events import MeterReadingSubmitted, ReadingPeriodStatusChanged
@@ -87,6 +88,7 @@ def _samples() -> dict[str, DomainEvent]:
             new_status=PeriodStatus.REVIEW_BY_BOARD,
             changed_by_user_id=user,
         ),
+        "UserAccountClosed": UserAccountClosed(user_id=user, building_id=building),
     }
 
 

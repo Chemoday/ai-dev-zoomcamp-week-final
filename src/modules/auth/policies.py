@@ -13,7 +13,8 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from src.core.config import Settings
-from src.modules.auth.schemas import DeviceKind
+from src.modules.auth.schemas import DeviceKind, InvitationStatus, StaffRole
+from src.modules.property.schemas import BuildingRole
 
 if TYPE_CHECKING:
     from src.plugins.registry import PluginRegistry
@@ -40,6 +41,13 @@ LINKS_PER_IP_PER_HOUR = 20
 REDEEMS_PER_IP_PER_HOUR = 20
 ATTEMPT_RETENTION = timedelta(hours=24)
 
+# Invitations (docs/API.md 7): the link lives a week, the registration form half an hour.
+INVITATION_TTL = timedelta(days=7)
+REGISTRATION_TTL = timedelta(minutes=30)
+INVITATIONS_PER_INVITER_PER_HOUR = 10
+# Expired, accepted or ended invitations are kept this long, then deleted (docs/SCHEMA.md 7).
+INVITATION_RETENTION = timedelta(days=30)
+
 
 def email_subject(email: str) -> str:
     return f"email:{email}"
@@ -65,6 +73,37 @@ def ip_subject(address: str) -> str:
 
 def pair_subject(email: str, address: str) -> str:
     return f"pair:{email}|{client_key(address)}"
+
+
+def user_subject(user_id: object) -> str:
+    return f"user:{user_id}"
+
+
+def mask_email(email: str) -> str:
+    """'nina@example.com' -> 'n***@example.com': enough to recognise, not to read."""
+    local, _, domain = email.rpartition("@")
+    return f"{local[:1]}***@{domain}" if local else f"***@{domain}"
+
+
+def invitation_status(
+    *, accepted: bool, applies: bool, expires_at: datetime, now: datetime
+) -> InvitationStatus:
+    """What an invitation looks like to the people who may see it."""
+    if accepted:
+        return InvitationStatus.ACCEPTED
+    if not applies:
+        return InvitationStatus.NO_LONGER_VALID
+    if expires_at <= now:
+        return InvitationStatus.EXPIRED
+    return InvitationStatus.PENDING
+
+
+def staff_invitation_applies(current: BuildingRole, invited: StaffRole) -> bool:
+    """Accepting never lowers anything: a staff role goes only to an account without one, except
+    that a CHAIRMAN invitation raises any other role (the recovery of the first chairman)."""
+    if current == BuildingRole.USER:
+        return True
+    return invited == StaffRole.CHAIRMAN and current != BuildingRole.CHAIRMAN
 
 
 def sign_in_link(site_url: str, token: str) -> str:

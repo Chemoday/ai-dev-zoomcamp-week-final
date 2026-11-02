@@ -18,6 +18,7 @@ Nothing personal is logged: only counts.
 """
 
 import asyncio
+import uuid
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
@@ -33,7 +34,13 @@ from src.core.config import Settings
 from src.core.domain_events import SessionFactory
 from src.modules.meters.schemas import DuePeriodRefDTO
 from src.modules.meters.service import MetersService
-from src.modules.notifications.models import ChannelBinding, Delivery, LinkAttempt, LinkCode
+from src.modules.notifications.models import (
+    ChannelBinding,
+    Delivery,
+    LinkAttempt,
+    LinkCode,
+    Preference,
+)
 from src.modules.notifications.policies import (
     LINK_ROWS_RETENTION,
     SCHEDULER_INTERVAL,
@@ -41,7 +48,7 @@ from src.modules.notifications.policies import (
     reminder_due,
 )
 from src.modules.notifications.schemas import NotificationEventType, SubjectType
-from src.modules.notifications.service import NotificationsSubscriber
+from src.modules.notifications.service import NotificationsSubscriber, delete_user_rows
 from src.modules.property.service import PropertyService
 
 logger = structlog.get_logger(__name__)
@@ -195,7 +202,20 @@ class Scheduler:
             deleted.append((table, count))
             if count:
                 _deleted_rows.add(count, {"table": table})
+        closed = await self._closed_accounts(session)
+        deleted.append(("closed_accounts", closed))
+        if closed:
+            _deleted_rows.add(closed, {"table": "closed_accounts"})
         return tuple(deleted)
+
+    async def _closed_accounts(self, session: AsyncSession) -> int:
+        """The backstop of UserAccountClosed (docs/ARCHITECTURE.md 4.1): the event reaches nobody
+        while notifications is off, so rows of closed accounts are deleted here too."""
+        holders: set[uuid.UUID] = set()
+        for model in (Delivery, ChannelBinding, Preference, LinkCode):
+            holders.update(await session.scalars(select(model.user_id).distinct()))
+        closed = await PropertyService(session).inactive_user_ids(holders)
+        return await delete_user_rows(session, closed)
 
 
 async def _try_lock(session: AsyncSession) -> bool:

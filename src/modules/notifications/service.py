@@ -23,11 +23,12 @@ from src.core.database import DbSession
 from src.core.domain_events import SessionFactory
 from src.core.event_bus import EventBus
 from src.core.exceptions import DomainError
+from src.modules.auth.events import UserAccountClosed
 from src.modules.communication.events import EmergencyAlertPublished, EmergencyAlertResolved
 from src.modules.communication.service import CommunicationService
 from src.modules.meters.events import ReadingPeriodStatusChanged
 from src.modules.meters.schemas import PeriodStatus
-from src.modules.notifications.models import ChannelBinding, Delivery, Preference
+from src.modules.notifications.models import ChannelBinding, Delivery, LinkCode, Preference
 from src.modules.notifications.policies import (
     CHANNEL_PLUGINS,
     DEFAULT_PREFERENCES,
@@ -343,6 +344,13 @@ class NotificationsSubscriber:
         bus.subscribe(EmergencyAlertPublished, self.on_emergency_published)
         bus.subscribe(EmergencyAlertResolved, self.on_emergency_resolved)
         bus.subscribe(ReadingPeriodStatusChanged, self.on_period_status_changed)
+        bus.subscribe(UserAccountClosed, self.on_account_closed)
+
+    async def on_account_closed(self, event: UserAccountClosed) -> None:
+        """Drop everything kept for a closed account (idempotent: a retry deletes nothing)."""
+        async with self._session() as session:
+            await delete_user_rows(session, [event.user_id])
+            await session.commit()
 
     async def on_emergency_published(self, event: EmergencyAlertPublished) -> None:
         async with self._session() as session:
@@ -522,3 +530,19 @@ class NotificationsSubscriber:
             pg_insert(Delivery).on_conflict_do_nothing(constraint="uq_notif_deliveries_dedup"),
             list(rows),
         )
+
+
+async def delete_user_rows(session: AsyncSession, user_ids: Iterable[uuid.UUID]) -> int:
+    """Delete the people's feed and deliveries, chat and device bindings, preferences and link
+    codes (a closed account, docs/ARCHITECTURE.md 4.1). Returns the rows deleted."""
+    ids = list(user_ids)
+    if not ids:
+        return 0
+    deleted = 0
+    # Deliveries first: they point at bindings.
+    for model in (Delivery, ChannelBinding, Preference, LinkCode):
+        result = await session.execute(
+            delete(model).where(model.user_id.in_(ids)).execution_options(synchronize_session=False)
+        )
+        deleted += result.rowcount or 0
+    return deleted

@@ -10,4 +10,26 @@ If you did not ask to sign in, ignore this e-mail: nobody can sign in without th
 {link}
 
 Kui te sisselogimist ei taotlenud, eirake seda kirja: ilma lingita ei saa keegi sisse logida."
+invitation.subject,You are invited to your apartment association,Приглашение в квартирное товарищество,Kutse korteriühistusse
+invitation.text,"You are invited {target}.
+
+Open this link to accept the invitation. The link works for 7 days from the invitation:
+{link}
+
+If you did not expect this invitation, ignore this e-mail: nothing happens without the link.","Вас приглашают {target}.
+
+Откройте эту ссылку, чтобы принять приглашение. Ссылка действует 7 дней с момента приглашения:
+{link}
+
+Если вы не ждали этого приглашения, просто проигнорируйте письмо: без ссылки ничего не произойдёт.","Teid kutsutakse {target}.
+
+Kutse vastuvõtmiseks avage see link. Link kehtib 7 päeva alates kutse saatmisest:
+{link}
+
+Kui te seda kutset ei oodanud, eirake seda kirja: ilma lingita ei juhtu midagi."
+invitation.target.owner,as the owner of apartment {apartment},как владельца квартиры {apartment},korteri {apartment} omanikuks
+invitation.target.tenant,as a tenant of apartment {apartment},как арендатора квартиры {apartment},korteri {apartment} üürnikuks
+invitation.target.board,as a board member,в правление,juhatuse liikmeks
+invitation.target.accountant,as the accountant,как бухгалтера,raamatupidajaks
+invitation.target.chairman,as the chairman,как председателя,esimeheks
 footer,This is an automatic message from your apartment association: {site_url},Это автоматическое сообщение вашего квартирного товарищества: {site_url},See on teie korteriühistu automaatne teade: {site_url}

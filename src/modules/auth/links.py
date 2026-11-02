@@ -1,4 +1,5 @@
 """Sign-in links: issue after the response, redeem for a session (task E7/A3, docs/API.md 7).
+An invitation link (A4) is redeemed here too and handed to InvitationService.
 
 `POST /auth/magic-link` answers 202 at once and does the work in a background task, so neither the
 answer nor its timing tells whether an e-mail has an account. The limits are silent: over a limit
@@ -18,8 +19,9 @@ from sqlalchemy import delete, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import Settings
-from src.core.exceptions import DomainError
-from src.modules.auth.mail import mail_allowed, send_auth_email
+from src.modules.auth.errors import invalid_link, rate_limited
+from src.modules.auth.invitations import InvitationService
+from src.modules.auth.mail import AuthMail, mail_allowed, send_auth_mails
 from src.modules.auth.models import AuthAttempt, AuthToken
 from src.modules.auth.policies import (
     ATTEMPT_RETENTION,
@@ -34,7 +36,14 @@ from src.modules.auth.policies import (
     pair_subject,
     sign_in_link,
 )
-from src.modules.auth.schemas import AttemptKind, AuthMethod, IssuedSession, TokenPurpose
+from src.modules.auth.schemas import (
+    AttemptKind,
+    AuthMethod,
+    IssuedSession,
+    SignInResponse,
+    SignInStatus,
+    TokenPurpose,
+)
 from src.modules.auth.service import AuthService
 from src.modules.property.service import PropertyService
 from src.plugins.registry import PluginRegistry
@@ -51,23 +60,6 @@ TOKEN_BYTES = 32
 
 def _now() -> datetime:
     return datetime.now(UTC)
-
-
-def invalid_link() -> DomainError:
-    # One answer for unknown, used, expired or no longer applicable links: the cause is never told.
-    return DomainError(
-        status_code=400, error_code="INVALID_LINK", message="This link cannot be used."
-    )
-
-
-def rate_limited(wait: int) -> DomainError:
-    return DomainError(
-        status_code=429,
-        error_code="RATE_LIMITED",
-        message="Too many attempts; try again later.",
-        extra={"retry_after_seconds": wait},
-        headers={"Retry-After": str(wait)},
-    )
 
 
 class LinkService:
@@ -101,8 +93,9 @@ class LinkService:
 
     # --- Issuing --------------------------------------------------------------------------------
 
-    async def issue_magic_link(self, email: str, address: str) -> tuple[str, str] | None:
-        """A new sign-in token and the language for its e-mail, or None (nothing to send).
+    async def issue_magic_link(self, email: str, address: str) -> list[AuthMail]:
+        """The e-mails to send: a sign-in link for an active account, or a new link for each
+        pending invitation of an e-mail without one; none over a silent limit.
 
         Runs after the response, so the cost of each branch is invisible to the caller.
         """
@@ -122,12 +115,14 @@ class LinkService:
         )
         for subject, since, limit in limits:
             if len(await self._attempts_since(AttemptKind.MAGIC_LINK, subject, since)) >= limit:
-                return None  # silent: still 202, nothing sent
+                return []  # silent: still 202, nothing sent
         user = await PropertyService(self.session).find_active_user_by_email(email)
         for subject, _, _ in limits:
             self._record(AttemptKind.MAGIC_LINK, subject, user is not None, now)
         if user is None:
-            return None
+            return await InvitationService(self.session, self.settings).resend_for_sign_in(
+                email, now
+            )
         token = secrets.token_urlsafe(TOKEN_BYTES)
         self.session.add(
             AuthToken(
@@ -139,11 +134,22 @@ class LinkService:
             )
         )
         await self.session.flush()
-        return token, (user.locale or self.settings.DEFAULT_LOCALE)
+        return [
+            AuthMail(
+                email=email,
+                locale=user.locale or self.settings.DEFAULT_LOCALE,
+                kind="magic_link",
+                link=sign_in_link(self.settings.PUBLIC_BASE_URL, token),
+            )
+        ]
 
     # --- Redeeming ------------------------------------------------------------------------------
 
-    async def redeem(self, token: str, address: str, user_agent: str | None) -> IssuedSession:
+    async def redeem(
+        self, token: str, address: str, user_agent: str | None
+    ) -> tuple[SignInResponse, IssuedSession | None]:
+        """A sign-in link signs in; an invitation link answers with a registration form or "sign
+        in to accept" (no session). The issued session carries the refresh cookie."""
         now = _now()
         recent = await self._attempts_since(AttemptKind.REDEEM, ip_subject(address), now - HOUR)
         span = trace.get_current_span()
@@ -153,14 +159,25 @@ class LinkService:
             span.set_attribute("auth.outcome", "throttled")
             _sign_ins.add(1, {"method": AuthMethod.MAGIC_LINK.value, "outcome": "throttled"})
             raise rate_limited(wait)
+        invitations = InvitationService(self.session, self.settings)
+        await invitations.lock_invitation_of(self._hash(token))  # before the token's row
         row = await self.session.scalar(
             select(AuthToken)
             .where(
                 AuthToken.token_hash == self._hash(token),
-                AuthToken.purpose == TokenPurpose.MAGIC_LINK,
+                AuthToken.purpose.in_([TokenPurpose.MAGIC_LINK, TokenPurpose.INVITATION]),
             )
             .with_for_update()
         )
+        if row is not None and row.purpose == TokenPurpose.INVITATION:
+            opened = await invitations.open_link(row, now)
+            self._record(AttemptKind.REDEEM, ip_subject(address), opened is not None, now)
+            if opened is None:
+                await self.session.commit()  # the failed attempt counts
+                span.set_attribute("auth.outcome", "failed")
+                raise invalid_link()
+            span.set_attribute("auth.outcome", opened.status.value.lower())
+            return opened, None
         usable = (
             row is not None
             and row.used_at is None
@@ -181,7 +198,7 @@ class LinkService:
         )
         span.set_attribute("auth.outcome", "signed_in")
         _sign_ins.add(1, {"method": AuthMethod.MAGIC_LINK.value, "outcome": "signed_in"})
-        return issued
+        return SignInResponse(status=SignInStatus.SIGNED_IN, session=issued.response), issued
 
 
 async def deliver_magic_link(app: FastAPI, email: str, address: str) -> None:
@@ -195,22 +212,12 @@ async def deliver_magic_link(app: FastAPI, email: str, address: str) -> None:
         return  # demo mode without AUTH_MAIL_IN_DEMO, or no e-mail plugin: nothing to send
     try:
         async with app.state.auth_session_factory() as session:
-            issued = await LinkService(session, settings).issue_magic_link(email, address)
+            mails = await LinkService(session, settings).issue_magic_link(email, address)
             await session.commit()
     except Exception as exc:  # the request was already answered; the type only, no traceback text
         logger.error("auth_magic_link_failed", error_type=type(exc).__name__)
         return
-    if issued is None:
-        return
-    token, locale = issued
-    await send_auth_email(
-        plugins,
-        settings,
-        email=email,
-        locale=locale,
-        kind="magic_link",
-        link=sign_in_link(settings.PUBLIC_BASE_URL, token),
-    )
+    await send_auth_mails(plugins, settings, mails)
 
 
 async def delete_old_rows(session: AsyncSession, now: datetime) -> dict[str, int]:
