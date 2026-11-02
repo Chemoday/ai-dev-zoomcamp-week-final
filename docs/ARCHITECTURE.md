@@ -170,7 +170,7 @@ A4-A5 add invitations, registration and passwords.
 | `find_active_user_by_email(email)` | `UserRefDTO(user_id, building_id, building_role)` or `None`; canonical match |
 | `user_ref(user_id)` | `UserRefDTO` of an active user, or `None` (closed or unknown) |
 | `create_user(building_id, email, full_name, phone, locale, building_role)` | the new user id (registration) |
-| `open_membership(user_id, apartment_id, relation_type, privacy_display_mode)` | Creates the membership, or reopens an ended one (`ended_at = NULL`, the given relation and mode, `can_vote` only for `OWNER`). Returns `False` without any change when an active membership already exists |
+| `open_membership(user_id, apartment_id, relation_type, privacy_display_mode)` | Creates the membership, or reopens an ended one (`ended_at = NULL`, `started_at = now()`, the given relation and mode, `can_vote` only for `OWNER`). Returns `False` without any change when an active membership already exists |
 | `membership_ref(membership_id)` / `active_membership(user_id, apartment_id)` | `MembershipRefDTO(membership_id, user_id, apartment_id, building_id, relation_type)` of an active membership, or `None` |
 | `end_membership(membership_id)` | Sets `ended_at`; returns whether the user still has an active membership or a staff role |
 | `set_building_role(user_id, role)` | Refuses to leave a building without an active chairman (`LastChairmanError`). Locks the building's active `CHAIRMAN` rows (`FOR UPDATE`) before counting, so two concurrent step-downs cannot both pass |
@@ -180,7 +180,9 @@ A4-A5 add invitations, registration and passwords.
 | `is_owner_of(user_id, apartment_id)` | active `OWNER` membership of an active user |
 | `active_tenant_count(apartment_id)` | active `TENANT` memberships of active users |
 | `apartment_residents(apartment_id)` | `list[ResidentDTO(user_id, membership_id, relation_type, display_label, since)]`, badge rules of API section 0 |
+| `building_people(building_id)` | `list[PersonDTO(user_id, building_role, display_label, memberships: list[PersonMembershipDTO(membership_id, apartment_id, apartment_number, relation_type, display_label, since)])]` of all active users of the building (staff without a membership included), each with only their active memberships; badge rules of API section 0; already in the order of API section 7 (for `GET /auth/users`) |
 | `membership_end_times(membership_ids)` | `dict[UUID, datetime \| None]`: when each membership ended (for the retention of invitations) |
+| `building_roles(user_ids)` | `dict[UUID, str \| None]`: the current `building_role` of each user, `None` for a closed or unknown one (for the retention of `STAFF` invitations) |
 | `inactive_user_ids(user_ids)` | which of these users are closed (for the notifications backstop, 4.1) |
 | `has_active_owner(apartment_id)` | whether a `TENANT` invitation still applies |
 | `active_chairman_count(building_id)` | active users with `CHAIRMAN` (`is_active` filtered; a closed account keeps its old `building_role`) |
@@ -195,6 +197,7 @@ Every query that resolves people filters closed accounts (`core_users.is_active`
 | `update_privacy_mode` (own membership) | through `get_current_user` | add: an ended membership is `404 MEMBERSHIP_NOT_FOUND` |
 | `resolve_recipients` (emergency targeting) | yes (today) | add |
 | `users_with_roles` | yes (today) | n/a (no memberships) |
+| `building_people` (new in A4) | yes | yes |
 | `reading_submitters` | yes (today) | add |
 | `has_delivery_email`, `with_delivery_email` | add | n/a |
 | `get_delivery_contact`, `get_recipient`, `is_user_active` | yes (today) | n/a |

@@ -217,6 +217,9 @@ Out of scope:
   - removes personal data: e-mail and phone become `NULL`, the name becomes "Former resident"
     (GDPR). Readings keep the apartment, and forum posts keep their masked badge;
   - frees the e-mail, so the same person can be invited again later.
+- **The chairman's list of people** (`GET /auth/users`) shows every active person with the role
+  and the memberships, under the badge rules (no names a person did not agree to show), so the
+  chairman can pick whom to change.
 - **The chairman** can also end any single membership
   (`DELETE /auth/users/{id}/memberships/{membership_id}`), e.g. an owner who sold one of two
   flats, or tenants of an apartment whose last owner left. The same auto-close rule applies.
@@ -296,5 +299,5 @@ review before merge (AGENTS.md section 4).
 | A1 | Contract: SCHEMA, API, ARCHITECTURE (module `auth`, ownership, the demo and e-mail rules), FRONTEND_GUIDE (sign-in, registration, invitations, sessions, my residents) | the owner approved the API |
 | A2 | Module `auth`, sessions: tables, refresh with rotation, grace window and reuse detection, logout, sessions list, `sid`/`auth_time`, the 15-minute access token, the canonical e-mail migration | tests: rotation, two tabs at once, a reused token revokes, expiry and the 90-day cap, cookie flags, the CSRF header, the demo header rejected on account endpoints |
 | A3 | Sign in with an e-mail link, and the auth e-mail sender; precondition for dev: the password gate (3.8) | the same answer and timing for known and unknown e-mails; one-time, 15 minutes; limits; demo-mode mail rule; tests with the test SMTP server |
-| A4 | Invitations (new and existing accounts), registration, roles, ending a membership, closing an account, replace tenant, the first-chairman command | tests: nobody is created before an invitation is accepted; registration creates the account; an existing account accepts by link; the chairman invites only owners and staff; owners only tenants, at most 3 with pending ones; the owner never learns whether an e-mail exists; closing wipes personal data and notifications drops the bindings; the last chairman stays |
+| A4 | Invitations (new and existing accounts), registration, the chairman's list of people, roles, ending a membership, closing an account, replace tenant, the first-chairman command | tests: nobody is created before an invitation is accepted; registration creates the account; an existing account accepts by link; the chairman invites only owners and staff; owners only tenants, at most 3 with pending ones; the owner never learns whether an e-mail exists; closing wipes personal data and notifications drops the bindings; the last chairman stays |
 | A5 | Optional password | Argon2id; 15 characters; one generic error and timing; throttling without lockout; a change revokes other sessions; a reset through the e-mail link |

@@ -994,6 +994,7 @@ For the "My residents" page:
 }
 ```
 - `display_label` follows the person's own privacy mode for that apartment (section 0).
+- `since`: when the membership started or was last reopened (`property_memberships.started_at`).
 - `invited_email` is the e-mail the caller typed when inviting that person, if that invitation
   created or reopened this membership; otherwise `null`. Such an invitation is kept while its
   membership is active.
@@ -1011,6 +1012,57 @@ Ends that person's `TENANT` membership in the apartment (`ended_at`). `204`.
 Request `{"email": "new.tenant@example.com"}`. In one transaction it ends that tenant's membership
 as above and creates a `TENANT` invitation for the new e-mail. Response `201 InvitationView`.
 Errors as in the two endpoints above; the tenant limit counts without the replaced tenant.
+
+#### `GET /api/v1/auth/users` (chairman)
+For the "People" page: every active person of the caller's building, with the ids the endpoints
+below need.
+```json
+{
+  "people": [
+    {
+      "user_id": "uuid", "is_me": false, "display_label": "Accountant", "building_role": "ACCOUNTANT",
+      "invited_email": "accounts@example.com", "memberships": []
+    },
+    {
+      "user_id": "uuid", "is_me": false, "display_label": "K. K.", "building_role": "USER", "invited_email": null,
+      "memberships": [
+        { "membership_id": "uuid", "apartment_id": "uuid", "apartment_number": "14", "relation_type": "OWNER", "display_label": "K. K. (Apt. 14)", "since": "...", "invited_email": "kati@example.com" }
+      ]
+    },
+    {
+      "user_id": "uuid", "is_me": false, "display_label": "Resident", "building_role": "USER", "invited_email": null,
+      "memberships": [
+        { "membership_id": "uuid", "apartment_id": "uuid", "apartment_number": "15", "relation_type": "OWNER", "display_label": "Ivan Petrov (Apt. 15)", "since": "...", "invited_email": null },
+        { "membership_id": "uuid", "apartment_id": "uuid", "apartment_number": "21", "relation_type": "OWNER", "display_label": "Apt. 21", "since": "...", "invited_email": null }
+      ]
+    }
+  ]
+}
+```
+- **Who is listed:** every active account of the building, the caller included (`is_me`), each
+  with its active memberships only (docs/ARCHITECTURE.md 4.3), `RESIDENT` ones included. An
+  account without a membership and without a staff role is listed with `memberships: []`, so the
+  chairman can close it (old data from before E7 can have one).
+- **Order** (`property` sorts, since it knows the entrances):
+  - accounts without a membership first, by role: `CHAIRMAN`, `BOARD`, `ACCOUNTANT`, then `USER`;
+  - then the others by their first membership: entrance, apartment number in natural order (`2`,
+    `10`, `14`, `14A`), relation (`OWNER`, `TENANT`, `RESIDENT`), `since`, `user_id`;
+  - a person's memberships in the same order.
+  - No paging: a building has at most a few hundred people.
+- **Names follow the badge rules of section 0,** so the chairman sees no name a person did not
+  agree to show: `display_label` of a membership is the badge with that apartment; the top-level
+  `display_label` is the badge without an apartment context (the most private mode of the
+  person's memberships). The chairman does see which memberships belong to one person, because
+  roles and memberships are managed per person; each label still follows its own membership's
+  mode. The same facts can already be joined by `user_id` from the residents endpoint.
+- **`invited_email`**, the e-mail the caller typed when inviting, otherwise `null`. No other
+  e-mails and no phone numbers.
+  - on a membership: the rule of the residents endpoint above;
+  - top-level: from the newest applied `STAFF` invitation for the person's current role that the
+    caller typed, so staff without a flat (two accountants) can be told apart. Invitations typed
+    by another or a former chairman, or by the first-chairman command, give `null`.
+- `since`: when the membership started or was last reopened (`property_memberships.started_at`).
+- Not the chairman: `403 FORBIDDEN`.
 
 #### `DELETE /api/v1/auth/users/{user_id}/memberships/{membership_id}` (chairman)
 Ends one membership of a person of the building, e.g. an owner who sold one of two flats.
