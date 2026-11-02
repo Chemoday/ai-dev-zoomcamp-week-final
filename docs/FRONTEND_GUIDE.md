@@ -327,6 +327,8 @@ header, so they need a real sign-in even in demo mode.
   - Submit to `POST /auth/registration` within 30 minutes. After that, open the link again.
   - On `409 EMAIL_ALREADY_REGISTERED`: "Sign in, then accept the invitation".
 - **Settings > Security:**
+  - `GET /auth/password` tells whether a password is set: show "Set a password", or "Change" and
+    "Remove". Fetch it again after a change or a removal.
   - Set, change or remove the password. Ask for the current password, or offer a new sign-in link,
     when the answer is `403 REAUTHENTICATION_REQUIRED`. Rules to show: at least 15 characters; a
     phrase of a few words is fine.

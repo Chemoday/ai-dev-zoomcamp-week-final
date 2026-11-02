@@ -853,6 +853,12 @@ Request `{"email": "...", "password": "..."}`. Response `200 SessionResponse`, w
     attacker can block a person's new sign-ins for at most a day. A person who is still signed in
     is not affected.
 
+### `GET /api/v1/auth/password` (signed in)
+Tells the Security page whether the caller has a password. Response `200 {"is_set": true}`. It
+describes only the caller's own account, so it reveals nothing about other e-mails. `is_set` stays
+`true` while the password is refused after too many failures (see the login above): signing in
+with an e-mail link once lifts that.
+
 ### `PUT /api/v1/auth/password` (signed in)
 Sets or changes the password. Request `{"new_password": "...", "current_password": "..."}`.
 - `current_password` is needed only when the sign-in (`auth_time`) is older than 10 minutes. A
