@@ -1,6 +1,10 @@
 # E3. Governance and voting
 
 - **Phase:** 3. **Status:** idea, decisions below. Detailed design before the first task.
+- **Precondition:** a separate planning session (recorded in docs/cli_planning/) before any task:
+  the change of an apartment's owner (docs/BACKLOG.md B-10), the right to vote, quorum and
+  deadlines, and the legal weight of an electronic vote, all country-neutral with national rules
+  as plugins.
 
 ## Decision: abstract voting in the core, verified voting in country plugins
 

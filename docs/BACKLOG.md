@@ -253,3 +253,38 @@ of one per association.
 
 - **Status:** title only, not designed yet (owner, 2026-11-01). Related to epic E3 (governance and
   voting).
+
+## B-10. A change of the apartment's owner (sale, death)
+
+- **Status:** open, notes only; **must be thought through very carefully** in the planning session
+  before epic E3, together with the right to vote: who the owner is decides who votes.
+- **Raised:** 2026-11-02, by the CTO review of E7/A4.
+
+### Problem
+When a flat is sold or its owner dies, the new owner joins by an `OWNER` invitation, but only the
+chairman can end the old owner's membership, alone and without a trace. That is too much power
+for one person. Asking the old owner to agree (for example within a month, with silence counting
+as consent) does not help: silence is still the chairman's decision a month later, a refusal
+either blocks a real sale or means nothing, a dead person cannot answer, and the new owner waits
+outside the system meanwhile.
+
+### What already fits
+- A new owner joins by an `OWNER` invitation, at once; an `OWNER` invitation also raises a tenant
+  of that flat to owner (E7/A4).
+- Ending one membership closes the account only when nothing else is left (the automatic closing
+  of E7).
+
+### Constraints
+- **The same for every country:** no national register. The land register is not used (who owns a
+  flat is not public data there); the fact is the board's recorded decision with its reason.
+- **Every such change is written to the board's action log** (with E8's audit log).
+- **The whole building is never told:** who owns which flat is personal data, and a notice would
+  reveal a sale or a death. Only the people concerned are told: the person, the co-owners of that
+  flat and its tenants (their access depends on an owner).
+- The account is not deleted: one membership ends.
+
+### Ideas to check in the session (not decisions)
+- Ending an `OWNER` membership needs a reason and a second board member's confirmation (the
+  "four eyes" principle); a board of one waits a period instead.
+- Co-owners and shares, inheritance (a flat without an owner for months), and what the auditor or
+  the general meeting sees.
