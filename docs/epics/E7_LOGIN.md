@@ -2,7 +2,7 @@
 
 - **Phase:** 2. **Status:** design reviewed by the owner and by the CTO review (2026-11-01);
   contract (A1, [#64](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/64)) approved
-  and merged (#72); sessions (A2) and the e-mail link (A3) done; invitations (A4) next. **Backlog:** docs/BACKLOG.md B-7.
+  and merged (#72); sessions (A2), the e-mail link (A3) and invitations (A4) done; the password (A5) next. **Backlog:** docs/BACKLOG.md B-7.
   **Epic issue:**
   [#69](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/69).
 - **Goal:** people sign in as themselves, and only people the association invited can sign in.
@@ -186,8 +186,10 @@ Out of scope:
     in the usual way, sees what the invitation grants, and clicks "Accept"
     (`POST /auth/invitations/accept`).
   - **It never lowers anything:** an existing membership in the apartment stays as it is (an
-    owner invited as a tenant stays an owner), and a staff invitation applies only to an account
-    without a staff role (a `CHAIRMAN` invitation raises any role, for recovery).
+    owner invited as a tenant stays an owner), except that an `OWNER` invitation raises a tenant
+    or a family member of that apartment to owner (a tenant who bought the flat), and a staff
+    invitation applies only to an account without a staff role (a `CHAIRMAN` invitation raises
+    any role, for recovery).
   - **Answers:** the inviter gets the same answer for an e-mail with or without an account
     (`201`). There is no `409 EMAIL_ALREADY_REGISTERED` for inviters, no separate "grant"
     endpoint, and no "already registered" e-mail.

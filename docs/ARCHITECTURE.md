@@ -46,7 +46,7 @@ Design and the reasoning behind it: [docs/epics/E1_NOTIFICATIONS.md](epics/E1_NO
 **Status:** the module, the subscriber, the in-app channel, the feed and preferences exist since task N2 (`src/modules/notifications/`); the dispatcher and the e-mail channel since N3; Telegram linking, the webhook and `common.telegram` since N4; WebPush subscriptions and `common.webpush` since N5. `NotificationChannel`, `OutgoingMessage` and `DeliveryResult` (3.2) are in `src/plugins/registry.py` since N7's stub together with `register_channel` / `channel` / `channels`, and `InboundChannel` / `InboundLink` since N4; the scheduler (3.3) since N6; the FCM plugin (3.2) is planned for N7. Clients poll for in-app notifications; there is no WebSocket (docs/epics/E1_NOTIFICATIONS.md 6.5).
 
 ### 3.1 Place in the system
-- It **only consumes**: it subscribes to domain events and calls other modules' system-level service methods (3.4). *(Planned, E7:)* it also handles `UserAccountClosed` from `auth` (4.1) by deleting the person's bindings, preferences, link codes and deliveries. No other module imports it, so `NOTIFICATIONS_ENABLED=false` removes it (no subscriber, no loops, no routes) and everything else works unchanged.
+- It **only consumes**: it subscribes to domain events and calls other modules' system-level service methods (3.4). It also handles `UserAccountClosed` from `auth` (4.1) by deleting the person's bindings, preferences, link codes and deliveries. No other module imports it, so `NOTIFICATIONS_ENABLED=false` removes it (no subscriber, no loops, no routes) and everything else works unchanged.
 - **Per-app event bus.** The bus lives on `app.state.event_bus` (created in `create_app`); `get_event_bus(request)` reads it from there, and the domain event relay uses the same bus. Notifications subscribes in `create_app` on that app's bus, so a test app never inherits handlers of another app. The module registers one database-using handler per event type: in tests all handlers share one session and the bus runs handlers concurrently.
 - The subscriber reads its session factory from `app.state.notifications_session_factory` on every event (default: the app's `async_session_factory`); `tests/conftest.py::db_app` points it at the test session. The dispatcher and the scheduler will get theirs the same way.
 
@@ -146,12 +146,13 @@ No names, e-mails, phones, chat ids, push endpoints and their keys, FCM tokens, 
 
 ## 4. Module `auth` (epic E7) *(in progress)*
 
-Design: [docs/epics/E7_LOGIN.md](epics/E7_LOGIN.md). Tables: docs/SCHEMA.md section 7. API: docs/API.md section 7. Contract of task A1; implemented by A2-A5. **Status:** A2 and A3 are live:
+Design: [docs/epics/E7_LOGIN.md](epics/E7_LOGIN.md). Tables: docs/SCHEMA.md section 7. API: docs/API.md section 7. Contract of task A1; implemented by A2-A5. **Status:** A2, A3 and A4 are live:
 - `src/modules/auth/` with sessions and refresh tokens, and the session check in `get_current_user`;
 - signing in with an e-mail link, with the silent limits and the demo-mode rule (`links.py`), and the auth e-mails (`mail.py`, `messages.csv`, with the catalog loader in `src/core/messages.py`);
-- the startup checks of 4.7, and the hourly clean-up of sessions, links and attempts.
+- the startup checks of 4.7, and the hourly clean-up of sessions, links, attempts and invitations;
+- invitations, registration and accepting (`invitations.py`), residents, roles, ending memberships and closing accounts (`accounts.py`, the event in `events.py`), and the first-chairman command (`__main__.py`).
 
-A4-A5 add invitations, registration and passwords.
+A5 adds passwords.
 
 ### 4.1 Place in the system
 - **Tables:** `src/modules/auth/` owns `core_user_identities` (moved from `property`), `auth_sessions`, `auth_refresh_tokens`, `auth_invitations`, `auth_tokens` and `auth_attempts`. `property` keeps users, apartments and memberships.
@@ -167,15 +168,19 @@ A4-A5 add invitations, registration and passwords.
 ### 4.2 Contracts with `property` (system-level, no `CurrentUserDTO`)
 | Method | Returns / does |
 | :--- | :--- |
-| `find_active_user_by_email(email)` | `UserRefDTO(user_id, building_id, building_role)` or `None`; canonical match |
+| `find_active_user_by_email(email)` | `UserRefDTO(user_id, building_id, building_role, locale)` or `None`; canonical match |
 | `user_ref(user_id)` | `UserRefDTO` of an active user, or `None` (closed or unknown) |
 | `create_user(building_id, email, full_name, phone, locale, building_role)` | the new user id (registration) |
-| `open_membership(user_id, apartment_id, relation_type, privacy_display_mode)` | Creates the membership, or reopens an ended one (`ended_at = NULL`, `started_at = now()`, the given relation and mode, `can_vote` only for `OWNER`). Returns `False` without any change when an active membership already exists |
+| `open_membership(user_id, apartment_id, relation_type, privacy_display_mode)` | Creates the membership, or reopens an ended one (`ended_at = NULL`, `started_at = now()`, the given relation and mode, `can_vote` only for `OWNER`). Returns the membership id, or `None` without any change when an active membership already exists |
+| `raise_to_owner(membership_id)` | Turns an active `TENANT` or `RESIDENT` membership into `OWNER` (`can_vote = true`, the privacy mode stays), under the same locks as `set_building_role`; returns whether it changed anything (an `OWNER` invitation accepted by a tenant of that apartment) |
 | `membership_ref(membership_id)` / `active_membership(user_id, apartment_id)` | `MembershipRefDTO(membership_id, user_id, apartment_id, building_id, relation_type)` of an active membership, or `None` |
-| `end_membership(membership_id)` | Sets `ended_at`; returns whether the user still has an active membership or a staff role |
-| `set_building_role(user_id, role)` | Refuses to leave a building without an active chairman (`LastChairmanError`). Locks the building's active `CHAIRMAN` rows (`FOR UPDATE`) before counting, so two concurrent step-downs cannot both pass |
-| `close_account(user_id)` | Ends all memberships; `is_active = false`; e-mail and phone `NULL`, name `"Former resident"`. Refuses the last active chairman, with the same lock |
+| `end_membership(membership_id)` | Sets `ended_at`; returns whether the user still has an active membership or a staff role. Under the same locks as `set_building_role` (as is `open_membership`), so the automatic closing cannot be skipped by two ends at once, nor close an account that gains a membership meanwhile |
+| `set_building_role(user_id, role)` | Refuses to leave a building without an active chairman (`LastChairmanError`). Like every method below that changes people, it first takes the building's people lock (a transaction advisory lock), then the user's row, always in this order: two concurrent step-downs cannot both pass and never deadlock |
+| `close_account(user_id)` | Ends all memberships; `is_active = false`; e-mail and phone `NULL`, name `"Former resident"`; deletes the `core_user_identities` rows while their model still lives in `property` (until A5). Refuses the last active chairman, under the same locks |
+| `active_users_by_emails(emails)` | `dict[str, UUID]`: which of these canonical e-mails (held by `auth` in invitations) belong to active users; no address leaves `property` (closing deletes the invitations to the person's e-mail) |
+| `building_ids()` | every building of the installation (the first-chairman command) |
 | `apartment_by_number(building_id, number)` / `apartment_ref(apartment_id)` | `ApartmentRefDTO(apartment_id, building_id, number)` or `None` |
+| `lock_people(building_id)` | The building's people lock (a transaction advisory lock, re-entrant). Module `auth` takes it before it locks invitation rows (create, resend, delete, accept), so every path locks in one order: this lock, an apartment, an invitation, then its tokens and other single rows |
 | `lock_apartment(apartment_id)` | `SELECT … FOR UPDATE` on the apartment row, held for the transaction, so the tenant limit cannot be exceeded by concurrent invitations |
 | `is_owner_of(user_id, apartment_id)` | active `OWNER` membership of an active user |
 | `active_tenant_count(apartment_id)` | active `TENANT` memberships of active users |
@@ -188,22 +193,22 @@ A4-A5 add invitations, registration and passwords.
 | `active_chairman_count(building_id)` | active users with `CHAIRMAN` (`is_active` filtered; a closed account keeps its old `building_role`) |
 
 ### 4.3 Which rows are "active"
-Every query that resolves people filters closed accounts (`core_users.is_active`) and ended memberships (`property_memberships.ended_at IS NULL`). Task A4 adds the missing filters and a test per row:
+Every query that resolves people filters closed accounts (`core_users.is_active`) and ended memberships (`property_memberships.ended_at IS NULL`). Since A4 all of them do, with a test per row (`tests/property/test_active_rows.py`):
 
-| Query (`PropertyService`, today) | `is_active` | `ended_at IS NULL` |
+| Query (`PropertyService`) | `is_active` | `ended_at IS NULL` |
 | :--- | :--- | :--- |
-| `get_current_user` and `_memberships_of` (the source of every permission check) | yes (today) | add |
-| `get_me`, `update_locale` | through `get_current_user` | add (via `_memberships_of`) |
-| `update_privacy_mode` (own membership) | through `get_current_user` | add: an ended membership is `404 MEMBERSHIP_NOT_FOUND` |
-| `resolve_recipients` (emergency targeting) | yes (today) | add |
-| `users_with_roles` | yes (today) | n/a (no memberships) |
+| `get_current_user` and `_memberships_of` (the source of every permission check) | yes | yes (A4) |
+| `get_me`, `update_locale` | through `get_current_user` | yes (A4, via `_memberships_of`) |
+| `update_privacy_mode` (own membership) | through `get_current_user` | yes (A4): an ended membership is `404 MEMBERSHIP_NOT_FOUND` |
+| `resolve_recipients` (emergency targeting) | yes | yes (A4) |
+| `users_with_roles` | yes | n/a (no memberships) |
 | `building_people` (new in A4) | yes | yes |
-| `reading_submitters` | yes (today) | add |
-| `has_delivery_email`, `with_delivery_email` | add | n/a |
-| `get_delivery_contact`, `get_recipient`, `is_user_active` | yes (today) | n/a |
-| `get_masked_author_badges` | no (history: closed authors keep a masked badge) | add: an ended membership counts as "no longer a member" |
+| `reading_submitters` | yes | yes (A4) |
+| `has_delivery_email`, `with_delivery_email` | yes (A4) | n/a |
+| `get_delivery_contact`, `get_recipient`, `is_user_active` | yes | n/a |
+| `get_masked_author_badges` | no (history: closed authors keep a masked badge) | yes (A4): an ended membership counts as "no longer a member" |
 | `list_apartments`, `get_building` | n/a | n/a |
-| demo user list (`src/core/demo.py`) | yes (today); apartment and relation come from the static `DEMO_USERS`, not from live memberships | n/a |
+| demo user list (`src/core/demo.py`) | yes; apartment and relation come from the static `DEMO_USERS`, not from live memberships | n/a |
 
 ### 4.4 Sessions in `get_current_user`
 - **A Bearer token with `sid`** is accepted only while that session is active and belongs to `sub` (one indexed lookup).
@@ -253,7 +258,7 @@ Every query that resolves people filters closed accounts (`core_users.is_active`
 ### 4.8 Privacy, security and observability
 - **Never in logs, spans or metrics:** e-mails, tokens, passwords, cookies, IP addresses, the raw `User-Agent`. Only keyed hashes are stored.
 - **New scrubber markers:** `refresh`, `magic`, `client_ip`, `ip_address`, `user_agent`. It already has `token`, `email`, `password`, `secret`, `cookie` and `authorization`.
-- **Spans** carry `auth.method`, `auth.outcome` (`signed_in`, `failed`, `throttled`) and the session id.
+- **Spans** carry `auth.method`, `auth.outcome` (`signed_in`, `failed`, `throttled`, and for invitation links `registration_required` or `sign_in_to_accept`) and the session id.
 - **Metrics:** `auth.sign_ins` (by method and outcome) and `auth.revoked_sessions` (by reason).
 - **Hashing:** Argon2id runs in a thread pool, at most 2 at a time, so a burst of logins cannot use up the memory of a small server.
 - **Response headers:** every answer (the SPA and the API) carries `Referrer-Policy: no-referrer` (`src/core/headers.py`), so a link page never leaks its URL.
