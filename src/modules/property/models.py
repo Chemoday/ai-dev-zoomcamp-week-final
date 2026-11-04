@@ -73,23 +73,6 @@ class User(Base):
     )
 
 
-class UserIdentity(Base):
-    __tablename__ = "core_user_identities"
-    __table_args__ = (
-        UniqueConstraint(
-            "provider", "subject_hash", name="uq_core_user_identities_provider_subject"
-        ),
-    )
-
-    id: Mapped[uuid.UUID] = uuid_pk()
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("core_users.id"), nullable=False, index=True
-    )
-    provider: Mapped[str] = mapped_column(String(50), nullable=False)
-    subject_hash: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
-    secret_data: Mapped[str | None] = mapped_column(String(255), nullable=True)
-
-
 class Apartment(Base):
     __tablename__ = "property_apartments"
     __table_args__ = (

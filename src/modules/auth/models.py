@@ -6,7 +6,17 @@ docs/SCHEMA.md section 7.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, String, text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    String,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -186,3 +196,40 @@ class AuthAttempt(Base):
     subject_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     succeeded: Mapped[bool] = mapped_column(Boolean, nullable=False)
     attempted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class UserIdentity(Base):
+    """A way to sign in besides the e-mail link: the password (A5), later eID subjects.
+
+    For the password, `subject_hash` is the keyed hash of "user:<id>" and `secret_data` the encoded
+    Argon2id hash. The table keeps its `core_` name (docs/SCHEMA.md 1 and 7).
+    """
+
+    __tablename__ = "core_user_identities"
+    __table_args__ = (
+        UniqueConstraint(
+            "provider", "subject_hash", name="uq_core_user_identities_provider_subject"
+        ),
+        # One password per account, also after AUTH_HASH_SECRET was rotated.
+        Index(
+            "uq_core_user_identities_password_user",
+            "user_id",
+            unique=True,
+            postgresql_where=text("provider = 'password'"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("core_users.id"), nullable=False, index=True
+    )
+    provider: Mapped[str] = mapped_column(String(50), nullable=False)
+    subject_hash: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    secret_data: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    # Set after 100 failed logins in a day; cleared by a sign-in with an e-mail link.
+    requires_link_sign_in: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )

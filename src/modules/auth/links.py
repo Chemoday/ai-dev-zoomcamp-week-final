@@ -14,7 +14,7 @@ from datetime import UTC, datetime, timedelta
 
 import structlog
 from fastapi import FastAPI
-from opentelemetry import metrics, trace
+from opentelemetry import trace
 from sqlalchemy import delete, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +23,7 @@ from src.modules.auth.errors import invalid_link, rate_limited
 from src.modules.auth.invitations import InvitationService
 from src.modules.auth.mail import AuthMail, mail_allowed, send_auth_mails
 from src.modules.auth.models import AuthAttempt, AuthToken
+from src.modules.auth.passwords import clear_password_refusal
 from src.modules.auth.policies import (
     ATTEMPT_RETENTION,
     LINKS_PER_EMAIL_AND_IP_PER_HOUR,
@@ -44,15 +45,11 @@ from src.modules.auth.schemas import (
     SignInStatus,
     TokenPurpose,
 )
-from src.modules.auth.service import AuthService
+from src.modules.auth.service import AuthService, sign_ins
 from src.modules.property.service import PropertyService
 from src.plugins.registry import PluginRegistry
 
 logger = structlog.get_logger(__name__)
-_meter = metrics.get_meter(__name__)
-_sign_ins = _meter.create_counter(
-    "auth.sign_ins", description="Sign-in attempts by method and outcome (signed_in, failed)"
-)
 HOUR = timedelta(hours=1)
 DAY = timedelta(days=1)
 TOKEN_BYTES = 32
@@ -157,7 +154,7 @@ class LinkService:
         if len(recent) >= REDEEMS_PER_IP_PER_HOUR:
             wait = max(int((recent[0] + HOUR - now).total_seconds()), 1)
             span.set_attribute("auth.outcome", "throttled")
-            _sign_ins.add(1, {"method": AuthMethod.MAGIC_LINK.value, "outcome": "throttled"})
+            sign_ins.add(1, {"method": AuthMethod.MAGIC_LINK.value, "outcome": "throttled"})
             raise rate_limited(wait)
         invitations = InvitationService(self.session, self.settings)
         await invitations.lock_invitation_of(self._hash(token))  # before the token's row
@@ -190,14 +187,15 @@ class LinkService:
             # Committed here, so the failed attempt counts even though the 400 rolls back.
             await self.session.commit()
             span.set_attribute("auth.outcome", "failed")
-            _sign_ins.add(1, {"method": AuthMethod.MAGIC_LINK.value, "outcome": "failed"})
+            sign_ins.add(1, {"method": AuthMethod.MAGIC_LINK.value, "outcome": "failed"})
             raise invalid_link()
         row.used_at = now
+        await clear_password_refusal(self.session, self.settings, row.user_id, now)
         issued = await AuthService(self.session, self.settings).start_session(
             row.user_id, AuthMethod.MAGIC_LINK, user_agent
         )
         span.set_attribute("auth.outcome", "signed_in")
-        _sign_ins.add(1, {"method": AuthMethod.MAGIC_LINK.value, "outcome": "signed_in"})
+        sign_ins.add(1, {"method": AuthMethod.MAGIC_LINK.value, "outcome": "signed_in"})
         return SignInResponse(status=SignInStatus.SIGNED_IN, session=issued.response), issued
 
 

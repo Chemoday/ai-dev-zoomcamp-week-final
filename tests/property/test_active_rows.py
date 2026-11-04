@@ -8,7 +8,6 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.exceptions import DomainError
-from src.modules.property.models import UserIdentity
 from src.modules.property.schemas import BuildingRole, DisplayMode, RelationType, TargetScope
 from src.modules.property.service import PropertyService
 from tests.factories import DemoBuilding, create_demo_building, create_membership, create_user
@@ -131,9 +130,6 @@ async def test_closing_removes_the_personal_data(
     db_session: AsyncSession, demo: DemoBuilding
 ) -> None:
     properties = PropertyService(db_session)
-    db_session.add(
-        UserIdentity(user_id=demo.owner_14.id, provider="password", subject_hash="e" * 64)
-    )
     extra = await create_membership(db_session, demo.owner_14, demo.apt_2)
     await db_session.flush()
     assert await properties.close_account(demo.owner_14.id) is True

@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import delete, func, select, text, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,7 +18,6 @@ from src.modules.property.models import (
     ApartmentMembership,
     Building,
     User,
-    UserIdentity,
 )
 from src.modules.property.policies import (
     apartment_in_target,
@@ -625,9 +624,9 @@ class PropertyService:
     async def close_account(self, user_id: uuid.UUID) -> bool:
         """End all memberships, deactivate the account and remove its personal data (GDPR).
 
-        Readings keep their apartment and forum posts keep a masked badge. The identities
-        (passwords) are deleted too while their model lives here. Returns False when the account
-        was already closed or is unknown. Refuses the last active chairman (LAST_CHAIRMAN).
+        Readings keep their apartment and forum posts keep a masked badge. Module auth deletes the
+        identities (passwords) in the same transaction. Returns False when the account was already
+        closed or is unknown. Refuses the last active chairman (LAST_CHAIRMAN).
         """
         user = await self._lock_person(user_id)
         if user is None or not user.is_active:
@@ -639,11 +638,6 @@ class PropertyService:
             update(ApartmentMembership)
             .where(ApartmentMembership.user_id == user_id, ACTIVE_MEMBERSHIP)
             .values(ended_at=now)
-            .execution_options(synchronize_session=False)
-        )
-        await self.session.execute(
-            delete(UserIdentity)
-            .where(UserIdentity.user_id == user_id)
             .execution_options(synchronize_session=False)
         )
         user.is_active = False

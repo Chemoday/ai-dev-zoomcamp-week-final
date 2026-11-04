@@ -39,6 +39,9 @@ _revoked_sessions = _meter.create_counter(
     "auth.revoked_sessions",
     description="Sessions ended: logout, logout_all, reuse (a stolen refresh token), password",
 )
+sign_ins = _meter.create_counter(
+    "auth.sign_ins", description="Sign-in attempts by method and outcome (signed_in, failed)"
+)
 
 
 def _now() -> datetime:
@@ -240,12 +243,16 @@ class AuthService:
             raise session_not_found()
         await self._revoke(row, _now(), reason="logout")
 
-    async def revoke_all(self, user_id: uuid.UUID, *, reason: str = "logout_all") -> int:
-        """End every session of the user ("sign out everywhere"; later a password change)."""
+    async def revoke_all(
+        self, user_id: uuid.UUID, *, reason: str = "logout_all", keep: uuid.UUID | None = None
+    ) -> int:
+        """End every session of the user ("sign out everywhere"), except `keep` (the session of
+        a password change)."""
+        conditions = [AuthSession.user_id == user_id, AuthSession.revoked_at.is_(None)]
+        if keep is not None:
+            conditions.append(AuthSession.id != keep)
         result = await self.session.execute(
-            update(AuthSession)
-            .where(AuthSession.user_id == user_id, AuthSession.revoked_at.is_(None))
-            .values(revoked_at=_now())
+            update(AuthSession).where(*conditions).values(revoked_at=_now())
         )
         count = result.rowcount or 0
         if count:

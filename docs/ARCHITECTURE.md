@@ -144,15 +144,14 @@ System-level methods (no `CurrentUserDTO`), returning DTOs, used only by notific
 ### 3.6 Privacy and observability
 No names, e-mails, phones, chat ids, push endpoints and their keys, FCM tokens, link codes, bot tokens or message bodies in logs or spans (httpx request logs are silenced because Bot API URLs carry the token, and the scrubber masks token patterns). Spans carry `event_type`, `channel`, `status`, `delivery_id`; the send span `notifications.deliver` joins the trace of the request that caused the event (`notif_deliveries.trace_id`). Metrics: `notifications.deliveries` (counter by `channel` and `status`: sent, failed, skipped, retry), `notifications.revoked_bindings`, `notifications.reminded_periods` and `notifications.deleted_rows` (by `table`).
 
-## 4. Module `auth` (epic E7) *(in progress)*
+## 4. Module `auth` (epic E7)
 
-Design: [docs/epics/E7_LOGIN.md](epics/E7_LOGIN.md). Tables: docs/SCHEMA.md section 7. API: docs/API.md section 7. Contract of task A1; implemented by A2-A5. **Status:** A2, A3 and A4 are live:
+Design: [docs/epics/E7_LOGIN.md](epics/E7_LOGIN.md). Tables: docs/SCHEMA.md section 7. API: docs/API.md section 7. Contract of task A1; implemented by A2-A5. **Status:** all of them are live:
 - `src/modules/auth/` with sessions and refresh tokens, and the session check in `get_current_user`;
 - signing in with an e-mail link, with the silent limits and the demo-mode rule (`links.py`), and the auth e-mails (`mail.py`, `messages.csv`, with the catalog loader in `src/core/messages.py`);
 - the startup checks of 4.7, and the hourly clean-up of sessions, links, attempts and invitations;
-- invitations, registration and accepting (`invitations.py`), residents, roles, ending memberships and closing accounts (`accounts.py`, the event in `events.py`), and the first-chairman command (`__main__.py`).
-
-A5 adds passwords.
+- invitations, registration and accepting (`invitations.py`), residents, roles, ending memberships and closing accounts (`accounts.py`, the event in `events.py`), and the first-chairman command (`__main__.py`);
+- the optional password (`passwords.py`, A5): Argon2id hashes in `core_user_identities` (its model now in `src/modules/auth/models.py`), the login with its throttling, and set, change and remove.
 
 ### 4.1 Place in the system
 - **Tables:** `src/modules/auth/` owns `core_user_identities` (moved from `property`), `auth_sessions`, `auth_refresh_tokens`, `auth_invitations`, `auth_tokens` and `auth_attempts`. `property` keeps users, apartments and memberships.
@@ -176,7 +175,7 @@ A5 adds passwords.
 | `membership_ref(membership_id)` / `active_membership(user_id, apartment_id)` | `MembershipRefDTO(membership_id, user_id, apartment_id, building_id, relation_type)` of an active membership, or `None` |
 | `end_membership(membership_id)` | Sets `ended_at`; returns whether the user still has an active membership or a staff role. Under the same locks as `set_building_role` (as is `open_membership`), so the automatic closing cannot be skipped by two ends at once, nor close an account that gains a membership meanwhile |
 | `set_building_role(user_id, role)` | Refuses to leave a building without an active chairman (`LastChairmanError`). Like every method below that changes people, it first takes the building's people lock (a transaction advisory lock), then the user's row, always in this order: two concurrent step-downs cannot both pass and never deadlock |
-| `close_account(user_id)` | Ends all memberships; `is_active = false`; e-mail and phone `NULL`, name `"Former resident"`; deletes the `core_user_identities` rows while their model still lives in `property` (until A5). Refuses the last active chairman, under the same locks |
+| `close_account(user_id)` | Ends all memberships; `is_active = false`; e-mail and phone `NULL`, name `"Former resident"`; module `auth` deletes the `core_user_identities` rows (its own model since A5) in the same transaction. Refuses the last active chairman, under the same locks |
 | `active_users_by_emails(emails)` | `dict[str, UUID]`: which of these canonical e-mails (held by `auth` in invitations) belong to active users; no address leaves `property` (closing deletes the invitations to the person's e-mail) |
 | `building_ids()` | every building of the installation (the first-chairman command) |
 | `apartment_by_number(building_id, number)` / `apartment_ref(apartment_id)` | `ApartmentRefDTO(apartment_id, building_id, number)` or `None` |
@@ -260,7 +259,7 @@ Every query that resolves people filters closed accounts (`core_users.is_active`
 - **New scrubber markers:** `refresh`, `magic`, `client_ip`, `ip_address`, `user_agent`. It already has `token`, `email`, `password`, `secret`, `cookie` and `authorization`.
 - **Spans** carry `auth.method`, `auth.outcome` (`signed_in`, `failed`, `throttled`, and for invitation links `registration_required` or `sign_in_to_accept`) and the session id.
 - **Metrics:** `auth.sign_ins` (by method and outcome) and `auth.revoked_sessions` (by reason).
-- **Hashing:** Argon2id runs in a thread pool, at most 2 at a time, so a burst of logins cannot use up the memory of a small server.
+- **Hashing:** Argon2id (`argon2-cffi` defaults of RFC 9106: 3 passes, 64 MiB, 4 lanes) runs in a thread pool, at most 2 at a time, so a burst of logins cannot use up the memory of a small server. An unknown e-mail is checked against a dummy hash, so every failure costs one hash. A failed attempt is counted before the hash runs and turned into a success afterwards, so parallel guesses cannot slip past the limits.
 - **Response headers:** every answer (the SPA and the API) carries `Referrer-Policy: no-referrer` (`src/core/headers.py`), so a link page never leaks its URL.
 - **Client IP:** the per-IP limits use the address uvicorn takes from `X-Forwarded-For` (`--proxy-headers`); an IPv6 address counts by its /64. Spans never carry it: the scrubber also redacts `net.peer.ip`, `net.sock.peer.addr` and `client.address`. Caddy sets that header, and the backend port is published only to Caddy, never to the internet.
 - **Logs:** uvicorn runs without an access log. The reverse proxy keeps its access log off, or excludes `Cookie` and `Authorization`.
