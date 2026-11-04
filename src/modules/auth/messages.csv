@@ -32,4 +32,12 @@ invitation.target.tenant,as a tenant of apartment {apartment},как аренд�
 invitation.target.board,as a board member,в правление,juhatuse liikmeks
 invitation.target.accountant,as the accountant,как бухгалтера,raamatupidajaks
 invitation.target.chairman,as the chairman,как председателя,esimeheks
+password_changed.subject,Your password was changed,Ваш пароль изменён,Teie parool muudeti
+password_changed.text,"The password for signing in to your apartment association was just set, changed or removed.
+
+If it was you, there is nothing to do. If it was not you, sign in with an e-mail link at {link}, set a new password and sign out everywhere under Settings > Security.","Пароль для входа в квартирное товарищество только что задали, изменили или удалили.
+
+Если это были вы, ничего делать не нужно. Если нет, войдите по ссылке из письма на {link}, задайте новый пароль и выйдите на всех устройствах в разделе «Настройки → Безопасность».","Korteriühistusse sisselogimise parool määrati, muudeti või eemaldati just praegu.
+
+Kui see olite teie, ei ole vaja midagi teha. Kui mitte, logige aadressil {link} sisse e-posti lingiga, määrake uus parool ja logige kõigist seadmetest välja jaotises „Seaded → Turvalisus“."
 footer,This is an automatic message from your apartment association: {site_url},Это автоматическое сообщение вашего квартирного товарищества: {site_url},See on teie korteriühistu automaatne teade: {site_url}

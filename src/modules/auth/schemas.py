@@ -56,6 +56,12 @@ class AttemptKind(StrEnum):
     INVITATION = "INVITATION"
 
 
+class PasswordWeakness(StrEnum):
+    TOO_SHORT = "TOO_SHORT"
+    TOO_LONG = "TOO_LONG"
+    TOO_COMMON = "TOO_COMMON"
+
+
 class SignInStatus(StrEnum):
     SIGNED_IN = "SIGNED_IN"
     REGISTRATION_REQUIRED = "REGISTRATION_REQUIRED"
@@ -270,3 +276,49 @@ class RoleUpdateResponse(BaseModel):
     user_id: uuid.UUID
     building_role: BuildingRole
     account_closed: bool
+
+
+# --- Password (A5) ------------------------------------------------------------------------------
+
+# The raw field; the rules (15..128 after NFKC) answer PASSWORD_TOO_WEAK, not a validation error.
+PasswordField = Annotated[str, Field(max_length=1024)]
+
+
+class PasswordLoginRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    email: EmailAddress
+    password: PasswordField
+
+    def __repr__(self) -> str:  # never print the password by accident
+        return "PasswordLoginRequest(email=***, password=***)"
+
+    __str__ = __repr__
+
+
+class PasswordUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    new_password: PasswordField
+    # Needed only when the sign-in is older than 10 minutes.
+    current_password: PasswordField | None = None
+
+    def __repr__(self) -> str:
+        return "PasswordUpdate(new_password=***, current_password=***)"
+
+    __str__ = __repr__
+
+
+class PasswordRemove(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    current_password: PasswordField | None = None
+
+    def __repr__(self) -> str:
+        return "PasswordRemove(current_password=***)"
+
+    __str__ = __repr__
+
+
+class PasswordStatus(BaseModel):
+    is_set: bool

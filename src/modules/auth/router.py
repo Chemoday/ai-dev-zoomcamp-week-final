@@ -1,5 +1,5 @@
 """Thin HTTP layer of the auth module (docs/API.md section 7): sessions (A2), e-mail links (A3),
-invitations, registration, residents and the chairman's administration (A4).
+invitations, registration, residents and the chairman's administration (A4), the password (A5).
 
 Every sign-in ends in AuthService.start_session. E-mails go out by detached work after the
 request's commit, so the plain token lives only in memory and never in a stored row.
@@ -18,6 +18,7 @@ from src.modules.auth.accounts import AccountService
 from src.modules.auth.invitations import InvitationService
 from src.modules.auth.links import LinkService, deliver_magic_link
 from src.modules.auth.mail import AuthMail, send_auth_mails
+from src.modules.auth.passwords import PasswordService
 from src.modules.auth.policies import CSRF_HEADER, REFRESH_COOKIE
 from src.modules.auth.schemas import (
     AcceptRequest,
@@ -27,6 +28,10 @@ from src.modules.auth.schemas import (
     IssuedSession,
     MagicLinkAccepted,
     MagicLinkRequest,
+    PasswordLoginRequest,
+    PasswordRemove,
+    PasswordStatus,
+    PasswordUpdate,
     PeopleResponse,
     RedeemRequest,
     RegistrationRequest,
@@ -245,7 +250,7 @@ async def _send_after_commit(request: Request, session: DbSession, mails: list[A
     app = request.app
     app.state.auth_background.spawn(
         send_auth_mails(app.state.plugin_registry, app.state.settings, mails),
-        name="invitation-mail",
+        name="auth-mail",
     )
 
 
@@ -476,4 +481,84 @@ async def close_account(
 ) -> Response:
     """Close an account: signed out everywhere, personal data removed."""
     await accounts.close(user, user_id)
+    return Response(status_code=204)
+
+
+# --- Password (A5) -------------------------------------------------------------------------------
+
+
+def get_password_service(request: Request, session: DbSession) -> PasswordService:
+    return PasswordService(session, request.app.state.settings, request.app.state.auth_passwords)
+
+
+REAUTH_ERRORS = {
+    **SIGNED_IN,
+    403: ["REAUTHENTICATION_REQUIRED"],
+    422: ["VALIDATION_ERROR", "PASSWORD_TOO_WEAK"],
+    429: ["RATE_LIMITED"],
+}
+
+
+@router.post(
+    "/password/login",
+    response_model=SessionResponse,
+    responses=error_responses({401: ["INVALID_CREDENTIALS"], 429: ["RATE_LIMITED"], **CSRF_ERRORS}),
+    dependencies=[Depends(require_csrf_header)],
+)
+async def password_login(
+    body: PasswordLoginRequest,
+    request: Request,
+    response: Response,
+    passwords: PasswordService = Depends(get_password_service),
+) -> SessionResponse:
+    """Sign in with the e-mail and the password; one generic 401 for every failure."""
+    issued = await passwords.login(
+        body.email, body.password, client_address(request), request.headers.get("user-agent")
+    )
+    _set_new_session_cookie(response, issued)
+    return issued.response
+
+
+@router.get("/password", response_model=PasswordStatus, responses=error_responses(SIGNED_IN))
+async def password_status(
+    user: CurrentUserDTO = Depends(get_bearer_user),
+    passwords: PasswordService = Depends(get_password_service),
+) -> PasswordStatus:
+    """Whether the caller's own account has a password (the Security page)."""
+    return PasswordStatus(is_set=await passwords.is_set(user.id))
+
+
+@router.put("/password", status_code=204, responses=error_responses(REAUTH_ERRORS))
+async def set_password(
+    body: PasswordUpdate,
+    request: Request,
+    session: DbSession,
+    user: CurrentUserDTO = Depends(get_bearer_user),
+    passwords: PasswordService = Depends(get_password_service),
+) -> Response:
+    """Set or change the password: a recent sign-in or the current password. The other sessions
+    end and a notice goes to the e-mail."""
+    mail = await passwords.set_password(
+        user, _claims(request), body.new_password, body.current_password, client_address(request)
+    )
+    await _send_after_commit(request, session, [mail] if mail else [])
+    return Response(status_code=204)
+
+
+@router.delete("/password", status_code=204, responses=error_responses(REAUTH_ERRORS))
+async def remove_password(
+    request: Request,
+    session: DbSession,
+    body: PasswordRemove | None = None,
+    user: CurrentUserDTO = Depends(get_bearer_user),
+    passwords: PasswordService = Depends(get_password_service),
+) -> Response:
+    """Remove the password, so only the e-mail link signs in."""
+    mail = await passwords.remove_password(
+        user,
+        _claims(request),
+        body.current_password if body else None,
+        client_address(request),
+    )
+    await _send_after_commit(request, session, [mail] if mail else [])
     return Response(status_code=204)

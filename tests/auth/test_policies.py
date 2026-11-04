@@ -8,12 +8,17 @@ from src.core.config import Settings
 from src.modules.auth.policies import (
     REFRESH_GRACE,
     RefreshDecision,
+    common_passwords,
     device_kind,
+    is_recent_sign_in,
+    normalize_password,
+    password_wait,
+    password_weakness,
     refresh_decision,
     session_expiry,
     validate_auth_settings,
 )
-from src.modules.auth.schemas import DeviceKind
+from src.modules.auth.schemas import DeviceKind, PasswordWeakness
 
 NOW = datetime(2026, 11, 1, 12, 0, tzinfo=UTC)
 LATER = NOW + timedelta(days=7)
@@ -99,3 +104,56 @@ def test_valid_auth_settings_pass() -> None:
             AUTH_ALLOW_SESSIONLESS_TOKENS=False,  # the test environment turns it on
         )
     )
+
+
+# --- Passwords (A5) -------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("password", "weakness"),
+    [
+        ("x" * 14, PasswordWeakness.TOO_SHORT),
+        ("my cat murka 19", None),  # exactly 15
+        ("a few words " + "z" * 116, None),  # exactly 128
+        ("a few words " + "z" * 117, PasswordWeakness.TOO_LONG),
+        ("aaaabbbbccccdddd", PasswordWeakness.TOO_COMMON),  # 4 different characters
+        ("aaaabbbbccccdddde", None),  # 5
+        ("PASSWORD password", PasswordWeakness.TOO_COMMON),  # case and spaces ignored
+    ],
+)
+def test_password_weakness(password: str, weakness: PasswordWeakness | None) -> None:
+    assert password_weakness(password) == weakness
+
+
+def test_lengths_count_code_points_after_nfkc() -> None:
+    # Full-width digits become plain ones; the ligature "ffi" becomes three letters.
+    assert normalize_password("\uff11\uff12\uff13") == "123"
+    assert normalize_password("\ufb03") == "ffi"
+    assert len(normalize_password("\u0435\u0308")) == 1  # e + diaeresis is one letter
+
+
+def test_the_common_list_is_loaded_in_its_compared_form() -> None:
+    assert "correcthorsebatterystaple" in common_passwords()
+    assert all(entry == "".join(entry.casefold().split()) for entry in common_passwords())
+
+
+def test_a_recent_sign_in_is_ten_minutes_and_needs_auth_time() -> None:
+    now = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
+
+    assert is_recent_sign_in(now - timedelta(minutes=10), now)
+    assert not is_recent_sign_in(now - timedelta(minutes=10, seconds=1), now)
+    assert not is_recent_sign_in(None, now)
+
+
+def test_the_password_delay_starts_at_the_limit_and_doubles_up_to_fifteen_minutes() -> None:
+    now = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
+
+    def failures(count: int) -> list[datetime]:
+        return [now - timedelta(seconds=count - index) for index in range(count)]
+
+    assert password_wait(failures(4), 5, now) is None
+    assert password_wait(failures(5), 5, now) == 29  # 30 s after the last failure, 1 s ago
+    assert password_wait(failures(6), 5, now) == 59
+    assert password_wait(failures(7), 5, now) == 119
+    assert password_wait(failures(40), 5, now) == 15 * 60 - 1  # capped
+    assert password_wait(failures(5), 5, now + timedelta(seconds=29)) is None

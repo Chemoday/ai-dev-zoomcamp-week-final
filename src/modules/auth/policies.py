@@ -6,14 +6,19 @@ docs/ARCHITECTURE.md section 4 and docs/API.md section 7.
 import hashlib
 import hmac
 import ipaddress
+import math
 import re
 import secrets
+import unicodedata
+from collections.abc import Collection, Sequence
 from datetime import datetime, timedelta
 from enum import StrEnum
+from functools import cache
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from src.core.config import Settings
-from src.modules.auth.schemas import DeviceKind, InvitationStatus, StaffRole
+from src.modules.auth.schemas import DeviceKind, InvitationStatus, PasswordWeakness, StaffRole
 from src.modules.property.schemas import BuildingRole
 
 if TYPE_CHECKING:
@@ -47,6 +52,25 @@ REGISTRATION_TTL = timedelta(minutes=30)
 INVITATIONS_PER_INVITER_PER_HOUR = 10
 # Expired, accepted or ended invitations are kept this long, then deleted (docs/SCHEMA.md 7).
 INVITATION_RETENTION = timedelta(days=30)
+
+# Passwords (A5, docs/API.md 7). Lengths count Unicode code points after NFKC.
+PASSWORD_PROVIDER = "password"
+MIN_PASSWORD_LENGTH = 15
+MAX_PASSWORD_LENGTH = 128
+MAX_PASSWORD_FIELD = 1024  # longer request fields are a 422 VALIDATION_ERROR
+MIN_DISTINCT_CHARACTERS = 5
+COMMON_PASSWORDS_FILE = Path(__file__).with_name("common_passwords.txt")
+# Changing or removing a password without the current one needs a sign-in this recent.
+RECENT_SIGN_IN = timedelta(minutes=10)
+# Login throttling: failures within the window, then a growing delay; never a lockout. The window
+# is a day (owner decision, review of A5): a shorter one than the delay cap would let the delay
+# start over before it reaches the cap.
+PASSWORD_WINDOW = timedelta(hours=24)
+PASSWORD_FAILURES_PER_EMAIL_AND_IP = 5
+PASSWORD_FAILURES_PER_IP = 30
+PASSWORD_FAILURES_PER_EMAIL_PER_DAY = 100  # then the password waits for an e-mail link sign-in
+PASSWORD_FIRST_DELAY = timedelta(seconds=30)
+PASSWORD_MAX_DELAY = timedelta(minutes=15)
 
 
 def email_subject(email: str) -> str:
@@ -188,3 +212,60 @@ def refresh_decision(
     if now - rotated_at <= REFRESH_GRACE:
         return RefreshDecision.GRACE
     return RefreshDecision.REUSE
+
+
+# --- Passwords (A5) -------------------------------------------------------------------------------
+
+
+def normalize_password(password: str) -> str:
+    """NFKC, so the same letter typed on different keyboards gives the same password. Spaces and
+    every script are kept as typed."""
+    return unicodedata.normalize("NFKC", password)
+
+
+def _common_form(password: str) -> str:
+    """How passwords are compared with the list: case and spaces ignored."""
+    return "".join(password.casefold().split())
+
+
+@cache
+def common_passwords() -> frozenset[str]:
+    lines = COMMON_PASSWORDS_FILE.read_text(encoding="ascii").splitlines()
+    return frozenset(
+        _common_form(line) for line in lines if line.strip() and not line.startswith("#")
+    )
+
+
+def password_weakness(
+    password: str, common: Collection[str] | None = None
+) -> PasswordWeakness | None:
+    """Why a new (normalized) password is refused, or None. No composition rules: a long phrase
+    of words is the advice."""
+    if len(password) < MIN_PASSWORD_LENGTH:
+        return PasswordWeakness.TOO_SHORT
+    if len(password) > MAX_PASSWORD_LENGTH:
+        return PasswordWeakness.TOO_LONG
+    common = common_passwords() if common is None else common
+    if len(set(password)) < MIN_DISTINCT_CHARACTERS or _common_form(password) in common:
+        return PasswordWeakness.TOO_COMMON
+    return None
+
+
+def is_recent_sign_in(auth_time: datetime | None, now: datetime) -> bool:
+    """A token without auth_time never counts as recent."""
+    return auth_time is not None and now - auth_time <= RECENT_SIGN_IN
+
+
+def password_wait(failures: Sequence[datetime], limit: int, now: datetime) -> int | None:
+    """Seconds to wait before the next password attempt, or None.
+
+    `failures` are the counted failures in the window, oldest first. From `limit` failures on,
+    the next attempt waits PASSWORD_FIRST_DELAY after the last failure, doubling with each further
+    failure, at most PASSWORD_MAX_DELAY.
+    """
+    if len(failures) < limit:
+        return None
+    doublings = min(len(failures) - limit, 16)  # 30 s * 2**16 is far past the cap already
+    delay = min(PASSWORD_FIRST_DELAY * 2**doublings, PASSWORD_MAX_DELAY)
+    remaining = (failures[-1] + delay - now).total_seconds()
+    return math.ceil(remaining) if remaining > 0 else None

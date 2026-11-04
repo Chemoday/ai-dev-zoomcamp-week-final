@@ -20,6 +20,7 @@ from src.core.telemetry import configure_logging, setup_telemetry, shutdown_trac
 from src.modules.auth.background import BackgroundWork
 from src.modules.auth.cleanup import run_cleanup_loop
 from src.modules.auth.mail import auth_catalog
+from src.modules.auth.passwords import PasswordHashing
 from src.modules.auth.policies import validate_auth_settings
 from src.modules.auth.router import router as auth_router
 from src.modules.communication.router import router as communication_router
@@ -68,6 +69,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 run_cleanup_loop(lambda: app.state.auth_session_factory), name="auth-cleanup"
             )
         )
+    await app.state.auth_passwords.warm_up()  # the dummy hash for unknown e-mails
     yield
     await app.state.auth_background.drain(
         within_seconds=10, cancel=True
@@ -103,6 +105,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     validate_auth_settings(settings, plugins)  # no app without the secrets of every sign-in
     auth_catalog()  # a broken messages.csv fails now, not after a 202
     app.state.auth_background = BackgroundWork()
+    app.state.auth_passwords = PasswordHashing()  # at most 2 Argon2id hashes at once
     if settings.NOTIFICATIONS_ENABLED:
         validate_channel_settings(settings, plugins)
         app.include_router(notifications_router)
