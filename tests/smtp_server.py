@@ -22,6 +22,8 @@ class RecordingHandler:
     """Stores accepted messages; `data_reply` / `rcpt_reply` simulate provider errors."""
 
     messages: list[EmailMessage] = field(default_factory=list)
+    raw: list[bytes] = field(default_factory=list)  # the bytes as sent, before any parsing
+    mail_options: list[list[str]] = field(default_factory=list)  # e.g. BODY=8BITMIME, SMTPUTF8
     recipients: list[list[str]] = field(default_factory=list)
     data_reply: str | None = None
     rcpt_reply: str | None = None
@@ -35,6 +37,8 @@ class RecordingHandler:
     async def handle_DATA(self, server, session, envelope):  # noqa: N802
         if self.data_reply:
             return self.data_reply
+        self.raw.append(bytes(envelope.content))
+        self.mail_options.append(list(envelope.mail_options))
         self.messages.append(message_from_bytes(envelope.content, policy=policy.default))
         self.recipients.append(list(envelope.rcpt_tos))
         return "250 Message accepted"

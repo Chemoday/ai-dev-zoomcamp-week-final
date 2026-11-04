@@ -24,10 +24,15 @@ from src.modules.notifications.schemas import (
     ReadAllResponse,
     ReadResponse,
     UnreadCountResponse,
+    UnsubscribeResponse,
     VapidPublicKeyResponse,
     WebPushSubscriptionRequest,
 )
-from src.modules.notifications.service import NotificationsService, get_notifications_service
+from src.modules.notifications.service import (
+    NotificationsService,
+    get_notifications_service,
+    unsubscribe,
+)
 from src.modules.property.schemas import CurrentUserDTO
 
 router = APIRouter(
@@ -252,8 +257,26 @@ async def telegram_webhook(
     link = channel.parse_inbound(body) if body is not None else None
     if link is None:
         return {}
-    reply = await linking.redeem_telegram(link)
+    if link.command == "stop":
+        reply = await linking.stop_telegram(link)
+    else:
+        reply = await linking.redeem_telegram(link)
     if reply:
         # Sent after the response, when the session has already committed the binding.
         background.add_task(_reply, channel, link.chat_id, reply)
     return {}
+
+
+@webhook_router.post(
+    "/unsubscribe",
+    response_model=UnsubscribeResponse,
+    responses=error_responses({400: ["INVALID_LINK"], 422: ["VALIDATION_ERROR"]}),
+)
+async def unsubscribe_email(
+    request: Request,
+    session: DbSession,
+    token: Annotated[str, Query(max_length=128)],
+) -> UnsubscribeResponse:
+    """One-click unsubscribe of an e-mail (RFC 8058; N8): no sign-in, the token authorizes it.
+    Mail clients send the form body "List-Unsubscribe=One-Click"; any body is ignored."""
+    return await unsubscribe(session, request.app.state.settings, token)

@@ -244,6 +244,32 @@ class ChannelLinking:
             return catalog.render("bot.invalid_code", default_locale)
         return catalog.render("bot.linked", locale)
 
+    async def stop_telegram(self, link: InboundLink) -> str | None:
+        """Unlink the chat of a "/stop" message (N8); returns the bot's reply, None for group
+        chats. A chat that is not linked gets the hint to link it."""
+        if link.chat_type != "private":
+            return None
+        catalog, default_locale = default_catalog(), self.settings.DEFAULT_LOCALE
+        now = _now()
+        chat_hash = self._hash(str(link.chat_id))
+        await _advisory_lock(self.session, f"notif:telegram-chat:{chat_hash}")
+        binding = await self.session.scalar(
+            select(ChannelBinding)
+            .where(
+                ChannelBinding.channel == Channel.TELEGRAM.value,
+                ChannelBinding.address_hash == chat_hash,
+                ChannelBinding.revoked_at.is_(None),
+            )
+            .with_for_update()
+        )
+        if binding is None:
+            return catalog.render("bot.how_to_link", default_locale)
+        revoke(binding, now)
+        await self.session.flush()
+        recipient = await PropertyService(self.session).get_recipient(binding.user_id)
+        locale = recipient.locale if recipient is not None and recipient.locale else default_locale
+        return catalog.render("bot.stopped", locale)
+
     # --- WebPush --------------------------------------------------------------------------------
 
     def vapid_public_key(self) -> VapidPublicKeyResponse:

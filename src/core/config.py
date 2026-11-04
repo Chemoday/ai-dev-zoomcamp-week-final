@@ -87,8 +87,9 @@ class Settings(BaseSettings):
     # starttls: port 587; tls: implicit TLS, port 465; none: only for a local test server.
     SMTP_TLS: Literal["starttls", "tls", "none"] = "starttls"
 
-    # Key of the HMAC over chat ids, push endpoints and link codes (at least 32 bytes); required
-    # with common.telegram or common.webpush. Never rotate it without rehashing the bindings.
+    # Key of the HMAC over chat ids, push endpoints, link codes and unsubscribe tokens (at least
+    # 32 bytes); required with common.telegram, common.webpush or common.email_smtp. Never rotate
+    # it without rehashing the bindings (rotating also voids the unsubscribe links of old mail).
     NOTIFICATIONS_HASH_SECRET: SecretStr = SecretStr("")
 
     # Telegram (plugin common.telegram): one bot per environment; updates arrive by webhook.

@@ -40,6 +40,7 @@ from src.modules.notifications.policies import (
     is_mandatory,
     period_review_key,
     priority_for,
+    unsubscribe_delivery_id,
 )
 from src.modules.notifications.schemas import (
     Channel,
@@ -54,6 +55,7 @@ from src.modules.notifications.schemas import (
     ReadResponse,
     SubjectType,
     UnreadCountResponse,
+    UnsubscribeResponse,
 )
 from src.modules.property.schemas import BuildingRole, CurrentUserDTO, Locale, RecipientDTO
 from src.modules.property.service import PropertyService
@@ -227,32 +229,77 @@ class NotificationsService:
                     extra={"event_type": change.event_type.value, "channel": change.channel.value},
                 )
         for change in request.preferences:
-            matches = (
-                Preference.user_id == user.id,
-                Preference.event_type == change.event_type,
-                Preference.channel == change.channel,
-            )
-            default = DEFAULT_PREFERENCES[(change.event_type, change.channel)]
-            if is_mandatory(change.event_type) or change.enabled == default:
-                # Only deviations from the default are stored.
-                await self.session.execute(delete(Preference).where(*matches))
-                continue
-            statement = pg_insert(Preference).values(
-                id=uuid.uuid4(),
-                user_id=user.id,
-                event_type=change.event_type,
-                channel=change.channel,
-                enabled=change.enabled,
-                updated_at=_now(),
-            )
-            await self.session.execute(
-                statement.on_conflict_do_update(
-                    constraint="uq_notif_preferences_user_event_channel",
-                    set_={"enabled": statement.excluded.enabled, "updated_at": _now()},
-                )
+            await store_preference(
+                self.session, user.id, change.event_type, change.channel, change.enabled
             )
         await self.session.flush()
         return await self.get_preferences(user)
+
+
+async def store_preference(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    event_type: NotificationEventType,
+    channel: Channel,
+    enabled: bool,
+) -> None:
+    """Store one preference; only deviations from the default are kept (mandatory ones never)."""
+    matches = (
+        Preference.user_id == user_id,
+        Preference.event_type == event_type,
+        Preference.channel == channel,
+    )
+    if is_mandatory(event_type) or enabled == DEFAULT_PREFERENCES[(event_type, channel)]:
+        await session.execute(delete(Preference).where(*matches))
+        return
+    statement = pg_insert(Preference).values(
+        id=uuid.uuid4(),
+        user_id=user_id,
+        event_type=event_type,
+        channel=channel,
+        enabled=enabled,
+        updated_at=_now(),
+    )
+    await session.execute(
+        statement.on_conflict_do_update(
+            constraint="uq_notif_preferences_user_event_channel",
+            set_={"enabled": statement.excluded.enabled, "updated_at": _now()},
+        )
+    )
+
+
+def invalid_unsubscribe_link() -> DomainError:
+    # One answer for every unusable link: the cause is never told.
+    return DomainError(
+        status_code=400, error_code="INVALID_LINK", message="This link cannot be used."
+    )
+
+
+async def unsubscribe(session: AsyncSession, settings: Settings, token: str) -> UnsubscribeResponse:
+    """The one-click unsubscribe of an e-mail (N8): that event type off on e-mail. No sign-in;
+    the token is the delivery id and its HMAC."""
+    secret = settings.NOTIFICATIONS_HASH_SECRET.get_secret_value()
+    delivery_id = unsubscribe_delivery_id(secret, token) if secret else None
+    row = None
+    if delivery_id is not None:
+        row = (
+            await session.execute(
+                select(Delivery.user_id, Delivery.event_type, Delivery.channel).where(
+                    Delivery.id == delivery_id
+                )
+            )
+        ).first()
+    if (
+        row is None
+        or row.channel != Channel.EMAIL
+        or is_mandatory(row.event_type)
+        or not await PropertyService(session).is_user_active(row.user_id)
+    ):
+        raise invalid_unsubscribe_link()
+    await store_preference(session, row.user_id, row.event_type, Channel.EMAIL, False)
+    await session.flush()
+    trace.get_current_span().set_attribute("notification.event_type", row.event_type.value)
+    return UnsubscribeResponse(event_type=row.event_type, channel=Channel.EMAIL)
 
 
 def get_notifications_service(request: Request, session: DbSession) -> NotificationsService:

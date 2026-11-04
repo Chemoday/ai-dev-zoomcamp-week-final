@@ -73,6 +73,14 @@ _PHONE_RE = re.compile(r"\+\d{1,3}[\s-]?\d[\d\s-]{5,}\d")
 _EE_ID_CODE_RE = re.compile(r"\b[1-6]\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{4}\b")
 # A Telegram bot token ("123456789:AA..."), e.g. inside a Bot API URL in an exception text.
 _TELEGRAM_TOKEN_RE = re.compile(r"\d{5,}:[A-Za-z0-9_-]{30,}")
+# A query parameter whose name has a sensitive marker ("?token=..." of the unsubscribe link, N8):
+# its value is redacted inside URLs and query strings (http.url, http.target, url.query, logs).
+_SENSITIVE_QUERY_RE = re.compile(
+    r"((?:^|[?&;])[^=&;#\s?]*(?:"
+    + "|".join(re.escape(marker) for marker in SENSITIVE_KEY_MARKERS)
+    + r")[^=&;#\s]*=)[^&;#\s]*",
+    re.IGNORECASE,
+)
 
 _tracer_provider: TracerProvider | None = None
 _meter_provider: MeterProvider | None = None
@@ -88,6 +96,7 @@ def is_sensitive_key(key: str) -> bool:
 
 
 def mask_pii_text(text: str) -> str:
+    text = _SENSITIVE_QUERY_RE.sub(rf"\g<1>{REDACTED}", text)
     text = _EMAIL_RE.sub(REDACTED, text)
     text = _TELEGRAM_TOKEN_RE.sub(REDACTED, text)
     text = _PHONE_RE.sub(REDACTED, text)

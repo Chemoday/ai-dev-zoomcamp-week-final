@@ -25,7 +25,7 @@ from src.modules.communication.schemas import PostCategory, TargetScope
 from src.modules.notifications import dispatcher as dispatcher_module
 from src.modules.notifications.dispatcher import Dispatcher, Outcome
 from src.modules.notifications.models import Delivery, Preference
-from src.modules.notifications.policies import MAX_ATTEMPTS
+from src.modules.notifications.policies import MAX_ATTEMPTS, unsubscribe_token
 from src.modules.notifications.service import NotificationsSubscriber
 from src.modules.property.models import Building, User
 from src.modules.property.schemas import Locale
@@ -185,9 +185,13 @@ async def test_an_alert_email_reaches_each_targeted_user_with_the_request_trace(
     assert owner["Subject"] == f"Emergency: {TITLE}"  # Ivan chose English
     assert board["Subject"] == f"Avarii: {TITLE}"  # the instance default, Estonian
     text = owner.get_content().replace("\r\n", "\n")
-    assert text.startswith(f"{BODY}\n\nAffected: entrance 2\n\n-- \n")
+    assert text.startswith(
+        f"{BODY}\n\nAffected: entrance 2\n\n"
+        "Emergency alerts cannot be turned off in the settings.\n\n-- \n"
+    )
     assert SITE in text
     assert {owner["X-Trace-Id"], board["X-Trace-Id"]} == {trace_id}
+    assert owner["List-Unsubscribe"] is None, "a mandatory alert has no unsubscribe"
 
     sent = await email_rows(db_session)
     assert all(
@@ -701,3 +705,167 @@ async def test_two_workers_never_claim_the_same_row(
             await cleanup.execute(delete(User).where(User.id == user.id))
             await cleanup.execute(delete(Building).where(Building.id == building.id))
             await cleanup.commit()
+
+
+# --- Unsubscribe (N8) -----------------------------------------------------------------------------
+
+UNSUBSCRIBE = "/api/v1/notifications/unsubscribe"
+
+
+async def test_a_non_mandatory_e_mail_unsubscribes_in_one_click(
+    span_exporter: InMemorySpanExporter,
+    log_capture,
+    api_client: AsyncClient,
+    world: NotifWorld,
+    mailboxes: dict[str, str],
+    dispatcher: Dispatcher,
+    db_session: AsyncSession,
+    smtp_server: SmtpServer,
+    email_settings: Settings,
+) -> None:
+    await period_email(db_session, world)
+    await dispatcher.tick()
+    [email] = smtp_server.messages
+
+    assert email["List-Unsubscribe-Post"] == "List-Unsubscribe=One-Click"
+    one_click = email["List-Unsubscribe"].strip("<>")
+    token = one_click.partition("token=")[2]
+    assert one_click == f"{SITE}{UNSUBSCRIBE}?token={token}" and len(token) == 43
+    text = email.get_content().replace("\r\n", "\n")
+    assert f"Stop these e-mails: {SITE}/unsubscribe#{token}" in text
+    assert (await api_client.get(f"{UNSUBSCRIBE}?token={token}")).status_code == 405
+
+    response = await api_client.post(
+        f"{UNSUBSCRIBE}?token={token}",
+        content=b"List-Unsubscribe=One-Click",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+
+    assert (response.status_code, response.json()) == (
+        200,
+        {"event_type": "PERIOD_REVIEW", "channel": "email"},
+    )
+    headers = bearer(world.accountant, email_settings)
+    prefs = (await api_client.get("/api/v1/notifications/preferences", headers=headers)).json()
+    enabled = {(p["event_type"], p["channel"]): p["enabled"] for p in prefs["preferences"]}
+    assert enabled[("PERIOD_REVIEW", "email")] is False
+    assert enabled[("PERIOD_REVIEW", "in_app")] is True, "other channels stay as they were"
+    assert enabled[("READING_DEADLINE", "email")] is True, "other e-mails stay as they were"
+
+    # Switched on again in the settings: the same link turns it off again (idempotent).
+    await api_client.put(
+        "/api/v1/notifications/preferences",
+        json={
+            "preferences": [{"event_type": "PERIOD_REVIEW", "channel": "email", "enabled": True}]
+        },
+        headers=headers,
+    )
+    again = await api_client.post(f"{UNSUBSCRIBE}?token={token}")  # the page: no body
+    assert again.json() == response.json()
+    exported = " ".join(
+        f"{span.name} {dict(span.attributes or {})}" for span in span_exporter.get_finished_spans()
+    )
+    assert UNSUBSCRIBE in exported, "the request spans were exported"
+    assert token not in exported and token not in log_capture.raw, (
+        "the token never reaches telemetry"
+    )
+    await period_email(db_session, world)
+    await dispatcher.tick()
+    assert len(smtp_server.messages) == 1, "the next e-mail of that kind is not sent"
+
+
+async def test_an_unusable_link_gets_one_answer(
+    api_client: AsyncClient,
+    world: NotifWorld,
+    mailboxes: dict[str, str],
+    db_session: AsyncSession,
+    email_settings: Settings,
+) -> None:
+    secret = email_settings.NOTIFICATIONS_HASH_SECRET.get_secret_value()
+    good = await period_email(db_session, world)
+    in_app = await period_email(db_session, world)
+    in_app.channel = "in_app"
+    emergency = await period_email(db_session, world)
+    emergency.event_type = "EMERGENCY_PUBLISHED"
+    await db_session.flush()
+    valid = unsubscribe_token(secret, good.id)
+    tampered = valid[:-2] + ("AA" if valid[-2:] != "AA" else "BB")
+    tokens = [
+        "x" * 43,
+        "short",
+        valid + "=",
+        tampered,
+        unsubscribe_token(secret, uuid.uuid4()),  # a delivery that no longer exists
+        unsubscribe_token("another-secret-of-at-least-32-bytes!!", good.id),
+        unsubscribe_token(secret, in_app.id),
+        unsubscribe_token(secret, emergency.id),
+    ]
+    answers = []
+    for token in tokens:
+        response = await api_client.post(UNSUBSCRIBE, params={"token": token})
+        answers.append((response.status_code, response.json()))
+    await db_session.execute(
+        update(User).where(User.id == world.accountant.id).values(is_active=False)
+    )
+    closed = await api_client.post(UNSUBSCRIBE, params={"token": valid})
+    answers.append((closed.status_code, closed.json()))
+
+    assert {answer[0] for answer in answers} == {400}
+    assert {answer[1]["error_code"] for answer in answers} == {"INVALID_LINK"}
+    assert len({answer[1]["message"] for answer in answers}) == 1
+
+
+def test_e_mail_needs_the_hash_secret_for_its_unsubscribe_links(email_settings: Settings) -> None:
+    values = {**email_settings.model_dump(), "NOTIFICATIONS_HASH_SECRET": ""}
+
+    with pytest.raises(RuntimeError, match="NOTIFICATIONS_HASH_SECRET"):
+        create_app(Settings(**values))
+
+
+async def test_an_unsubscribe_from_an_e_mail_that_is_off_by_default_keeps_it_off(
+    api_client: AsyncClient,
+    world: NotifWorld,
+    mailboxes: dict[str, str],
+    db_session: AsyncSession,
+    email_settings: Settings,
+) -> None:
+    """EMERGENCY_RESOLVED e-mail is off by default; someone who switched it on stops it again."""
+    headers = bearer(world.accountant, email_settings)
+    change = {"event_type": "EMERGENCY_RESOLVED", "channel": "email", "enabled": True}
+    await api_client.put(
+        "/api/v1/notifications/preferences", json={"preferences": [change]}, headers=headers
+    )
+    row = await period_email(db_session, world)
+    row.event_type = "EMERGENCY_RESOLVED"
+    await db_session.flush()
+    secret = email_settings.NOTIFICATIONS_HASH_SECRET.get_secret_value()
+
+    response = await api_client.post(
+        UNSUBSCRIBE, params={"token": unsubscribe_token(secret, row.id)}
+    )
+
+    assert response.json() == {"event_type": "EMERGENCY_RESOLVED", "channel": "email"}
+    stored = await db_session.scalars(
+        select(Preference).where(Preference.user_id == world.accountant.id)
+    )
+    assert list(stored) == [], "back to the default (off), so no row is stored"
+
+
+async def test_a_plain_http_site_gets_the_text_link_but_no_one_click_headers(
+    world: NotifWorld,
+    mailboxes: dict[str, str],
+    dispatcher: Dispatcher,
+    db_session: AsyncSession,
+    smtp_server: SmtpServer,
+    email_settings: Settings,
+) -> None:
+    dispatcher._settings = Settings(
+        **{**email_settings.model_dump(), "PUBLIC_BASE_URL": "http://localhost:8000"}
+    )
+    await period_email(db_session, world)
+
+    await dispatcher.tick()
+
+    [email] = smtp_server.messages
+    assert email["List-Unsubscribe"] is None and email["List-Unsubscribe-Post"] is None
+    assert "http://localhost:8000/unsubscribe#" in email.get_content()

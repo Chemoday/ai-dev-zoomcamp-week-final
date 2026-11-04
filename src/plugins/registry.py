@@ -84,6 +84,9 @@ class OutgoingMessage:
     expires_at: datetime | None = None
     # The trace of the request that caused the event; e-mail carries it as X-Trace-Id.
     trace_id: str | None = None
+    # The one-click unsubscribe URL of RFC 8058 (N8): e-mail turns it into the List-Unsubscribe
+    # headers. None for mandatory events and for other channels.
+    unsubscribe_url: str | None = field(default=None, repr=False)
 
     @property
     def full_text(self) -> str:
@@ -109,12 +112,14 @@ class NotificationChannel(Protocol):
 
 @dataclass(frozen=True)
 class InboundLink:
-    """A "/start <code>" message to the bot: a request to link this chat (docs/ARCHITECTURE.md
-    3.2); `code` is "" for a bare "/start". `chat_id` is personal data: never log it."""
+    """A command to the bot (docs/ARCHITECTURE.md 3.2): "/start <code>" links this chat, "/stop"
+    (N8) unlinks it. `code` is "" for a bare "/start" and for "/stop". `chat_id` is personal data:
+    never log it."""
 
     chat_id: int = field(repr=False)
     chat_type: str  # "private", "group", "supergroup", "channel"
     code: str = field(repr=False)
+    command: str = "start"  # "start" or "stop"
 
 
 class InboundChannel(Protocol):

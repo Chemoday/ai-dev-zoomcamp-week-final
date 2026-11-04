@@ -8,7 +8,14 @@ Two kinds (owner decision, E1 section 5):
 The catalog format and its loader live in src/core/messages.py (shared with module auth).
 """
 
-__all__ = ["MessageCatalog", "MessageCatalogError", "compose", "default_catalog", "placeholders"]
+__all__ = [
+    "MessageCatalog",
+    "MessageCatalogError",
+    "compose",
+    "default_catalog",
+    "email_text",
+    "placeholders",
+]
 
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -98,3 +105,19 @@ def compose(
     # cannot carry, and the mandatory alert must not fail because of them.
     subject = " ".join(subject.split())
     return RenderedMessage(subject=subject, text=text, footer=footer)
+
+
+def email_text(
+    event_type: NotificationEventType,
+    locale: str,
+    text: str,
+    *,
+    unsubscribe_link: str | None,
+    catalog: MessageCatalog | None = None,
+) -> str:
+    """The text of an e-mail (N8): a non-mandatory one ends with its unsubscribe link, an
+    emergency with the note that alerts cannot be switched off."""
+    catalog = catalog or default_catalog()
+    if unsubscribe_link is None:
+        return f"{text}\n\n{catalog.render('line.mandatory', locale)}"
+    return f"{text}\n\n{catalog.render('line.unsubscribe', locale, link=unsubscribe_link)}"

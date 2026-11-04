@@ -145,3 +145,50 @@ def test_credentials_are_never_sent_in_clear_text() -> None:
 
     with pytest.raises(RuntimeError, match="clear text"):
         PluginRegistry(settings).load(["common.email_smtp"])
+
+
+def test_an_unsubscribe_url_becomes_the_one_click_headers_of_rfc_8058() -> None:
+    url = "https://kyu.example.test/api/v1/notifications/unsubscribe?token=abc"
+    channel = channel_for("localhost", 25)
+
+    with_link = channel.build(message(event_type="READING_DEADLINE", unsubscribe_url=url))
+    without = channel.build(message())
+
+    assert with_link["List-Unsubscribe"] == f"<{url}>"
+    assert with_link["List-Unsubscribe-Post"] == "List-Unsubscribe=One-Click"
+    assert without["List-Unsubscribe"] is None and without["List-Unsubscribe-Post"] is None
+    assert url not in repr(message(unsubscribe_url=url)), "the repr hides the token"
+
+
+async def test_the_list_unsubscribe_header_goes_out_on_one_line_unencoded(
+    smtp_server: SmtpServer,
+) -> None:
+    """Folded into RFC 2047 encoded-words, mail services would not see a URI (review of N8)."""
+    url = "https://kyu.example.test/api/v1/notifications/unsubscribe?token=" + "Ab0_-" * 8 + "xyz"
+
+    result = await channel_for(smtp_server.host, smtp_server.port).send(
+        message(event_type="READING_DEADLINE", unsubscribe_url=url)
+    )
+
+    assert result == DeliveryResult(ok=True)
+    [raw] = smtp_server.handler.raw
+    assert f"\r\nList-Unsubscribe: <{url}>\r\n".encode() in raw
+    assert b"\r\nList-Unsubscribe-Post: List-Unsubscribe=One-Click\r\n" in raw
+    header = raw.split(b"List-Unsubscribe: ", 1)[1].split(b"\r\n", 1)[0]
+    assert b"=?" not in header
+    subject = raw.split(b"\r\nSubject: ", 1)[1].split(b"\r\n", 1)[0]
+    assert b"=?utf-8?" in subject, "other headers are still encoded as before"
+
+
+async def test_a_message_is_seven_bit_on_the_wire(smtp_server: SmtpServer) -> None:
+    """The bytes are sent raw, so nothing declares BODY=8BITMIME: they must not need it."""
+    result = await channel_for(smtp_server.host, smtp_server.port).send(message())
+
+    assert result == DeliveryResult(ok=True)
+    [raw] = smtp_server.handler.raw
+    assert all(byte < 128 for byte in raw), "no 8-bit byte in headers or body"
+    [options] = smtp_server.handler.mail_options
+    assert not [option for option in options if option.startswith("BODY=")], "none needed"
+    [email] = smtp_server.messages
+    assert email["Content-Transfer-Encoding"] == "quoted-printable"
+    assert "P\u00fcstik vahetatakse." in email.get_content()

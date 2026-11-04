@@ -1,5 +1,6 @@
 """Pure rules of the notifications module and the shared targeting rule."""
 
+import base64
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import get_args
@@ -16,11 +17,15 @@ from src.modules.notifications.policies import (
     external_channels_allowed,
     is_enabled,
     is_mandatory,
+    keyed_hash,
     next_reminder_hours,
     period_review_key,
     priority_for,
     reminder_deadline,
     reminder_due,
+    unsubscribe_delivery_id,
+    unsubscribe_links,
+    unsubscribe_token,
 )
 from src.modules.notifications.schemas import Channel, NotificationEventType, UnavailableReason
 from src.modules.property.policies import apartment_in_target
@@ -153,3 +158,51 @@ def test_the_next_reminder_hours_start_at_nine_local() -> None:
     assert reminder_deadline({}) is None
     assert reminder_deadline({"due_date": "2026-11-04T21:59:59"}) is None  # not aware
     assert reminder_deadline({"due_date": "soon"}) is None
+
+
+# --- Unsubscribe tokens (N8) ----------------------------------------------------------------------
+
+UNSUBSCRIBE_SECRET = "unsubscribe-test-secret-of-32-bytes!"
+
+
+def test_an_unsubscribe_token_carries_its_delivery_and_nothing_else() -> None:
+    delivery_id = uuid.uuid4()
+    token = unsubscribe_token(UNSUBSCRIBE_SECRET, delivery_id)
+
+    assert len(token) == 43 and set(token) <= set(
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    )
+    assert unsubscribe_delivery_id(UNSUBSCRIBE_SECRET, token) == delivery_id
+    assert unsubscribe_token(UNSUBSCRIBE_SECRET, delivery_id) == token, "deterministic, not stored"
+    assert unsubscribe_delivery_id("another-secret-of-at-least-32-bytes", token) is None
+    # Its own prefix: the MAC is not the address hash (keyed_hash) of the delivery id.
+    raw = base64.urlsafe_b64decode(token + "=")
+    assert raw[16:].hex() != keyed_hash(UNSUBSCRIBE_SECRET, str(delivery_id))[:32]
+
+
+@pytest.mark.parametrize("token", ["", "x" * 42, "x" * 44, "+" * 43, "/" * 43, "=" * 43])
+def test_a_malformed_unsubscribe_token_is_refused(token: str) -> None:
+    assert unsubscribe_delivery_id(UNSUBSCRIBE_SECRET, token) is None
+
+
+def test_the_unsubscribe_links_point_at_the_page_and_the_api() -> None:
+    page, one_click = unsubscribe_links("https://kyu.example.test", "T")
+
+    assert page == "https://kyu.example.test/unsubscribe#T"
+    assert one_click == "https://kyu.example.test/api/v1/notifications/unsubscribe?token=T"
+
+
+def test_only_the_canonical_spelling_of_a_token_is_accepted() -> None:
+    token = unsubscribe_token(UNSUBSCRIBE_SECRET, uuid.uuid4())
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    # The last character carries 2 spare bits: its 3 siblings decode to the same bytes.
+    base = alphabet.index(token[-1]) & ~3
+    siblings = [
+        token[:-1] + alphabet[base + n] for n in range(4) if alphabet[base + n] != token[-1]
+    ]
+
+    assert len(siblings) == 3
+    assert all(
+        base64.urlsafe_b64decode(s + "=") == base64.urlsafe_b64decode(token + "=") for s in siblings
+    )
+    assert all(unsubscribe_delivery_id(UNSUBSCRIBE_SECRET, s) is None for s in siblings)

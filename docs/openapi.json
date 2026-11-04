@@ -4623,6 +4623,70 @@
         }
       }
     },
+    "/api/v1/notifications/unsubscribe": {
+      "post": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "Unsubscribe Email",
+        "description": "One-click unsubscribe of an e-mail (RFC 8058; N8): no sign-in, the token authorizes it.\nMail clients send the form body \"List-Unsubscribe=One-Click\"; any body is ignored.",
+        "operationId": "unsubscribe_email_api_v1_notifications_unsubscribe_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 128,
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnsubscribeResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error. error_code: `INTERNAL_SERVER_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request. error_code: `INVALID_LINK`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input. error_code: `VALIDATION_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/demo/users": {
       "get": {
         "tags": [
@@ -7514,6 +7578,23 @@
           "unread"
         ],
         "title": "UnreadCountResponse"
+      },
+      "UnsubscribeResponse": {
+        "properties": {
+          "event_type": {
+            "$ref": "#/components/schemas/NotificationEventType"
+          },
+          "channel": {
+            "$ref": "#/components/schemas/Channel"
+          }
+        },
+        "type": "object",
+        "required": [
+          "event_type",
+          "channel"
+        ],
+        "title": "UnsubscribeResponse",
+        "description": "What one unsubscribe turned off (N8): one event type on e-mail."
       },
       "ValidationErrorItem": {
         "properties": {
