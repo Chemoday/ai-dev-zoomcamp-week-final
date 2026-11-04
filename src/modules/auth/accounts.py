@@ -18,7 +18,7 @@ from src.modules.auth.errors import forbidden, membership_not_found, user_not_fo
 from src.modules.auth.events import UserAccountClosed
 from src.modules.auth.invitations import InvitationService
 from src.modules.auth.mail import AuthMail
-from src.modules.auth.models import AuthToken
+from src.modules.auth.models import AuthToken, UserIdentity
 from src.modules.auth.schemas import (
     InvitationView,
     PeopleResponse,
@@ -208,6 +208,11 @@ class AccountService:
         if not await self.properties.close_account(user_id):  # LAST_CHAIRMAN
             return
         await AuthService(self.session, self.settings).revoke_all(user_id, reason="account_closed")
+        await self.session.execute(
+            delete(UserIdentity)
+            .where(UserIdentity.user_id == user_id)
+            .execution_options(synchronize_session=False)
+        )
         await self.session.execute(
             delete(AuthToken)
             .where(AuthToken.user_id == user_id)

@@ -12,6 +12,7 @@ from src.modules.auth.models import (  # noqa: F401
     AuthSession,
     AuthToken,
     RefreshToken,
+    UserIdentity,
 )
 from src.modules.communication.models import Comment, EmergencyAck, Post  # noqa: F401
 from src.modules.meters.models import (  # noqa: F401
@@ -26,7 +27,6 @@ from src.modules.property.models import (  # noqa: F401
     ApartmentMembership,
     Building,
     User,
-    UserIdentity,
 )
 
 __all__ = ["Base"]
