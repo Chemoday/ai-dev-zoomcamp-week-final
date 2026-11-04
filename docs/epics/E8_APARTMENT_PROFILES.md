@@ -46,17 +46,18 @@ From 2026-11-04:
 ## 2. Apartment cards (task P1)
 
 - `GET /api/v1/property/apartments` (chairman, board): every apartment of the building with its
-  number, entrance, floor, area and the number of active owners and tenants. Sorted by entrance,
-  then by number as people read it (2 before 10).
+  number, entrance, floor, area and the number of active owners, tenants and family members.
+  Sorted by entrance, then by number as people read it (2 before 10).
 - `GET /api/v1/property/apartments/{apartment_id}` (chairman, board): the same fields plus the
   residents, each as `{relation_type, since}`. No user id, name, e-mail or phone, and no badge:
   the card never depends on a resident's privacy choice. An apartment of another building is
   `404 APARTMENT_NOT_FOUND`.
 - `GET /api/v1/meters/apartments/{apartment_id}/readings` (chairman, board, accountant, and the
   apartment's own members): the apartment's meters with one reading per period, newest period
-  first, at most 24 periods. Each reading carries its value, consumption, status and whether it is
-  an estimate. The same series later feeds the resident's 12-month chart (local idea L-3) at no
-  extra backend cost.
+  first, at most 24 periods. Each reading carries its value, consumption and source
+  (`AUTO_ESTIMATED` marks an estimate). The history belongs to the apartment, so a new resident
+  also sees older readings. The same series later feeds the resident's 12-month chart at no extra
+  backend cost.
 - The router layer combines nothing: the frontend calls property for the card and meters for the
   readings. Modules never import each other's models.
 - **No contacts on the card.** Whether the board may see a phone number in an emergency, with an
