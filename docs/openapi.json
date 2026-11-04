@@ -2379,6 +2379,158 @@
         }
       }
     },
+    "/api/v1/property/apartments": {
+      "get": {
+        "tags": [
+          "property"
+        ],
+        "summary": "List Apartment Cards",
+        "description": "The board's apartment cards (epic E8): relations and counts, never people.",
+        "operationId": "list_apartment_cards_api_v1_property_apartments_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApartmentListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated. error_code: `NOT_AUTHENTICATED`, `INVALID_TOKEN`, `UNKNOWN_USER`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error. error_code: `INTERNAL_SERVER_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden. error_code: `FORBIDDEN`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/v1/property/apartments/{apartment_id}": {
+      "get": {
+        "tags": [
+          "property"
+        ],
+        "summary": "Get Apartment Card",
+        "description": "One apartment card: the list fields plus residents as relation and start date.",
+        "operationId": "get_apartment_card_api_v1_property_apartments__apartment_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "apartment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Apartment Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApartmentCard"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated. error_code: `NOT_AUTHENTICATED`, `INVALID_TOKEN`, `UNKNOWN_USER`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error. error_code: `INTERNAL_SERVER_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden. error_code: `FORBIDDEN`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (or not visible to the caller). error_code: `APARTMENT_NOT_FOUND`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input. error_code: `VALIDATION_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/meters/my-dashboard": {
       "get": {
         "tags": [
@@ -2626,6 +2778,88 @@
           },
           "404": {
             "description": "Not found (or not visible to the caller). error_code: `READING_NOT_FOUND`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input. error_code: `VALIDATION_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/meters/apartments/{apartment_id}/readings": {
+      "get": {
+        "tags": [
+          "meters"
+        ],
+        "summary": "Apartment Readings",
+        "description": "An apartment's readings across the latest periods: staff, or the apartment's members.",
+        "operationId": "apartment_readings_api_v1_meters_apartments__apartment_id__readings_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "apartment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Apartment Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApartmentReadingsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated. error_code: `NOT_AUTHENTICATED`, `INVALID_TOKEN`, `UNKNOWN_USER`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error. error_code: `INTERNAL_SERVER_ERROR`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (or not visible to the caller). error_code: `APARTMENT_NOT_FOUND`",
             "content": {
               "application/json": {
                 "schema": {
@@ -4785,6 +5019,264 @@
         ],
         "title": "AcknowledgeResponse"
       },
+      "ApartmentCard": {
+        "properties": {
+          "apartment_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Apartment Id"
+          },
+          "apartment_number": {
+            "type": "string",
+            "title": "Apartment Number"
+          },
+          "entrance": {
+            "type": "integer",
+            "title": "Entrance"
+          },
+          "floor": {
+            "type": "integer",
+            "title": "Floor"
+          },
+          "area_m2": {
+            "type": "string",
+            "pattern": "^[0-9]+\\.[0-9]{2}$",
+            "title": "Area M2",
+            "examples": [
+              "329.20"
+            ]
+          },
+          "owner_count": {
+            "type": "integer",
+            "title": "Owner Count"
+          },
+          "tenant_count": {
+            "type": "integer",
+            "title": "Tenant Count"
+          },
+          "resident_count": {
+            "type": "integer",
+            "title": "Resident Count"
+          },
+          "residents": {
+            "items": {
+              "$ref": "#/components/schemas/CardResident"
+            },
+            "type": "array",
+            "title": "Residents"
+          }
+        },
+        "type": "object",
+        "required": [
+          "apartment_id",
+          "apartment_number",
+          "entrance",
+          "floor",
+          "area_m2",
+          "owner_count",
+          "tenant_count",
+          "resident_count",
+          "residents"
+        ],
+        "title": "ApartmentCard"
+      },
+      "ApartmentListResponse": {
+        "properties": {
+          "apartments": {
+            "items": {
+              "$ref": "#/components/schemas/ApartmentSummary"
+            },
+            "type": "array",
+            "title": "Apartments"
+          }
+        },
+        "type": "object",
+        "required": [
+          "apartments"
+        ],
+        "title": "ApartmentListResponse"
+      },
+      "ApartmentMeterHistory": {
+        "properties": {
+          "meter_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Meter Id"
+          },
+          "resource_type": {
+            "$ref": "#/components/schemas/ResourceType"
+          },
+          "serial_number": {
+            "type": "string",
+            "title": "Serial Number"
+          },
+          "location_label": {
+            "type": "string",
+            "title": "Location Label"
+          },
+          "unit": {
+            "$ref": "#/components/schemas/MeterUnit"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          },
+          "readings": {
+            "items": {
+              "$ref": "#/components/schemas/ApartmentReading"
+            },
+            "type": "array",
+            "title": "Readings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "meter_id",
+          "resource_type",
+          "serial_number",
+          "location_label",
+          "unit",
+          "is_active",
+          "readings"
+        ],
+        "title": "ApartmentMeterHistory"
+      },
+      "ApartmentReading": {
+        "properties": {
+          "period_code": {
+            "type": "string",
+            "title": "Period Code"
+          },
+          "reading_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Reading Id"
+          },
+          "value": {
+            "type": "string",
+            "pattern": "^-?[0-9]+\\.[0-9]{3}$",
+            "title": "Value",
+            "examples": [
+              "1254.000"
+            ]
+          },
+          "consumption_delta": {
+            "type": "string",
+            "pattern": "^-?[0-9]+\\.[0-9]{3}$",
+            "title": "Consumption Delta",
+            "examples": [
+              "1254.000"
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/ReadingSource"
+          },
+          "is_anomaly_confirmed": {
+            "type": "boolean",
+            "title": "Is Anomaly Confirmed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "period_code",
+          "reading_id",
+          "value",
+          "consumption_delta",
+          "source",
+          "is_anomaly_confirmed"
+        ],
+        "title": "ApartmentReading"
+      },
+      "ApartmentReadingsResponse": {
+        "properties": {
+          "apartment_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Apartment Id"
+          },
+          "apartment_number": {
+            "type": "string",
+            "title": "Apartment Number"
+          },
+          "periods": {
+            "items": {
+              "$ref": "#/components/schemas/PeriodDTO"
+            },
+            "type": "array",
+            "title": "Periods"
+          },
+          "meters": {
+            "items": {
+              "$ref": "#/components/schemas/ApartmentMeterHistory"
+            },
+            "type": "array",
+            "title": "Meters"
+          }
+        },
+        "type": "object",
+        "required": [
+          "apartment_id",
+          "apartment_number",
+          "periods",
+          "meters"
+        ],
+        "title": "ApartmentReadingsResponse",
+        "description": "One apartment's readings across the latest periods (the E8 card and the resident's chart)."
+      },
+      "ApartmentSummary": {
+        "properties": {
+          "apartment_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Apartment Id"
+          },
+          "apartment_number": {
+            "type": "string",
+            "title": "Apartment Number"
+          },
+          "entrance": {
+            "type": "integer",
+            "title": "Entrance"
+          },
+          "floor": {
+            "type": "integer",
+            "title": "Floor"
+          },
+          "area_m2": {
+            "type": "string",
+            "pattern": "^[0-9]+\\.[0-9]{2}$",
+            "title": "Area M2",
+            "examples": [
+              "329.20"
+            ]
+          },
+          "owner_count": {
+            "type": "integer",
+            "title": "Owner Count"
+          },
+          "tenant_count": {
+            "type": "integer",
+            "title": "Tenant Count"
+          },
+          "resident_count": {
+            "type": "integer",
+            "title": "Resident Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "apartment_id",
+          "apartment_number",
+          "entrance",
+          "floor",
+          "area_m2",
+          "owner_count",
+          "tenant_count",
+          "resident_count"
+        ],
+        "title": "ApartmentSummary",
+        "description": "An apartment in the board's list of cards (epic E8): counts of members, no people."
+      },
       "AuthMethod": {
         "type": "string",
         "enum": [
@@ -4923,6 +5415,25 @@
           "USER"
         ],
         "title": "BuildingRole"
+      },
+      "CardResident": {
+        "properties": {
+          "relation_type": {
+            "$ref": "#/components/schemas/RelationType"
+          },
+          "since": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Since"
+          }
+        },
+        "type": "object",
+        "required": [
+          "relation_type",
+          "since"
+        ],
+        "title": "CardResident",
+        "description": "A member on an apartment card: only the relation and since when, never who."
       },
       "Channel": {
         "type": "string",

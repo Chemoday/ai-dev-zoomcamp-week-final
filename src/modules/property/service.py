@@ -25,12 +25,16 @@ from src.modules.property.policies import (
     most_private_display_mode,
 )
 from src.modules.property.schemas import (
+    ApartmentCard,
     ApartmentDTO,
+    ApartmentListResponse,
     ApartmentMembershipDTO,
     ApartmentRefDTO,
+    ApartmentSummary,
     AuthorBadgeDTO,
     BuildingResponse,
     BuildingRole,
+    CardResident,
     CurrentUserDTO,
     DeliveryContactDTO,
     DisplayMode,
@@ -325,6 +329,76 @@ class PropertyService:
             entrance_count=entrance_count,
             heated_area_m2=Decimal(area),
         )
+
+    # --- Apartment cards for the board (epic E8) ------------------------------------------------
+    # The router allows only CARD_VIEWER_ROLES; residents appear as relations, never as people.
+
+    async def list_apartment_cards(self, current_user: CurrentUserDTO) -> ApartmentListResponse:
+        apartments = list(
+            await self.session.scalars(
+                select(Apartment)
+                .where(Apartment.building_id == current_user.building_id)
+                .order_by(*_APARTMENT_ORDER)
+            )
+        )
+        members = await self._card_residents([apartment.id for apartment in apartments])
+        return ApartmentListResponse(
+            apartments=[
+                _apartment_summary(apartment, members.get(apartment.id, []))
+                for apartment in apartments
+            ]
+        )
+
+    async def get_apartment_card(
+        self, current_user: CurrentUserDTO, apartment_id: uuid.UUID
+    ) -> ApartmentCard:
+        apartment = await self.session.scalar(
+            select(Apartment).where(
+                Apartment.id == apartment_id, Apartment.building_id == current_user.building_id
+            )
+        )
+        if apartment is None:
+            raise DomainError(
+                status_code=404, error_code="APARTMENT_NOT_FOUND", message="No such apartment."
+            )
+        residents = (await self._card_residents([apartment.id])).get(apartment.id, [])
+        summary = _apartment_summary(apartment, residents)
+        return ApartmentCard(**summary.model_dump(), residents=residents)
+
+    async def _card_residents(
+        self, apartment_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, list[CardResident]]:
+        """Active memberships of active accounts per apartment: owners, tenants, then family,
+        each by start (the same people GET /property/me and the residents list count)."""
+        if not apartment_ids:
+            return {}
+        rows = (
+            await self.session.execute(
+                select(
+                    ApartmentMembership.apartment_id,
+                    ApartmentMembership.relation_type,
+                    ApartmentMembership.started_at,
+                )
+                .join(Apartment, Apartment.id == ApartmentMembership.apartment_id)
+                .join(User, User.id == ApartmentMembership.user_id)
+                .where(
+                    ApartmentMembership.apartment_id.in_(apartment_ids),
+                    ACTIVE_MEMBERSHIP,
+                    User.is_active.is_(True),
+                    Apartment.building_id == User.building_id,
+                )
+                .order_by(ApartmentMembership.started_at, ApartmentMembership.id)
+            )
+        ).all()
+        result: dict[uuid.UUID, list[CardResident]] = {}
+        for apartment_id, relation_type, started_at in rows:
+            result.setdefault(apartment_id, []).append(
+                CardResident(relation_type=relation_type, since=started_at)
+            )
+        for residents in result.values():
+            # Stable sort: within a relation the order by start (then id) stays.
+            residents.sort(key=lambda resident: _RELATION_ORDER.index(resident.relation_type))
+        return result
 
     # --- Building structure for other modules --------------------------------------------------
 
@@ -961,6 +1035,22 @@ class PropertyService:
             building_role=building_role,
             display_mode=membership.privacy_display_mode,
         )
+
+
+def _apartment_summary(apartment: Apartment, residents: list[CardResident]) -> ApartmentSummary:
+    def count(relation: RelationType) -> int:
+        return sum(1 for resident in residents if resident.relation_type == relation)
+
+    return ApartmentSummary(
+        apartment_id=apartment.id,
+        apartment_number=apartment.number,
+        entrance=apartment.entrance,
+        floor=apartment.floor,
+        area_m2=apartment.area_m2,
+        owner_count=count(RelationType.OWNER),
+        tenant_count=count(RelationType.TENANT),
+        resident_count=count(RelationType.RESIDENT),
+    )
 
 
 def get_property_service(session: DbSession) -> PropertyService:

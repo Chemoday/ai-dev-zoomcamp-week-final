@@ -10,6 +10,7 @@ from src.core.exceptions import AUTH_ERRORS, DomainError, error_responses
 from src.core.security import get_current_user, require_building_roles
 from src.modules.meters.schemas import (
     PERIOD_CODE_PATTERN,
+    ApartmentReadingsResponse,
     DashboardResponse,
     EstimateResponse,
     MatrixResponse,
@@ -89,6 +90,20 @@ async def reading_history(
     service: MetersService = Depends(get_meters_service),
 ) -> ReadingHistoryResponse:
     return await service.get_history(user, reading_id)
+
+
+@router.get(
+    "/apartments/{apartment_id}/readings",
+    response_model=ApartmentReadingsResponse,
+    responses=error_responses({404: ["APARTMENT_NOT_FOUND"], 422: ["VALIDATION_ERROR"]}),
+)
+async def apartment_readings(
+    apartment_id: uuid.UUID,
+    user: CurrentUserDTO = Depends(get_current_user),
+    service: MetersService = Depends(get_meters_service),
+) -> ApartmentReadingsResponse:
+    """An apartment's readings across the latest periods: staff, or the apartment's members."""
+    return await service.get_apartment_readings(user, apartment_id)
 
 
 @router.get("/periods", response_model=PeriodListResponse)

@@ -29,7 +29,11 @@ from src.modules.meters.policies import (
     validate_reading_delta,
 )
 from src.modules.meters.schemas import (
+    APARTMENT_HISTORY_PERIODS,
     METER_VALUE_MAX,
+    ApartmentMeterHistory,
+    ApartmentReading,
+    ApartmentReadingsResponse,
     DashboardApartment,
     DashboardMeter,
     DashboardResponse,
@@ -494,6 +498,91 @@ class MetersService:
             .order_by(ReadingPeriod.period_code.desc())
         )
         return PeriodListResponse(periods=[_period_dto(period) for period in periods])
+
+    # --- Apartment history (epic E8) ----------------------------------------------------------
+
+    async def get_apartment_readings(
+        self, user: CurrentUserDTO, apartment_id: uuid.UUID
+    ) -> ApartmentReadingsResponse:
+        """The latest periods of the building and the apartment's readings in them.
+
+        Staff see every apartment of the building, a resident only their own; the history
+        belongs to the apartment, so it includes readings from before the resident moved in.
+        """
+        apartment = await self.property_service.apartment_ref(apartment_id)
+        visible = (
+            apartment is not None
+            and apartment.building_id == user.building_id
+            and (user.building_role in STAFF_VIEW_ROLES or user.membership_for(apartment_id))
+        )
+        if apartment is None or not visible:
+            raise _not_found("APARTMENT_NOT_FOUND", "No such apartment.")
+
+        periods = list(
+            await self.session.scalars(
+                select(ReadingPeriod)
+                .where(ReadingPeriod.building_id == user.building_id)
+                .order_by(ReadingPeriod.period_code.desc())
+                .limit(APARTMENT_HISTORY_PERIODS)
+            )
+        )
+        codes = {period.id: period.period_code for period in periods}
+        rows = (
+            await self.session.execute(
+                select(MeterReading)
+                .join(MeterDevice, MeterDevice.id == MeterReading.meter_id)
+                .where(
+                    MeterDevice.apartment_id == apartment_id,
+                    MeterReading.building_id == user.building_id,
+                    MeterReading.period_id.in_(list(codes)),
+                )
+            )
+        ).scalars()
+        readings: dict[uuid.UUID, list[MeterReading]] = {}
+        for reading in rows:
+            readings.setdefault(reading.meter_id, []).append(reading)
+
+        # Active meters, plus replaced ones that still have a reading in these periods.
+        meters = await self.session.scalars(
+            select(MeterDevice)
+            .where(
+                MeterDevice.apartment_id == apartment_id,
+                MeterDevice.building_id == user.building_id,
+                MeterDevice.is_active.is_(True) | MeterDevice.id.in_(list(readings)),
+            )
+            .order_by(MeterDevice.resource_type, MeterDevice.location_label, MeterDevice.id)
+        )
+        return ApartmentReadingsResponse(
+            apartment_id=apartment_id,
+            apartment_number=apartment.number,
+            periods=[_period_dto(period) for period in periods],
+            meters=[
+                ApartmentMeterHistory(
+                    meter_id=meter.id,
+                    resource_type=meter.resource_type,
+                    serial_number=meter.serial_number,
+                    location_label=meter.location_label,
+                    unit=meter.unit,
+                    is_active=meter.is_active,
+                    readings=[
+                        ApartmentReading(
+                            period_code=codes[reading.period_id],
+                            reading_id=reading.id,
+                            value=reading.value,
+                            consumption_delta=reading.consumption_delta,
+                            source=reading.source,
+                            is_anomaly_confirmed=reading.is_anomaly_confirmed,
+                        )
+                        for reading in sorted(
+                            readings.get(meter.id, []),
+                            key=lambda reading: codes[reading.period_id],
+                            reverse=True,
+                        )
+                    ],
+                )
+                for meter in meters
+            ],
+        )
 
     # --- Chairman matrix ------------------------------------------------------------------------
 
