@@ -252,6 +252,18 @@ not of the feed.
   `/start <code>`), valid 10 minutes. `429 RATE_LIMITED` carries `retry_after_seconds`. After the
   user pressed Start in Telegram, reload `GET /notifications/bindings`; "Unlink" is
   `DELETE /notifications/bindings/{binding_id}`. Chat ids are never shown or sent.
+- **Unsubscribe page** `/unsubscribe#<token>` (N8, linked from non-mandatory e-mails; no sign-in
+  needed, works in demo mode too):
+  1. Read the token from `location.hash` and remove the hash at once
+     (`history.replaceState(null, "", "/unsubscribe")`), as on the link page of section 12.
+  2. Show "Stop e-mails like this one?" and one button; call
+     `POST /api/v1/notifications/unsubscribe?token=<token>` (no body, no auth header) only on its
+     click: mail scanners open links but do not click.
+  3. On `200`, show the localized name of `event_type` ("Reading reminders by e-mail are off") and
+     a link to the notification settings to turn it back on (sign-in needed there). On
+     `400 INVALID_LINK`: "This link no longer works; change e-mails in the notification settings."
+- **Telegram:** the bot also understands `/stop` (unlinks the chat); the settings page can mention
+  it next to "Link Telegram".
 - **WebPush** (settings page, "Notify this browser"; only when the preferences list `webpush`
   without `CHANNEL_NOT_ENABLED` or `DEMO_MODE`, and the browser has `PushManager`):
   1. Register a service worker, ask `Notification.requestPermission()` on a click (never on page

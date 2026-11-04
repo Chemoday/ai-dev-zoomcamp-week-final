@@ -118,8 +118,10 @@ over on dev, the dev database has to be emptied; prod is never reset by a deploy
 - **E-mail:** the backend is only an SMTP client of an external provider; no mail server runs in
   the image or on the VPS, and environments share nothing. When e-mail goes live (after a real
   login, docs/BACKLOG.md B-7), each environment gets its own `SMTP_*` values, `SMTP_FROM`,
-  `PUBLIC_BASE_URL` and `common.email_smtp` in `ENABLED_PLUGINS` in its `.env`
-  (docs/epics/E1_NOTIFICATIONS.md 6.1).
+  `PUBLIC_BASE_URL`, `NOTIFICATIONS_HASH_SECRET` (at least 32 bytes; it signs the unsubscribe
+  links since N8, and the backend refuses to start without it) and `common.email_smtp` in
+  `ENABLED_PLUGINS` in its `.env` (docs/epics/E1_NOTIFICATIONS.md 6.1). The provider must sign
+  the mail with DKIM, or large mail services ignore the one-click unsubscribe headers.
 - **Login secrets (epic E7):** the backend refuses to start without `JWT_SECRET_KEY` and
   `AUTH_HASH_SECRET` (at least 32 bytes each), and `docker-compose.deploy.yml` refuses to start
   without them in `/opt/aap/<env>/.env`. A deploy without them fails its health check and rolls
