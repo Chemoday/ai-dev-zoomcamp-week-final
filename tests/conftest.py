@@ -8,6 +8,7 @@ os.environ.setdefault("DEMO_MODE_ENABLED", "true")
 os.environ.setdefault("ENVIRONMENT", "test")
 os.environ.setdefault("JWT_SECRET_KEY", "test-only-jwt-secret-at-least-32-bytes")
 os.environ.setdefault("AUTH_HASH_SECRET", "test-only-auth-hash-secret-at-least-32-bytes")
+os.environ.setdefault("NOTIFICATIONS_HASH_SECRET", "test-only-notifications-secret-32-bytes")
 os.environ.setdefault("AUTH_ALLOW_SESSIONLESS_TOKENS", "true")
 os.environ.setdefault("AUTH_CLEANUP_ENABLED", "false")
 

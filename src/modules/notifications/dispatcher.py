@@ -33,7 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.config import Settings
 from src.core.domain_events import SessionFactory
 from src.modules.communication.service import CommunicationService
-from src.modules.notifications.messages import compose, default_catalog
+from src.modules.notifications.messages import compose, default_catalog, email_text
 from src.modules.notifications.models import ChannelBinding, Delivery
 from src.modules.notifications.policies import (
     CHANNEL_PLUGINS,
@@ -50,6 +50,8 @@ from src.modules.notifications.policies import (
     next_reminder_hours,
     reminder_deadline,
     retry_delay,
+    unsubscribe_links,
+    unsubscribe_token,
 )
 from src.modules.notifications.schemas import (
     Channel,
@@ -131,7 +133,12 @@ def validate_channel_settings(settings: Settings, plugins: PluginRegistry) -> No
         return
     if not settings.PUBLIC_BASE_URL:
         raise RuntimeError(f"PUBLIC_BASE_URL is required with {', '.join(enabled)}")
-    hashing = [name for name in enabled if name in ("common.telegram", "common.webpush")]
+    # E-mail signs its unsubscribe links (N8); the others hash addresses and link codes.
+    hashing = [
+        name
+        for name in enabled
+        if name in ("common.telegram", "common.webpush", "common.email_smtp")
+    ]
     secret = settings.NOTIFICATIONS_HASH_SECRET.get_secret_value().encode()
     if hashing and len(secret) < MIN_HASH_SECRET_BYTES:
         raise RuntimeError(
@@ -331,6 +338,17 @@ class Dispatcher:
             title=title,
             body=body,
         )
+        text, unsubscribe_url = rendered.text, None
+        if row.channel == Channel.EMAIL:
+            page_link = None
+            if not is_mandatory(row.event_type):
+                token = unsubscribe_token(
+                    self._settings.NOTIFICATIONS_HASH_SECRET.get_secret_value(), row.id
+                )
+                page_link, one_click = unsubscribe_links(self._settings.PUBLIC_BASE_URL, token)
+                # RFC 8058 needs an HTTPS URI; a local http:// site keeps only the text link.
+                unsubscribe_url = one_click if one_click.startswith("https://") else None
+            text = email_text(row.event_type, row.locale, text, unsubscribe_link=page_link)
         ttl = (
             EMERGENCY_MAX_AGE
             if row.event_type == NotificationEventType.EMERGENCY_PUBLISHED
@@ -341,13 +359,14 @@ class Dispatcher:
             locale=row.locale,
             event_type=row.event_type.value,
             subject=rendered.subject,
-            body=rendered.text,
+            body=text,
             footer=rendered.footer,
             deep_link=self._settings.PUBLIC_BASE_URL,
             urgent=row.priority == 0,
             collapse_key=_collapse_key(row),
             expires_at=row.created_at + ttl,
             trace_id=row.trace_id,
+            unsubscribe_url=unsubscribe_url,
         )
         return _Prepared(row=row, message=message)
 

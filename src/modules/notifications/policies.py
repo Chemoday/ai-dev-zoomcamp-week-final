@@ -3,8 +3,11 @@
 docs/API.md section 6 ("Who gets what", "Default preferences") and docs/ARCHITECTURE.md 3.
 """
 
+import base64
+import binascii
 import hashlib
 import hmac
+import re
 import secrets
 import uuid
 from collections.abc import Mapping
@@ -224,3 +227,48 @@ def reminder_deadline(params: Mapping[str, object]) -> datetime | None:
     except ValueError:
         return None
     return parsed if parsed.tzinfo is not None else None
+
+
+# --- Unsubscribe tokens (N8) ----------------------------------------------------------------------
+
+UNSUBSCRIBE_PREFIX = "unsubscribe:"  # never the input of an address hash, so no collision
+UNSUBSCRIBE_MAC_BYTES = 16
+UNSUBSCRIBE_PATH = "/unsubscribe"
+UNSUBSCRIBE_API_PATH = "/api/v1/notifications/unsubscribe"
+_UNSUBSCRIBE_TOKEN = re.compile(r"[A-Za-z0-9_-]{43}")
+
+
+def _unsubscribe_mac(secret: str, delivery_id: uuid.UUID) -> bytes:
+    message = f"{UNSUBSCRIBE_PREFIX}{delivery_id}".encode()
+    return hmac.new(secret.encode(), message, hashlib.sha256).digest()[:UNSUBSCRIBE_MAC_BYTES]
+
+
+def unsubscribe_token(secret: str, delivery_id: uuid.UUID) -> str:
+    """43 characters of base64url: the delivery id and a truncated HMAC of it. Nothing is stored."""
+    raw = delivery_id.bytes + _unsubscribe_mac(secret, delivery_id)
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
+def unsubscribe_delivery_id(secret: str, token: str) -> uuid.UUID | None:
+    """The delivery of a genuine token, or None (malformed or a wrong HMAC)."""
+    if not _UNSUBSCRIBE_TOKEN.fullmatch(token):
+        return None
+    try:
+        raw = base64.urlsafe_b64decode(token + "=")
+    except (binascii.Error, ValueError):
+        return None
+    if len(raw) != 16 + UNSUBSCRIBE_MAC_BYTES:
+        return None
+    delivery_id = uuid.UUID(bytes=raw[:16])
+    # The canonical spelling only: 43 characters carry 2 spare bits that the decoder ignores.
+    if not hmac.compare_digest(token, unsubscribe_token(secret, delivery_id)):
+        return None
+    return delivery_id
+
+
+def unsubscribe_links(site_url: str, token: str) -> tuple[str, str]:
+    """The page link in the e-mail text and the one-click URL of the header."""
+    return (
+        f"{site_url}{UNSUBSCRIBE_PATH}#{token}",
+        f"{site_url}{UNSUBSCRIBE_API_PATH}?token={token}",
+    )

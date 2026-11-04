@@ -21,6 +21,7 @@ from src.core.config import Settings, get_settings
 from src.core.security import create_access_token
 from src.main import create_app
 from src.modules.notifications.dispatcher import Dispatcher
+from src.modules.notifications.messages import default_catalog
 from src.modules.notifications.models import ChannelBinding, Delivery, LinkCode
 from src.modules.property.models import User
 from src.modules.property.schemas import Locale
@@ -182,7 +183,8 @@ async def test_a_linked_private_chat_receives_the_alert(
 
     assert (response.status_code, response.json()) == (200, {})
     assert bot_api.texts_to(CHAT_A) == [
-        "Done: this chat now receives the notifications of your apartment association."
+        "Done: this chat now receives the notifications of your apartment association. "
+        "Send /stop to unlink it."
     ]
     owner = bearer(world.owner_14, telegram_settings)
     bindings = await api_client.get(f"{API}/bindings", headers=owner)
@@ -502,3 +504,77 @@ async def test_a_chat_that_no_longer_exists_is_unlinked(
     [row] = await telegram_rows(db_session)
     assert (row.status, row.error_code) == ("FAILED", "TELEGRAM_CHAT_NOT_FOUND")
     assert await active_bindings(db_session) == []
+
+
+# --- /stop (N8) -----------------------------------------------------------------------------------
+
+
+def stop(chat_id: int, chat_type: str = "private", text: str = "/stop") -> dict[str, Any]:
+    return {
+        "update_id": 2,
+        "message": {"message_id": 2, "text": text, "chat": {"id": chat_id, "type": chat_type}},
+    }
+
+
+async def test_stop_unlinks_the_chat_and_replies_in_the_users_language(
+    api_client: AsyncClient,
+    world: NotifWorld,
+    telegram_settings: Settings,
+    bot_api: FakeBotApi,
+    db_session: AsyncSession,
+) -> None:
+    world.owner_14.locale = Locale.EN
+    await db_session.flush()
+    await link(api_client, world.owner_14, CHAT_A, telegram_settings)
+
+    response = await webhook(api_client, stop(CHAT_A, text="/stop@KyuTestBot"))
+
+    assert (response.status_code, response.json()) == (200, {})
+    assert await active_bindings(db_session) == []
+    assert bot_api.texts_to(CHAT_A)[-1].startswith(
+        "Done: this chat no longer receives notifications."
+    )
+    owner = bearer(world.owner_14, telegram_settings)
+    assert (await api_client.get(f"{API}/bindings", headers=owner)).json() == []
+
+    await webhook(api_client, stop(CHAT_A))  # not linked any more: the hint to link it
+    hint = default_catalog().render("bot.how_to_link", telegram_settings.DEFAULT_LOCALE)
+    assert bot_api.texts_to(CHAT_A)[-1] == hint
+
+
+async def test_stop_in_a_group_chat_changes_nothing_and_gets_no_reply(
+    api_client: AsyncClient,
+    world: NotifWorld,
+    telegram_settings: Settings,
+    bot_api: FakeBotApi,
+    db_session: AsyncSession,
+) -> None:
+    await link(api_client, world.owner_14, CHAT_A, telegram_settings)
+    replies = len(bot_api.sent)
+
+    await webhook(api_client, stop(CHAT_A, chat_type="group"))
+    await webhook(api_client, stop(CHAT_A, text="/stopit"))  # not the command
+
+    assert len(await active_bindings(db_session)) == 1
+    assert len(bot_api.sent) == replies
+
+
+async def test_stop_skips_queued_messages_and_spends_no_start_attempt(
+    api_client: AsyncClient,
+    world: NotifWorld,
+    telegram_settings: Settings,
+    bot_api: FakeBotApi,
+    dispatcher: Dispatcher,
+    db_session: AsyncSession,
+) -> None:
+    await link(api_client, world.owner_14, CHAT_A, telegram_settings)
+    await publish(api_client, world.chairman, telegram_settings)
+
+    for _ in range(12):  # more than the 10 /start attempts per hour
+        await webhook(api_client, stop(CHAT_A))
+    await dispatcher.tick()
+
+    [row] = await telegram_rows(db_session)
+    assert (row.status, row.error_code) == ("SKIPPED", "BINDING_REVOKED")
+    await link(api_client, world.owner_14, CHAT_A, telegram_settings)  # /start still works
+    assert len(await active_bindings(db_session)) == 1

@@ -43,7 +43,7 @@ src/
 
 Design and the reasoning behind it: [docs/epics/E1_NOTIFICATIONS.md](epics/E1_NOTIFICATIONS.md). Tables: docs/SCHEMA.md section 5. API: docs/API.md section 6.
 
-**Status:** the module, the subscriber, the in-app channel, the feed and preferences exist since task N2 (`src/modules/notifications/`); the dispatcher and the e-mail channel since N3; Telegram linking, the webhook and `common.telegram` since N4; WebPush subscriptions and `common.webpush` since N5. `NotificationChannel`, `OutgoingMessage` and `DeliveryResult` (3.2) are in `src/plugins/registry.py` since N7's stub together with `register_channel` / `channel` / `channels`, and `InboundChannel` / `InboundLink` since N4; the scheduler (3.3) since N6; the FCM plugin (3.2) is planned for N7. Clients poll for in-app notifications; there is no WebSocket (docs/epics/E1_NOTIFICATIONS.md 6.5).
+**Status:** the module, the subscriber, the in-app channel, the feed and preferences exist since task N2 (`src/modules/notifications/`); the dispatcher and the e-mail channel since N3; Telegram linking, the webhook and `common.telegram` since N4; WebPush subscriptions and `common.webpush` since N5. `NotificationChannel`, `OutgoingMessage` and `DeliveryResult` (3.2) are in `src/plugins/registry.py` since N7's stub together with `register_channel` / `channel` / `channels`, and `InboundChannel` / `InboundLink` since N4 (`InboundLink.command` is `start` or, since N8, `stop`); the scheduler (3.3) since N6; the FCM plugin (3.2) is planned for N7. Clients poll for in-app notifications; there is no WebSocket (docs/epics/E1_NOTIFICATIONS.md 6.5).
 
 ### 3.1 Place in the system
 - It **only consumes**: it subscribes to domain events and calls other modules' system-level service methods (3.4). It also handles `UserAccountClosed` from `auth` (4.1) by deleting the person's bindings, preferences, link codes and deliveries. No other module imports it, so `NOTIFICATIONS_ENABLED=false` removes it (no subscriber, no loops, no routes) and everything else works unchanged.
@@ -72,14 +72,15 @@ class InboundChannel(Protocol):  # optional; implemented by common.telegram
 - Registry additions: `register_channel(channel)`, `channel(name) -> NotificationChannel | None`,
   `channels()`; a plugin that also implements `InboundChannel` is found through `channel(name)`.
 
-- `OutgoingMessage` (address, locale, event type, subject, body, deep link, plus `urgent` for emergencies, a `collapse_key` and `expires_at`, used by push channels) is built at send time and never stored or logged; its `repr` hides the address, subject, body and link, and it is never passed to `asdict`/`vars` or into log fields. `DeliveryResult` carries `ok`, `retryable`, `error_code` and `revoke_binding`; no provider text.
+- `OutgoingMessage` (address, locale, event type, subject, body, deep link, plus `urgent` for emergencies, a `collapse_key` and `expires_at`, used by push channels, and since N8 an `unsubscribe_url` that the e-mail channel turns into the `List-Unsubscribe` headers) is built at send time and never stored or logged; its `repr` hides the address, subject, body and link, and it is never passed to `asdict`/`vars` or into log fields. `DeliveryResult` carries `ok`, `retryable`, `error_code` and `revoke_binding`; no provider text.
 - The notifications service owns every table: bindings, link codes, deliveries. Plugins only verify, format and send.
 - Plugins read their own settings through `registry.settings` (the app's `Settings`, passed to `build_plugin_registry`); a plugin whose settings are incomplete raises in `register()`, so the app does not start.
 - **Message texts** are rendered by the notifications module, never by a plugin: an emergency is the post's title and body as written; every other text is a system text from `src/modules/notifications/messages.csv` (`key,en,ru,et`), picked by the delivery's `locale`, with English when a cell is empty. Placeholders are `{name}` from a fixed set per key and are substituted once (a title containing `{body}` stays literal). The CSV is the only file in the repository that may contain non-English text. Adding a language is one CSV column plus a `Locale` value and a migration of the two `locale` checks.
 - Plugins: `common.email_smtp`, `common.telegram`, `common.webpush`, *(N7)* `common.fcm_push` (native phone app through Firebase Cloud Messaging; today a stub that refuses to load). `in_app` is built in.
 - **Startup checks.** With any external channel enabled, the app refuses to start without
-  `PUBLIC_BASE_URL`; with `common.telegram`, `common.webpush` or `common.fcm_push` also without
-  `NOTIFICATIONS_HASH_SECRET` (at least 32 bytes; e-mail hashes nothing). Each plugin also needs its
+  `PUBLIC_BASE_URL`; with `common.telegram`, `common.webpush`, `common.fcm_push` or (since N8, for
+  the unsubscribe tokens) `common.email_smtp` also without `NOTIFICATIONS_HASH_SECRET` (at least
+  32 bytes). Each plugin also needs its
   own settings: SMTP host and sender; bot token, bot username and a webhook secret of at least
   32 characters in `[A-Za-z0-9_-]`; the VAPID keys and subject; the FCM project id and a readable
   service account file.
@@ -135,7 +136,7 @@ System-level methods (no `CurrentUserDTO`), returning DTOs, used only by notific
 | `INSTANCE_TIMEZONE` | `Europe/Tallinn` | Local time for `due_date` and texts |
 | `DEFAULT_LOCALE` | `et` | Language when `core_users.locale` is `NULL` |
 | `PUBLIC_BASE_URL` | empty | Base of deep links in external messages; required when an external channel is enabled |
-| `NOTIFICATIONS_HASH_SECRET` | empty | Key of the HMAC for chat ids, endpoints, FCM tokens and link codes; required with `common.telegram`, `common.webpush` or `common.fcm_push`. Never rotate it without rehashing: active addresses would lose their uniqueness and open link codes would stop working |
+| `NOTIFICATIONS_HASH_SECRET` | empty | Key of the HMAC for chat ids, endpoints, FCM tokens, link codes and unsubscribe tokens (N8); required with `common.telegram`, `common.webpush`, `common.fcm_push` or `common.email_smtp`. Never rotate it without rehashing: active addresses would lose their uniqueness and open link codes would stop working |
 | `SMTP_HOST`, `SMTP_PORT` (`587`), `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_TLS` (`starttls`, `tls` or `none`) | | `common.email_smtp`: an SMTP client to an external provider, one account or sender per environment; no mail server in the image (docs/epics/E1_NOTIFICATIONS.md 6.1) |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`, `TELEGRAM_WEBHOOK_SECRET` | | `common.telegram` (one bot per environment) |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | | `common.webpush`: the key pair as base64url (65 and 32 bytes; `python -m src.plugins.common.webpush generate-vapid-keys`, one pair per environment) and a `mailto:` or `https:` contact for the push services. The app refuses to start when the public key does not belong to the private key |

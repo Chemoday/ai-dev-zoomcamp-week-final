@@ -30,6 +30,7 @@ _USERNAME = re.compile(r"[A-Za-z0-9_]{5,32}")
 # "/start CODE" or "/start@SomeBot CODE" (deep links send "/start CODE"); a bare "/start" has no
 # code (the user opened the bot without the link) and gets a hint.
 _START = re.compile(r"^/start(?:@\w+)?(?:\s+(\S{1,64}))?\s*$")
+_STOP = re.compile(r"^/stop(?:@\w+)?\s*$")
 
 
 class TelegramChannel:
@@ -59,9 +60,13 @@ class TelegramChannel:
         chat, text = message.get("chat"), message.get("text")
         if not isinstance(chat, dict) or not isinstance(text, str):
             return None
-        match = _START.match(text.strip())
         chat_id, chat_type = chat.get("id"), chat.get("type")
-        if not match or not isinstance(chat_id, int) or not isinstance(chat_type, str):
+        if not isinstance(chat_id, int) or not isinstance(chat_type, str):
+            return None
+        if _STOP.match(text.strip()):
+            return InboundLink(chat_id=chat_id, chat_type=chat_type, code="", command="stop")
+        match = _START.match(text.strip())
+        if not match:
             return None
         return InboundLink(chat_id=chat_id, chat_type=chat_type, code=match.group(1) or "")
 

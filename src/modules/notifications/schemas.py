@@ -185,3 +185,10 @@ class WebPushSubscriptionRequest(BaseModel):
     endpoint: str = Field(min_length=1, max_length=PUSH_ENDPOINT_MAX_LENGTH)
     keys: WebPushKeys
     label: DeviceLabel
+
+
+class UnsubscribeResponse(BaseModel):
+    """What one unsubscribe turned off (N8): one event type on e-mail."""
+
+    event_type: NotificationEventType
+    channel: Channel

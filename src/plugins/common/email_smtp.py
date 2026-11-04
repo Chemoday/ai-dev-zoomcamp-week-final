@@ -6,6 +6,7 @@ plain-text message and submits it. Addresses and texts are never logged.
 """
 
 from email.message import EmailMessage
+from email.policy import EmailPolicy
 from email.utils import formatdate, make_msgid, parseaddr
 
 import aiosmtplib
@@ -14,6 +15,25 @@ from src.plugins.registry import DeliveryResult, OutgoingMessage, PluginRegistry
 
 CHANNEL_NAME = "email"
 SEND_TIMEOUT_SECONDS = 10.0
+# RFC 2369 headers whose value is a URI in angle brackets: written as they are, never as RFC 2047
+# encoded-words (which the default folder uses for a long value without spaces, and which mail
+# services then do not read as a URI).
+_VERBATIM_HEADERS = frozenset({"list-unsubscribe"})
+MAX_HEADER_LINE = 998  # RFC 5322, without the CRLF
+
+
+class _SmtpPolicy(EmailPolicy):
+    """email.policy.SMTP, except that the list headers stay on one line, unencoded."""
+
+    def fold_binary(self, name: str, value: str) -> bytes:
+        line = f"{name}: {value}"
+        if name.lower() in _VERBATIM_HEADERS and line.isascii() and len(line) <= MAX_HEADER_LINE:
+            return f"{line}{self.linesep}".encode("ascii")
+        return super().fold_binary(name, value)
+
+
+SMTP_POLICY = _SmtpPolicy(linesep="\r\n")
+SMTPUTF8_POLICY = SMTP_POLICY.clone(utf8=True)
 
 
 class SmtpEmailChannel:
@@ -49,17 +69,38 @@ class SmtpEmailChannel:
         email["Message-ID"] = make_msgid(domain=self._msgid_domain)
         if message.trace_id:
             email["X-Trace-Id"] = message.trace_id
-        email.set_content(message.full_text)  # text/plain; charset utf-8
+        if message.unsubscribe_url:
+            # RFC 8058: mail clients POST "List-Unsubscribe=One-Click" to the URL; a GET of it
+            # changes nothing, so link scanners cannot unsubscribe anyone.
+            email["List-Unsubscribe"] = f"<{message.unsubscribe_url}>"
+            email["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
+        # text/plain; charset utf-8, quoted-printable: the message is 7-bit on the wire, so no
+        # BODY=8BITMIME is needed (the bytes are sent raw, without aiosmtplib's negotiation).
+        email.set_content(message.full_text, cte="quoted-printable")
         return email
+
+    def envelope(self, message: OutgoingMessage) -> tuple[str, str, bytes, list[str]]:
+        """Sender, recipient, the bytes on the wire and the MAIL options. The message is
+        flattened here, with SMTP_POLICY, because aiosmtplib would fold the list headers into
+        encoded-words; a non-ASCII address needs SMTPUTF8, as aiosmtplib itself would decide."""
+        email = self.build(message)
+        sender = parseaddr(self._sender)[1]
+        recipient = str(message.address["email"])
+        utf8 = not (sender + recipient).isascii()
+        data = email.as_bytes(policy=SMTPUTF8_POLICY if utf8 else SMTP_POLICY)
+        return sender, recipient, data, ["SMTPUTF8"] if utf8 else []
 
     async def send(self, message: OutgoingMessage) -> DeliveryResult:
         try:
-            email = self.build(message)
-        except ValueError:  # e.g. a line break in a header value: never retry a bad message
+            sender, recipient, data, mail_options = self.envelope(message)
+        except (ValueError, UnicodeError):  # e.g. a line break in a header value: never retry
             return DeliveryResult(ok=False, error_code="EMAIL_INVALID")
         try:
             await aiosmtplib.send(
-                email,
+                data,
+                sender=sender,
+                recipients=[recipient],
+                mail_options=mail_options,
                 hostname=self._host,
                 port=self._port,
                 username=self._username or None,

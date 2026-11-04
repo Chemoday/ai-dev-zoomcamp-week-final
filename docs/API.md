@@ -13,7 +13,7 @@ All responses include `X-Trace-Id` header populated by OpenTelemetry middleware 
 
 Error `message` texts are **English only**. They are meant for developers and logs; the frontend shows localized texts chosen by `error_code`. The backend contains no Russian at all: author badges are English too (`Apt. 14`, `Chairman`).
 
-Every `/api/v1` endpoint requires an authenticated user, except `GET /api/v1/demo/users` (section 5), the Telegram webhook (section 6, called by Telegram with its own secret) and the sign-in endpoints of section 7 *(planned, E7)*:
+Every `/api/v1` endpoint requires an authenticated user, except `GET /api/v1/demo/users` (section 5), the Telegram webhook (section 6, called by Telegram with its own secret), the one-click unsubscribe of section 6 (authorized by the token in its link) and the sign-in endpoints of section 7 *(planned, E7)*:
 - `Authorization: Bearer <jwt>`: HS256 token with `sub = <user uuid>` and `exp`. It is accepted only when `JWT_SECRET_KEY` is configured. *(Planned, E7:)* the key becomes required; the app issues the token at sign-in (section 7) with the claims `sid` and `auth_time` and a lifetime of 15 minutes, and rejects a token whose session was revoked. Tokens without `sid` (minted by tests) are accepted only with `AUTH_ALLOW_SESSIONLESS_TOKENS=true`.
 - `X-Demo-User-Id: <user uuid>`: accepted only when `DEMO_MODE_ENABLED=true` (local Docker, tests and the public demo). If both headers are sent, the Bearer token wins. It never authenticates the account endpoints of section 7.
 
@@ -458,7 +458,8 @@ Seeded at startup by `src/core/seed.py` when `SEED_DEMO_DATA=true` (local Docker
 > **Status.** Implemented (in `docs/openapi.json`): in-app notifications for emergencies,
 > resolved emergencies and periods in review; the feed, preferences and the notification language
 > (N2); e-mail (N3); Telegram linking, the webhook and the bindings API (N4); WebPush (N5); reading
-> reminders and the deletion of old notifications (N6). **Planned** (marked below; not in
+> reminders and the deletion of old notifications (N6); unsubscribing from e-mail and the
+> Telegram `/stop` (N8). **Planned** (marked below; not in
 > `docs/openapi.json` yet): push to the native phone app (N7). Every current environment runs in demo mode, so only `in_app` delivers
 > there and the other channels are reported unavailable. Design: [docs/epics/E1_NOTIFICATIONS.md](epics/E1_NOTIFICATIONS.md).
 
@@ -581,6 +582,42 @@ Only the listed combinations change. Response: the same body as the `GET`.
 - A value equal to the default removes the stored row (only deviations are stored).
 - A preference for an unavailable channel can be stored; it applies once the channel is linked.
 
+### Unsubscribing from e-mail (N8)
+Every e-mail of a **non-mandatory** event (`EMERGENCY_RESOLVED`, `READING_DEADLINE`,
+`PERIOD_REVIEW`) lets the person stop that kind of e-mail without signing in. One unsubscribe turns
+off exactly one preference: that `event_type` on `email` (owner decision 2026-11-04). The other
+channels and the other e-mails stay as they are; the person turns it back on in the preferences.
+- **In the e-mail:**
+  - a line above the footer, "Stop these e-mails: `<PUBLIC_BASE_URL>/unsubscribe#<token>`". That
+    page of the frontend shows one button; nothing happens without the click, so link scanners
+    that open every link unsubscribe nobody;
+  - the headers of RFC 8058, so mail clients show their own unsubscribe button:
+    `List-Unsubscribe: <PUBLIC_BASE_URL/api/v1/notifications/unsubscribe?token=<token>>` and
+    `List-Unsubscribe-Post: List-Unsubscribe=One-Click`. The mail provider signs them with DKIM
+    (the provider's setting; without DKIM large mail services ignore the headers).
+- **Mandatory e-mails** (`EMERGENCY_PUBLISHED`) carry neither the link nor the headers. Their
+  text ends, above the footer, with "Emergency alerts cannot be turned off in the settings."
+- The headers go out only when `PUBLIC_BASE_URL` is `https://` (RFC 8058 requires an HTTPS URI);
+  the link in the text is always there.
+- **The token** (43 characters, base64url, only its canonical spelling is accepted) is the delivery id and an HMAC of it with
+  `NOTIFICATIONS_HASH_SECRET` and a prefix of its own (`unsubscribe:`), so it never matches an
+  address hash. It works as long as its delivery row exists (`NOTIFICATIONS_RETENTION_DAYS`,
+  default 180); an older e-mail's link no longer works (accepted: by then the mail is old).
+  Nothing about it is stored.
+
+#### `POST /api/v1/notifications/unsubscribe?token=<token>`
+No authentication and no CSRF header: mail clients call it with the form body
+`List-Unsubscribe=One-Click`; the frontend page calls it with no body. Any body is ignored.
+- Response `200 {"event_type": "READING_DEADLINE", "channel": "email"}`: the preference is off.
+  Idempotent: the same link again answers the same, also when the preference is already off or the
+  person switched it on again meanwhile (then it is off again).
+- `400 INVALID_LINK`: a malformed token, a wrong HMAC, a delivery that no longer exists, a
+  delivery that is not an e-mail of a non-mandatory event, or a closed account. The cause is never
+  told.
+- `422 VALIDATION_ERROR`: no `token`, or one longer than 128 characters.
+- `GET` on this path is not allowed (`405`): only a POST changes anything.
+- Works in demo mode too (no e-mail goes out there, so no link exists).
+
 ### `PATCH /api/v1/property/me/locale`
 (Module `property`.) Request `{"locale": "ru"}`; `"et"`, `"ru"`, `"en"` or `null` for the instance
 default. Response `{"locale": "ru"}`. Anything else: `422 VALIDATION_ERROR`.
@@ -615,6 +652,10 @@ Response `201 Created`:
   language (the instance default for a wrong code); group chats and chats over the attempt limit
   get no reply at all. A bare `/start` (the bot opened without the link) gets a hint to create a
   code on the site and does not count as an attempt.
+- **`/stop`** (N8) in a private chat unlinks it: its binding is revoked like
+  `DELETE …/bindings/{id}`, queued messages for it are skipped, and the bot replies "unlinked" in
+  the user's language. A chat that is not linked gets the hint to link it. It does not count as a
+  `/start` attempt. The "linked" reply mentions `/stop`.
 - **One Telegram chat per user.** Redeeming a code runs in one transaction that takes advisory
   locks in a fixed order, first the user, then the chat, so two chats redeeming codes of the same
   user at once are serialized. A unique-index conflict that still happens becomes a bot reply, and
@@ -721,9 +762,10 @@ Called by the phone app after login, with the FCM registration token of the devi
 ### Error codes of this section
 `NOTIFICATION_NOT_FOUND`, `PREFERENCE_MANDATORY`, `CHANNEL_NOT_ENABLED`, `BINDING_NOT_FOUND`,
 `RATE_LIMITED`, `DEVICE_LIMIT_REACHED` and `INVALID_PUSH_ENDPOINT` are all live (mobile push, N7,
-reuses `DEVICE_LIMIT_REACHED`).
+reuses `DEVICE_LIMIT_REACHED`); the unsubscribe (N8) reuses `INVALID_LINK` of section 7.
 | Status | `error_code` |
 | :--- | :--- |
+| 400 | `INVALID_LINK` |
 | 404 | `NOTIFICATION_NOT_FOUND`, `BINDING_NOT_FOUND`, `CHANNEL_NOT_ENABLED` |
 | 409 | `DEVICE_LIMIT_REACHED` |
 | 422 | `PREFERENCE_MANDATORY`, `INVALID_PUSH_ENDPOINT` |
