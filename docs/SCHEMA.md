@@ -2,9 +2,9 @@
 
 All tables use `UUID` primary keys (`uuid4`), UTC timestamps (`TIMESTAMPTZ`), and module-prefixed table names to maintain strict logical boundaries inside a single PostgreSQL database.
 
-## 1. Users & Identity Providers (tables `core_*`, owned by module `property`)
+## 1. Users & Identity Providers (tables `core_*`: `core_users` owned by module `property`, `core_user_identities` by `auth`)
 
-> **Ownership rule:** the `core_users` and `core_user_identities` tables keep the `core_` prefix because every module references users by FK, but their SQLAlchemy models (`User`, `UserIdentity`) live in `src/modules/property/models.py`, as listed in `src/core/models_registry.py`. `src/core/` holds no domain models. Other modules never import these models: they read users only through DTOs: `CurrentUserDTO` from `get_current_user` (`src/core/security.py`) or `PropertyService` methods such as `get_masked_author_badge`.
+> **Ownership rule:** the `core_users` and `core_user_identities` tables keep the `core_` prefix because every module references users by FK, but their SQLAlchemy models live in their owning modules (`User` in `src/modules/property/models.py`, `UserIdentity` in `src/modules/auth/models.py` since A5), as listed in `src/core/models_registry.py`. `src/core/` holds no domain models. Other modules never import these models: they read users only through DTOs: `CurrentUserDTO` from `get_current_user` (`src/core/security.py`) or `PropertyService` methods such as `get_masked_author_badge`.
 
 ### Table: `core_users`
 | Column | Type | Constraints | Description |
@@ -20,7 +20,7 @@ All tables use `UUID` primary keys (`uuid4`), UTC timestamps (`TIMESTAMPTZ`), an
 | `created_at` | `TIMESTAMPTZ` | `NOT NULL` | Creation timestamp |
 
 ### Table: `core_user_identities`
-*(Decouples authentication from user profile; ready for Estonian Smart-ID / Web eID / Magic Links without storing raw `isikukood` in plain text.)* *(Planned, E7:)* owned by module `auth` (its model moves to `src/modules/auth/models.py`), which also adds `created_at`. For `provider = 'password'`, `subject_hash` is the keyed HMAC (`AUTH_HASH_SECRET`) of the user id and `secret_data` the encoded Argon2id hash; future eID providers store the keyed HMAC of the personal code. All rows of a user are deleted when the account is closed.
+*(Decouples authentication from user profile; ready for Estonian Smart-ID / Web eID / Magic Links without storing raw `isikukood` in plain text.)* Owned by module `auth` since A5 (model in `src/modules/auth/models.py`; migration 011 adds `created_at` and `requires_link_sign_in`, section 7). For `provider = 'password'`, `subject_hash` is the keyed HMAC (`AUTH_HASH_SECRET`) of the user id and `secret_data` the encoded Argon2id hash; future eID providers store the keyed HMAC of the personal code. All rows of a user are deleted when the account is closed.
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
 | `id` | `UUID` | `PK` | Identity record ID |
@@ -331,9 +331,9 @@ Rows of `notif_link_codes` and `notif_link_attempts` older than 24 hours are del
 
 ---
 
-## 7. Module: `auth` (epic E7) *(in progress)*
+## 7. Module: `auth` (epic E7)
 
-*Design: [docs/epics/E7_LOGIN.md](epics/E7_LOGIN.md). API: docs/API.md section 7. `auth_sessions` and `auth_refresh_tokens` exist since A2 (migration 008, which also stores the existing `core_users.email` values in canonical form). `auth_tokens` and `auth_attempts` exist since A3 (migration 009). `auth_invitations` and the invitation column of `auth_tokens` exist since A4 (migration 010, which also adds `property_memberships.started_at` and `ended_at`). `core_user_identities` moves here with A5.*
+*Design: [docs/epics/E7_LOGIN.md](epics/E7_LOGIN.md). API: docs/API.md section 7. `auth_sessions` and `auth_refresh_tokens` exist since A2 (migration 008, which also stores the existing `core_users.email` values in canonical form). `auth_tokens` and `auth_attempts` exist since A3 (migration 009). `auth_invitations` and the invitation column of `auth_tokens` exist since A4 (migration 010, which also adds `property_memberships.started_at` and `ended_at`). `core_user_identities` moved here with A5 (migration 011).*
 
 *All hashes are keyed HMAC-SHA-256 (hex, 64 characters) with `AUTH_HASH_SECRET`; a prefix such as `ip:` or `user:` is part of the hashed input, never stored. Rotating the secret ends every session and voids every open link and invitation.*
 
@@ -341,8 +341,11 @@ Rows of `notif_link_codes` and `notif_link_attempts` older than 24 hours are del
 Columns as in section 1, plus:
 - `created_at` `TIMESTAMPTZ NOT NULL`;
 - `requires_link_sign_in` `BOOLEAN NOT NULL DEFAULT false`: set on a password after 100 failures
-  in a day; cleared when the person signs in with an e-mail link. While set, the password login
-  answers like any failure.
+  in a day; cleared when the person signs in with an e-mail link or sets a new password. While
+  set, the password login answers like any failure.
+- Partial unique index `uq_core_user_identities_password_user`: `(user_id) WHERE provider =
+  'password'`, one password per account even after `AUTH_HASH_SECRET` is rotated (setting a
+  password updates the row, `subject_hash` included).
 
 ### Table: `auth_sessions`
 *(One sign-in on one device; its refresh tokens rotate.)*

@@ -2,7 +2,7 @@
 
 - **Phase:** 2. **Status:** design reviewed by the owner and by the CTO review (2026-11-01);
   contract (A1, [#64](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/64)) approved
-  and merged (#72); sessions (A2), the e-mail link (A3) and invitations (A4) done; the password (A5) next. **Backlog:** docs/BACKLOG.md B-7.
+  and merged (#72); sessions (A2), the e-mail link (A3), invitations (A4) and the password (A5) done. **Backlog:** docs/BACKLOG.md B-7.
   **Epic issue:**
   [#69](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/69).
 - **Goal:** people sign in as themselves, and only people the association invited can sign in.
@@ -157,9 +157,11 @@ Out of scope:
     for an unknown e-mail).
 - **Throttling,** counted in `auth_attempts` by hashes of the submitted e-mail (whether it exists
   or not) and the IP address:
-  - after 5 failures in 15 minutes for the e-mail and IP address together, or 30 for an IP
-    address, a growing delay applies (`429` with `Retry-After`, the same for known and unknown
-    e-mails);
+  - after 5 failures in 24 hours for the e-mail and IP address together (since its last
+    successful sign-in), or 30 for an IP address, a growing delay applies, from 30 seconds up to
+    15 minutes (`429` with `Retry-After`, the same for known and unknown e-mails). The window was
+    15 minutes until the review of A5 (owner decision, 2026-11-04): shorter than the cap, it let
+    the delay start over;
   - after 100 failures for an e-mail within a day, its password is refused until its owner has
     signed in with an e-mail link once;
   - there is no lockout of signing in. Accepted residual risk: the silent daily cap on links can

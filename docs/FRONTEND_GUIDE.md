@@ -275,8 +275,7 @@ not of the feed.
 
 ## 12. Sign-in and accounts (epic E7)
 
-Contract: docs/API.md section 7. Everything except the password (task A5) is in
-`docs/openapi.json`.
+Contract: docs/API.md section 7, all of it in `docs/openapi.json` (the password since task A5).
 
 **Demo mode.** Until an environment leaves demo mode, keep the role switcher of section 2. The
 sign-in screens work next to it. Account pages (Security, My residents, People) refuse the demo
@@ -332,7 +331,12 @@ header, so they need a real sign-in even in demo mode.
     "Remove". Fetch it again after a change or a removal.
   - Set, change or remove the password. Ask for the current password, or offer a new sign-in link,
     when the answer is `403 REAUTHENTICATION_REQUIRED`. Rules to show: at least 15 characters; a
-    phrase of a few words is fine.
+    phrase of a few words is fine. Show a character counter and a "show password" toggle, and map
+    `PASSWORD_TOO_WEAK.reason` (`TOO_SHORT`, `TOO_LONG`, `TOO_COMMON`) to a hint.
+  - Password fields: `autocomplete="current-password"` / `"new-password"`, no autocorrect or
+    autocapitalize, and the "show password" toggle on the sign-in form too. Any script is allowed,
+    and a wrong keyboard layout is the usual cause of a failed sign-in: the toggle lets the person
+    see it.
   - The list of sessions: `device_kind` localized, with "Sign out" per session and "Sign out
     everywhere".
 - **Sign out:** first delete the WebPush binding (section 11, it needs the Bearer token), then

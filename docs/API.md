@@ -31,7 +31,7 @@ All errors share one JSON shape, `{"error_code": "...", "message": "...", ...ext
 | 500 | `INTERNAL_SERVER_ERROR` | Unhandled error; the body carries `trace_id` |
 | other | `HTTP_<status>` | Any other framework-level HTTP error |
 
-Section 7 adds `INVALID_CREDENTIALS`, `SESSION_EXPIRED` (401), `CSRF_CHECK_FAILED`, `REAUTHENTICATION_REQUIRED` (403), `SESSION_NOT_FOUND`, `INVITATION_NOT_FOUND`, `APARTMENT_NOT_FOUND`, `USER_NOT_FOUND` (404), `EMAIL_ALREADY_REGISTERED`, `TENANT_LIMIT_REACHED`, `INVITATION_ALREADY_PENDING`, `INVITATION_ACCEPTED`, `INVITATION_NO_LONGER_VALID`, `LAST_CHAIRMAN` (409) and `PASSWORD_TOO_WEAK` (422); it reuses `RATE_LIMITED` (429) of section 6. `INVALID_CREDENTIALS`, `REAUTHENTICATION_REQUIRED` and `PASSWORD_TOO_WEAK` come with A5.
+Section 7 adds `INVALID_CREDENTIALS`, `SESSION_EXPIRED` (401), `CSRF_CHECK_FAILED`, `REAUTHENTICATION_REQUIRED` (403), `SESSION_NOT_FOUND`, `INVITATION_NOT_FOUND`, `APARTMENT_NOT_FOUND`, `USER_NOT_FOUND` (404), `EMAIL_ALREADY_REGISTERED`, `TENANT_LIMIT_REACHED`, `INVITATION_ALREADY_PENDING`, `INVITATION_ACCEPTED`, `INVITATION_NO_LONGER_VALID`, `LAST_CHAIRMAN` (409) and `PASSWORD_TOO_WEAK` (422); it reuses `RATE_LIMITED` (429) of section 6. `INVALID_CREDENTIALS`, `REAUTHENTICATION_REQUIRED` and `PASSWORD_TOO_WEAK` exist since A5.
 
 ### Author badge rules (`property.policies.format_author_badge`)
 | `privacy_display_mode` | With apartment | Without apartment context |
@@ -740,9 +740,11 @@ reuses `DEVICE_LIMIT_REACHED`).
 >   `POST …/magic-link/redeem`;
 > - since A4 (#67): invitation links in `…/magic-link/redeem`, registration, invitations,
 >   accepting, residents, the chairman's list of people, roles, ending memberships, closing
->   accounts, and the first-chairman command.
+>   accounts, and the first-chairman command;
+> - since A5 (#68): the optional password, `POST …/password/login` and `GET` / `PUT` / `DELETE
+>   …/password`.
 >
-> The password comes with A5. Design and reasons: [docs/epics/E7_LOGIN.md](epics/E7_LOGIN.md). Every
+> Design and reasons: [docs/epics/E7_LOGIN.md](epics/E7_LOGIN.md). Every
 > environment stays in demo mode for now (section 5); these endpoints work there too.
 
 ### Rules for every endpoint of this section
@@ -843,15 +845,25 @@ Errors:
 
 ### `POST /api/v1/auth/password/login`
 Request `{"email": "...", "password": "..."}`. Response `200 SessionResponse`, with the cookie.
+- **The password** is compared after NFKC normalisation, so the same letter typed on different
+  keyboards matches; spaces and any script (Latin, Cyrillic...) are kept as typed. A field longer
+  than 1024 characters is `422 VALIDATION_ERROR`.
 - `401 INVALID_CREDENTIALS` for every failure: unknown e-mail, wrong password, no password set,
   inactive account. The timing is the same for all of them.
 - `429 RATE_LIMITED`:
-  - after 5 failures within 15 minutes for the e-mail and IP address together, or 30 for the IP
-    address, each further attempt waits a growing delay;
-  - after 100 failures for an e-mail within 24 hours, the password of that e-mail is refused until
-    its owner signs in with an e-mail link once (a flag on the password identity). While refused,
-    the answer is the same `401 INVALID_CREDENTIALS` with the same timing, as for any other
-    failure.
+  - after 5 failures within 24 hours for the e-mail and IP address together, or 30 for the IP
+    address, each further attempt waits a growing delay: 30 seconds after the last failure,
+    doubling with each further failure, at most 15 minutes. A successful sign-in resets the count
+    of that e-mail and IP address together. The check runs before the e-mail is looked up, so it
+    is the same for known and unknown e-mails. A day-long window lets the delay really reach its
+    cap: about 100 guesses a day for an e-mail and address, about 130 for an address;
+  - after 100 failures for an e-mail within 24 hours, counted since its last successful sign-in
+    (with the password or an e-mail link), the password of that e-mail is refused until its owner
+    signs in with an e-mail link once (a flag on the password identity). That sign-in also starts
+    the count again. While refused, the answer is the same `401 INVALID_CREDENTIALS` with the
+    same timing, as for any other failure;
+  - at once, with `retry_after_seconds` 5, when more than 32 password checks already wait for
+    the server. This depends only on the load, never on the e-mail;
   - **Accepted residual risk:** the silent daily cap on links (20 per e-mail) means a persistent
     attacker can block a person's new sign-ins for at most a day. A person who is still signed in
     is not affected.
@@ -866,13 +878,19 @@ with an e-mail link once lifts that.
 Sets or changes the password. Request `{"new_password": "...", "current_password": "..."}`.
 - `current_password` is needed only when the sign-in (`auth_time`) is older than 10 minutes. A
   token without `auth_time` always needs it.
-- `new_password`: 15 to 128 characters after NFKC normalisation, and not on the list of common
-  passwords. Otherwise `422 PASSWORD_TOO_WEAK` with `reason`: `TOO_SHORT`, `TOO_LONG` or
-  `TOO_COMMON`.
+- `new_password`: 15 to 128 characters (Unicode code points) after NFKC normalisation, and not on
+  the list of common passwords. Otherwise `422 PASSWORD_TOO_WEAK` with `reason`: `TOO_SHORT`,
+  `TOO_LONG` or `TOO_COMMON`, e.g.
+  `{"error_code": "PASSWORD_TOO_WEAK", "message": "...", "reason": "TOO_SHORT"}`.
+  - The list is compared ignoring case and spaces. A password with fewer than 5 different
+    characters (`aaaaaaaaaaaaaaa`, `abababababababab`) is `TOO_COMMON` too.
+  - No composition rules: a phrase of a few words is a good password.
+  - A field longer than 1024 characters is `422 VALIDATION_ERROR`.
 - Response `204 No Content`. All other sessions of the user are revoked, and a "your password was
   changed" e-mail goes out.
 - `403 REAUTHENTICATION_REQUIRED`: the sign-in is too old, and `current_password` is missing or
-  wrong. A wrong one counts toward the login throttling (`429 RATE_LIMITED`).
+  wrong. A wrong one counts toward the login throttling (`429 RATE_LIMITED`), and while the
+  password is refused after too many failures, `current_password` counts as wrong.
 - **Forgotten password:** sign in with an e-mail link, then call this within 10 minutes.
 
 ### `DELETE /api/v1/auth/password` (signed in)
@@ -880,7 +898,7 @@ Removes the password, so only the e-mail link signs in. Request `{"current_passw
 the same rule as above.
 - Response `204`. The other sessions are revoked and the "your password was changed" e-mail goes
   out.
-- Also `204` when no password is set.
+- Also `204` when no password is set, without any check; then nothing is revoked or sent.
 - `403 REAUTHENTICATION_REQUIRED` as above.
 
 ### `POST /api/v1/auth/refresh`
