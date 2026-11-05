@@ -85,6 +85,7 @@ async def test_me_returns_role_memberships_permissions_and_masked_preview(
         "can_view_bills": True,
         "can_vote": True,
         "privacy_display_mode": "APARTMENT_ONLY",
+        "since": demo.owner_14_membership.started_at.isoformat().replace("+00:00", "Z"),
         "preview_badge": {"display_label": "Apt. 14", "role_badge": "OWNER"},
     }
 

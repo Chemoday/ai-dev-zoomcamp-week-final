@@ -9,7 +9,15 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Annotated
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StrictBool, StrictInt
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    model_validator,
+)
 
 from src.core.validation import safe_text
 from src.modules.property.schemas import (
@@ -22,6 +30,8 @@ class PostType(StrEnum):
     EMERGENCY = "EMERGENCY"
     OFFICIAL_NOTICE = "OFFICIAL_NOTICE"
     FORUM_TOPIC = "FORUM_TOPIC"
+    # A private conversation between the board and one apartment (epic E8, task P2).
+    APARTMENT_THREAD = "APARTMENT_THREAD"
 
 
 class PostCategory(StrEnum):
@@ -76,6 +86,12 @@ class PostCreateRequest(BaseModel):
     # The apartment the author writes from; it decides the badge (docs/API.md, section 4).
     author_apartment_id: uuid.UUID | None = None
 
+    @model_validator(mode="after")
+    def _threads_take_replies(self) -> "PostCreateRequest":
+        if self.post_type == PostType.APARTMENT_THREAD and not self.comments_enabled:
+            raise ValueError("a thread with the board always takes replies (comments_enabled)")
+        return self
+
 
 class CommentCreateRequest(BaseModel):
     """Body of POST /api/v1/communication/posts/{post_id}/comments."""
@@ -104,6 +120,8 @@ class PostView(BaseModel):
     comments_enabled: bool
     comments_count: int
     created_at: datetime
+    # The newest comment's time, or created_at without comments; the thread inbox sorts by it.
+    last_activity_at: datetime
 
 
 class EmergencyView(PostView):

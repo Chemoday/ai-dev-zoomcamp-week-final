@@ -238,6 +238,22 @@ async def test_the_forum_shows_each_residents_privacy_choice(
     assert "@demo.invalid" not in feed.text
 
 
+async def test_the_board_and_apartment_14_share_a_thread(
+    seeded: AsyncSession, api_client: AsyncClient
+) -> None:
+    params = {"post_type": "APARTMENT_THREAD"}
+    url = "/api/v1/communication/posts"
+    owner = await api_client.get(url, params=params, headers=as_demo(DemoUserKey.OWNER_14))
+    board = await api_client.get(url, params=params, headers=as_demo(DemoUserKey.BOARD))
+    tenant = await api_client.get(url, params=params, headers=as_demo(DemoUserKey.TENANT_2))
+
+    (thread,) = owner.json()
+    assert board.json() == [{**thread, "is_mine": False}]
+    assert tenant.json() == []
+    assert thread["comments_count"] == 1
+    assert thread["last_activity_at"] > thread["created_at"]
+
+
 # --- Demo users for the role switcher -------------------------------------------------------------
 
 

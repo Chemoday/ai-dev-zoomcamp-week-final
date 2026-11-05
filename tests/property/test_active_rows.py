@@ -91,6 +91,20 @@ async def test_residents_and_people_list_only_active_rows(
     assert people[0].user_id == demo.chairman.id  # accounts without a flat first
 
 
+async def test_an_apartment_has_members_only_through_active_rows(
+    db_session: AsyncSession, demo: DemoBuilding
+) -> None:
+    properties = PropertyService(db_session)
+    assert await properties.has_active_members(demo.apt_2.id) is True
+    closed = await create_user(db_session, demo.building, "Closed", is_active=False)
+    await create_membership(db_session, closed, demo.apt_2, relation=RelationType.RESIDENT)
+
+    await end(db_session, demo.tenant_2_membership)
+
+    assert await properties.has_active_members(demo.apt_2.id) is False
+    assert await properties.has_active_members(demo.apt_14.id) is True
+
+
 async def test_a_membership_is_reopened_not_duplicated(
     db_session: AsyncSession, demo: DemoBuilding
 ) -> None:

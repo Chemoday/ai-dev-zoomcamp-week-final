@@ -757,6 +757,11 @@ class PropertyService:
     async def has_active_owner(self, apartment_id: uuid.UUID) -> bool:
         return await self._count_members(apartment_id, RelationType.OWNER) > 0
 
+    async def has_active_members(self, apartment_id: uuid.UUID) -> bool:
+        """Whether anyone (an active account) is an active member of the apartment: a thread
+        with the board needs a reader besides the board (E8/P2)."""
+        return await self._count_members(apartment_id, None) > 0
+
     async def active_tenant_count(self, apartment_id: uuid.UUID) -> int:
         return await self._count_members(apartment_id, RelationType.TENANT)
 
@@ -935,18 +940,20 @@ class PropertyService:
             relation_type=membership.relation_type,
         )
 
-    async def _count_members(self, apartment_id: uuid.UUID, relation: RelationType) -> int:
-        count = await self.session.scalar(
+    async def _count_members(self, apartment_id: uuid.UUID, relation: RelationType | None) -> int:
+        """Active members of active accounts; `relation` None counts every relation."""
+        statement = (
             select(func.count(ApartmentMembership.id))
             .join(User, User.id == ApartmentMembership.user_id)
             .where(
                 ApartmentMembership.apartment_id == apartment_id,
-                ApartmentMembership.relation_type == relation,
                 ACTIVE_MEMBERSHIP,
                 User.is_active.is_(True),
             )
         )
-        return int(count or 0)
+        if relation is not None:
+            statement = statement.where(ApartmentMembership.relation_type == relation)
+        return int(await self.session.scalar(statement) or 0)
 
     async def _lock_person(self, user_id: uuid.UUID) -> User | None:
         """Serialise every change of people in one building, then lock the person's row.
@@ -1016,6 +1023,7 @@ class PropertyService:
                 can_view_bills=membership.can_view_bills,
                 can_vote=membership.can_vote,
                 privacy_display_mode=membership.privacy_display_mode,
+                since=membership.started_at,
             )
             for membership, apartment in rows.all()
         ]

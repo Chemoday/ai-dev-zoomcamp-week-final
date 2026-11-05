@@ -90,6 +90,9 @@ class ApartmentMembershipDTO(BaseModel):
     can_view_bills: bool
     can_vote: bool
     privacy_display_mode: DisplayMode
+    # When the membership started (reopening sets it to now): threads with the board started
+    # before it stay hidden from this member (docs/API.md section 4).
+    since: datetime
 
 
 class CurrentUserDTO(BaseModel):

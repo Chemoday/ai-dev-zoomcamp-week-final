@@ -21,6 +21,9 @@ INSERT_POST = text(
 )
 
 
+TWO = '["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"]'
+
+
 async def insert_post(session: AsyncSession, world: CommWorld, **overrides) -> None:
     values = {
         "id": uuid.uuid4(),
@@ -78,6 +81,11 @@ async def test_a_consistent_apartment_list_is_accepted(
         ),
         ({"title": "   "}, "ck_comm_posts_title_not_blank"),
         ({"post_type": "POLL"}, "ck_comm_posts_post_type"),
+        ({"post_type": "APARTMENT_THREAD"}, "ck_comm_posts_thread_one_apartment"),
+        (
+            {"post_type": "APARTMENT_THREAD", "scope": "APARTMENT_LIST", "apartments": TWO},
+            "ck_comm_posts_thread_one_apartment",
+        ),
     ],
 )
 async def test_inconsistent_posts_are_rejected_by_the_database(
@@ -111,3 +119,33 @@ async def test_a_comment_cannot_point_to_a_post_of_another_building(
             )
 
     assert "fk_comm_comments_post_building" in str(caught.value)
+
+
+async def test_a_thread_has_one_apartment_takes_replies_and_activity_never_precedes_it(
+    db_session: AsyncSession, world: CommWorld
+) -> None:
+    post_id = uuid.uuid4()
+    await insert_post(
+        db_session,
+        world,
+        id=post_id,
+        post_type="APARTMENT_THREAD",
+        scope="APARTMENT_LIST",
+        apartments=f'["{world.apt_14.id}"]',
+    )
+
+    for statement, constraint in (
+        (
+            "UPDATE comm_posts SET comments_enabled = false WHERE id = :id",
+            "ck_comm_posts_thread_comments_enabled",
+        ),
+        (
+            "UPDATE comm_posts SET last_activity_at = created_at - interval '1 second' "
+            "WHERE id = :id",
+            "ck_comm_posts_activity_after_creation",
+        ),
+    ):
+        with pytest.raises(IntegrityError) as caught:
+            async with db_session.begin_nested():
+                await db_session.execute(text(statement), {"id": post_id})
+        assert constraint in str(caught.value)
