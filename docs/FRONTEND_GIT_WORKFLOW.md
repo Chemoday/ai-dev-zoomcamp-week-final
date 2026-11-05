@@ -20,7 +20,7 @@ Google Stitch (mockup) ──► Google AI Studio (Build) ◄──two-way sync�
 | Repository | Owner of the content | Contains |
 | :--- | :--- | :--- |
 | **Frontend repository** (separate, e.g. `Chemoday/aap-frontend`) | Google AI Studio and you | The client app at the repository root, exactly as AI Studio builds it |
-| **This repository** (`ai-dev-zoomcamp-week-final`) | Backend, CI, deploy | Backend, docs, and a copy of the client in `frontend/` |
+| **This repository** (`apartment-association-platform`) | Backend, CI, deploy | Backend, docs, and a copy of the client in `frontend/` |
 
 **Never connect Google AI Studio to this repository.** AI Studio treats the whole connected
 repository as its app, rewrites files to make the project build and pushes them with a force push
@@ -165,4 +165,4 @@ client and the backend are deployed separately and can briefly run different ver
 
 The Frontend sync workflow, the `deploy-dev` label and serving the client from the backend were
 added in
-[#28 Frontend in CI, the Docker image and dev](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/28).
+[#28 Frontend in CI, the Docker image and dev](https://github.com/Chemoday/apartment-association-platform/issues/28).

@@ -80,7 +80,7 @@ issue with the `epic` label. Background: [docs/cli_planning/2026-10-31-post-cour
 - **E4 IoT readings API:** a public, token-per-vendor contract for remote meter systems, writing
   readings with source `IOT_WEBHOOK`.
 - **E5 Bulk import:** apartments, owners and memberships from CSV.
-- Forum moderation beyond the MVP (the MVP only lets the chairman delete a forum topic): authors edit or delete their own posts and comments; the board hides single comments; residents report abusive posts; a moderation log; purging soft-deleted content after a retention period (GDPR). Tracked in [#18](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/18) and docs/BACKLOG.md (B-2).
+- Forum moderation beyond the MVP (the MVP only lets the chairman delete a forum topic): authors edit or delete their own posts and comments; the board hides single comments; residents report abusive posts; a moderation log; purging soft-deleted content after a retention period (GDPR). Tracked in [#18](https://github.com/Chemoday/apartment-association-platform/issues/18) and docs/BACKLOG.md (B-2).
 
 ## Phase 3: Legal Governance, IoT & Managed Cloud
 - **E3 Governance and voting:** country-agnostic voting in the core (options incl. abstain, quorum,

@@ -2,7 +2,7 @@
 
 - **Phase:** 2. **Status:** designed with the owner (2026-11-04, 2026-11-05); P1 done, tasks
   P2-P4 below. Builds on E7 (login) and E1 (notifications). **Epic issue:**
-  [#82](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/82).
+  [#82](https://github.com/Chemoday/apartment-association-platform/issues/82).
 - **Goal:** the board can look after an apartment (its residents, meters and history) and write to
   it, without seeing anyone's name, e-mail or login.
 
@@ -167,10 +167,10 @@ From 2026-11-05:
 
 | Task | What | Done when |
 |---|---|---|
-| P1 ([#79](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/79)) | Apartment cards: the apartment list and card in `property`, the apartment readings in `meters`, the contract and the frontend handoff | the board sees cards without people's data; an accountant gets the readings but not the cards; a resident gets only their own apartment's readings; tests |
-| P2 ([#80](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/80)) | Threads: `APARTMENT_THREAD` (migration, checks), visibility with the "since they moved in" rule, who writes as whom, the inbox filter, `last_activity_at` | a new tenant does not see older threads; a former tenant loses access; the accountant sees none; the forum feed has no threads; tests |
-| P3 ([#81](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/81)) | Thread notifications: the domain event, the two event types with their defaults, recipients and texts (en, ru, et) | a resident's message reaches the board in the app only by default and the co-residents on all channels; the author is never notified; tests |
-| P4 ([#84](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/84)) | Board micro-forum: `BOARD_TOPIC` on the visibility rules of P2 | only the chairman and the board see board topics; the accountant and residents get 404; topics are not in the forum feed; tests |
+| P1 ([#79](https://github.com/Chemoday/apartment-association-platform/issues/79)) | Apartment cards: the apartment list and card in `property`, the apartment readings in `meters`, the contract and the frontend handoff | the board sees cards without people's data; an accountant gets the readings but not the cards; a resident gets only their own apartment's readings; tests |
+| P2 ([#80](https://github.com/Chemoday/apartment-association-platform/issues/80)) | Threads: `APARTMENT_THREAD` (migration, checks), visibility with the "since they moved in" rule, who writes as whom, the inbox filter, `last_activity_at` | a new tenant does not see older threads; a former tenant loses access; the accountant sees none; the forum feed has no threads; tests |
+| P3 ([#81](https://github.com/Chemoday/apartment-association-platform/issues/81)) | Thread notifications: the domain event, the two event types with their defaults, recipients and texts (en, ru, et) | a resident's message reaches the board in the app only by default and the co-residents on all channels; the author is never notified; tests |
+| P4 ([#84](https://github.com/Chemoday/apartment-association-platform/issues/84)) | Board micro-forum: `BOARD_TOPIC` on the visibility rules of P2 | only the chairman and the board see board topics; the accountant and residents get 404; topics are not in the forum feed; tests |
 
 The "My residents" page is frontend work on the A4 endpoints (docs/FRONTEND_GUIDE.md section 12).
 

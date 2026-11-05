@@ -5,7 +5,7 @@ Each task is atomic, self-contained, and designed to be executed sequentially by
 ---
 
 ### Task 1: Project Skeleton, Async DB, EventBus & OpenTelemetry Core
-- **Tracking Issue:** [#2](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/2)
+- **Tracking Issue:** [#2](https://github.com/Chemoday/apartment-association-platform/issues/2)
 - **Target Module:** `src/core/`, `Dockerfile`, `docker-compose.yml`, `pyproject.toml`
 - **Files to Create:**
   - `src/core/config.py`, `src/core/database.py`, `src/core/event_bus.py`, `src/core/telemetry.py`, `src/main.py`
@@ -21,7 +21,7 @@ Each task is atomic, self-contained, and designed to be executed sequentially by
 ---
 
 ### Task 2: Module `property` & Auth — Models, RBAC & Backend Privacy Masker
-- **Tracking Issue:** [#3](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/3)
+- **Tracking Issue:** [#3](https://github.com/Chemoday/apartment-association-platform/issues/3)
 - **Target Module:** `src/core/security.py`, `src/modules/property/`
 - **Files to Create:**
   - `src/modules/property/models.py`, `schemas.py`, `policies.py`, `service.py`, `router.py`
@@ -37,7 +37,7 @@ Each task is atomic, self-contained, and designed to be executed sequentially by
 ---
 
 ### Task 3: Module `meters` (Part 1) — Models & Pure Domain Validation Policies
-- **Tracking Issue:** [#4](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/4)
+- **Tracking Issue:** [#4](https://github.com/Chemoday/apartment-association-platform/issues/4)
 - **Target Module:** `src/modules/meters/`
 - **Files to Create:**
   - `src/modules/meters/models.py`, `schemas.py`, `policies.py`, `events.py`
@@ -54,7 +54,7 @@ Each task is atomic, self-contained, and designed to be executed sequentially by
 ---
 
 ### Task 4: Module `meters` (Part 2) — Service, Matrix API, Audit Logs & CSV Plugin
-- **Tracking Issue:** [#5](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/5)
+- **Tracking Issue:** [#5](https://github.com/Chemoday/apartment-association-platform/issues/5)
 - **Target Module:** `src/modules/meters/`, `src/plugins/common/csv_export.py`
 - **Files to Create:**
   - `src/modules/meters/service.py`, `router.py`
@@ -70,7 +70,7 @@ Each task is atomic, self-contained, and designed to be executed sequentially by
 ---
 
 ### Task 5: Module `communication` — Targeted Emergency Alerts & Privacy-Safe Forum
-- **Tracking Issue:** [#6](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/6)
+- **Tracking Issue:** [#6](https://github.com/Chemoday/apartment-association-platform/issues/6)
 - **Target Module:** `src/modules/communication/`
 - **Files to Create:**
   - `src/modules/communication/models.py`, `schemas.py`, `policies.py`, `service.py`, `router.py`, `events.py`
@@ -89,7 +89,7 @@ Each task is atomic, self-contained, and designed to be executed sequentially by
 ---
 
 ### Task 6: Frontend UI — Resident Mobile View & Chairman Dashboard
-- **Tracking Issue:** [#7](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/7)
+- **Tracking Issue:** [#7](https://github.com/Chemoday/apartment-association-platform/issues/7)
 - **Target Module:** `frontend/` at the repository root, built against the API contract [`docs/openapi.json`](openapi.json) (see [API.md](API.md)). The built files are served by the backend (`src/core/frontend.py`, see [FRONTEND_GIT_WORKFLOW.md](FRONTEND_GIT_WORKFLOW.md)); the client is built in Google AI Studio and synced into `frontend/` by the Frontend sync workflow.
 - **Integration rules:** [FRONTEND_GUIDE.md](FRONTEND_GUIDE.md) (demo users, errors, decimal strings, the popup flow, shared demo state).
 - **Requirements:**
@@ -110,7 +110,7 @@ Each task is atomic, self-contained, and designed to be executed sequentially by
 ---
 
 ### Task 7: Seed Data & Demo Building
-- **Tracking Issue:** [#8](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/8)
+- **Tracking Issue:** [#8](https://github.com/Chemoday/apartment-association-platform/issues/8)
 - **Files to Create:** `src/core/seed.py`, `src/core/demo.py` (`GET /api/v1/demo/users` for the role switcher)
 - **Requirements:**
   - Seed only when `SEED_DEMO_DATA=true` (local Docker and the public demo; off by default) and only into an empty database, so a real association never gets fictitious residents. Concurrent starts are serialized by an advisory lock. The contents are described in [API.md](API.md), section 5.
@@ -124,7 +124,7 @@ Each task is atomic, self-contained, and designed to be executed sequentially by
 ---
 
 ### Task 8: Observability Stack, User-Impact Alerting & On-Call Responder Agent
-- **Tracking Issue:** [#9](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/9)
+- **Tracking Issue:** [#9](https://github.com/Chemoday/apartment-association-platform/issues/9)
 - **Files to Create:** `ops/otel-collector-config.yaml`, `ops/alert-rules.yaml`, `scripts/oncall_agent.py`, `.github/workflows/oncall-responder.yml`
 - **Requirements:**
   - Configure OpenTelemetry export (Grafana Cloud or local Jaeger/Loki/Prometheus in `docker-compose.yml`).
@@ -147,7 +147,7 @@ Each task is atomic, self-contained, and designed to be executed sequentially by
 ---
 
 ### Task 9: CI Pipeline, Deployment to VPS, CD (dev → manual prod) & Rollback
-- **Tracking Issue:** [#12](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/12)
+- **Tracking Issue:** [#12](https://github.com/Chemoday/apartment-association-platform/issues/12)
 - **Execution order:** runs right after Task 1, so every later task goes through CI and lands on dev automatically.
 - **Target:** `.github/workflows/`, `deploy/`, `docs/DEPLOYMENT.md`
 - **Files to Create:**

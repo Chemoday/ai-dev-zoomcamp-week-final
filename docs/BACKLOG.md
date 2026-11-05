@@ -67,7 +67,7 @@ different cases exist:
 ## B-2. Forum moderation beyond the MVP
 
 - **Status:** open. Target: Phase 2. **Tracked in:**
-  [#18](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/18).
+  [#18](https://github.com/Chemoday/apartment-association-platform/issues/18).
 - **Raised:** 2026-10-25, during Task 5.
 
 ### Current state (MVP)

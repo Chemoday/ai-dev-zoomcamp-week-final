@@ -44,7 +44,7 @@ Server layout (`/opt/aap`):
 ## Pipeline
 
 ```text
-pull request ──► CI: ruff + pytest (PostgreSQL service), frontend lint + test + build ──► image ghcr.io/chemoday/ai-dev-zoomcamp-week-final:<head sha>
+pull request ──► CI: ruff + pytest (PostgreSQL service), frontend lint + test + build ──► image ghcr.io/chemoday/apartment-association-platform:<head sha>
    label deploy-dev ──► Deploy (dev, <head sha>) ──► smoke test via the public URL
 push to main ──► CI: ruff + pytest ──► image :<sha> and :main ──► Deploy (dev) ──► smoke test via the public URL
 manual       ──► Deploy (prod, <sha>) ──► smoke test via the public URL
