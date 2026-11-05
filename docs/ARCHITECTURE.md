@@ -13,7 +13,7 @@ src/
 │   ├── notifications/         # [Phase 2, E1] Deliveries, preferences, channel bindings
 │   ├── auth/                  # [Phase 2, E7] Sign-in, sessions, invitations, identities
 │   ├── billing/               # [Phase 2, E2] Tariffs, Parent/Child Cost Allocation, Charges
-│   └── governance/            # [Phase 3, E3] Voting (.asice hash verification), Documents
+│   └── governance/            # [Phase 2, E3] Informative polls; later voting (.asice verification)
 └── plugins/                   # Plugin names are dotted paths: "common.csv_export"
     ├── registry.py            # Protocol definitions & dynamic plugin loader
     ├── common/                # Generic: csv_export, email_smtp, telegram, webpush
@@ -269,3 +269,22 @@ Every query that resolves people filters closed accounts (`core_users.is_active`
 - **Response headers:** every answer (the SPA and the API) carries `Referrer-Policy: no-referrer` (`src/core/headers.py`), so a link page never leaks its URL.
 - **Client IP:** the per-IP limits use the address uvicorn takes from `X-Forwarded-For` (`--proxy-headers`); an IPv6 address counts by its /64. Spans never carry it: the scrubber also redacts `net.peer.ip`, `net.sock.peer.addr` and `client.address`. Caddy sets that header, and the backend port is published only to Caddy, never to the internet.
 - **Logs:** uvicorn runs without an access log. The reverse proxy keeps its access log off, or excludes `Cookie` and `Authorization`.
+
+## 5. Module `governance` (epic E3)
+
+Design: [docs/epics/E3_GOVERNANCE_VOTING.md](epics/E3_GOVERNANCE_VOTING.md). Tables: docs/SCHEMA.md
+section 8. API: docs/API.md section 8.
+
+- **Place:** reads apartments and memberships only through `PropertyService`; no other module
+  imports it. Results are a pure function of the electorate snapshot and the ballots
+  (`governance/policies.py`), so official decisions (part B) add rules there.
+- **Contract with `property`** (system-level, no `CurrentUserDTO`):
+
+| Method | Returns |
+| :--- | :--- |
+| `poll_electors(building_id, scope, entrance, apartment_ids, owners_only)` | `list[ElectorDTO(user_id, apartment_id)]`: active users with an active membership (an `OWNER` one when `owners_only`) in a targeted apartment of the building, under the shared targeting rule |
+| `list_apartments(building_id)` | the building's apartments (target checks) |
+
+- Who may answer for an apartment is checked from the caller's `CurrentUserDTO.memberships` at
+  answer time; the snapshot fixes which units exist.
+
