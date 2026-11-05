@@ -391,9 +391,10 @@ Executes plugins/common/csv_export and streams a CSV file of the period's readin
 - **Each post type has one visibility rule**, used by the feed, the post, its comments and the acknowledgement:
   - `EMERGENCY`, `OFFICIAL_NOTICE`: the target, as above;
   - `FORUM_TOPIC`: the whole building;
+  - `BOARD_TOPIC` (the board's micro-forum, epic E8): the chairman and the board only, never the accountant or residents; whoever leaves the board loses access at once;
   - `APARTMENT_THREAD`: the chairman and the board see every thread. A member of the thread's apartment sees the threads started no earlier than their membership (`since <= created_at`, see `GET /property/me`), so a new tenant does not read the previous tenant's conversations. A member who wrote in a thread from that apartment (started it or commented) keeps seeing it with any active membership in that apartment; writing as the board does not count. Nobody else: not former members, not other residents, not an accountant who is not a member.
 - A post that exists but is not visible to you returns the same `404 POST_NOT_FOUND` as an unknown one, so ids cannot be probed.
-- Forum topics are always `ALL_BUILDING`. Targeting is meant for `EMERGENCY` and `OFFICIAL_NOTICE`; a thread targets exactly one apartment.
+- Forum topics and board topics are always `ALL_BUILDING`. Targeting is meant for `EMERGENCY` and `OFFICIAL_NOTICE`; a thread targets exactly one apartment.
 
 ### Who may publish
 | `post_type` | Who | Badge context when `author_apartment_id` is omitted |
@@ -402,13 +403,14 @@ Executes plugins/common/csv_export and streams a CSV file of the period's readin
 | `OFFICIAL_NOTICE` | `CHAIRMAN`, `BOARD` | none |
 | `FORUM_TOPIC` | everyone in the building | the author's first apartment (entrance, then natural number order) |
 | `APARTMENT_THREAD` | `CHAIRMAN`, `BOARD` to any apartment; anyone else to an apartment they are a member of | decided by the server (see "Board <-> apartment threads") |
+| `BOARD_TOPIC` | `CHAIRMAN`, `BOARD` | none, and none may be given: the author is shown by name (see "The board's micro-forum") |
 
 Anyone else gets `403 FORBIDDEN`. Comments use the commenter's first apartment unless `author_apartment_id` says otherwise; in a thread the server decides.
 
 ### Author badges
 - Authors are resolved on every read through `PropertyService.get_masked_author_badges` (one batched call per page), following the badge rules in section 0. So a later change of the privacy mode also changes the badge of old posts.
 - `author_apartment_id` (optional on posts and comments) must be one of the caller's own apartments, else `422 INVALID_AUTHOR_APARTMENT`. It only chooses which membership's privacy mode applies.
-- Payloads never contain an author's user id, name, email or phone. `is_mine` tells the caller which posts and comments are their own. The frontend renders a badge as `"<display_label> • <role_badge>"`, e.g. `"Apt. 14 • OWNER"`.
+- Payloads never contain an author's user id, email or phone, and a name only as the badge allows it. The one exception is the board's micro-forum: there `display_label` is the author's full name (see "The board's micro-forum"). `is_mine` tells the caller which posts and comments are their own. The frontend renders a badge as `"<display_label> • <role_badge>"`, e.g. `"Apt. 14 • OWNER"`.
 
 ### Free text
 `title` (1..255 characters), post `body` (1..10000) and comment `body` (1..4000) use the safe-text types: they are trimmed first, then must not be blank and must fit the limit, and they reject control characters such as NUL (`422 VALIDATION_ERROR`). Tab, LF and CR are allowed.
@@ -447,6 +449,14 @@ A private conversation between the board and one apartment (docs/epics/E8_APARTM
 - **Not in the forum feed:** see the inbox in `GET /posts` below.
 - Every new thread and every reply emits `ApartmentMessagePosted` (see "Domain events"); the notifications are in section 6.
 
+### The board's micro-forum (`BOARD_TOPIC`, epic E8)
+Topics only the chairman and the board see: handover notes, where the keys are, contractors, later the reminders of the maintenance calendar (docs/epics/E8_APARTMENT_PROFILES.md section 5).
+- **Create:** `POST /posts` with `"post_type": "BOARD_TOPIC"`, a title and a body; `target_scope` stays `ALL_BUILDING` (anything else is `422 INVALID_TARGET`). `category` and `comments_enabled` work as for forum topics. Anyone but the chairman and the board: `403 FORBIDDEN`.
+- **Authors by full name:** the post and its comments have `author_badge.display_label` = the author's full name as registered ("Former resident" after the account was closed) and the usual `role_badge`. Board members know each other and act publicly for the association, so this is no disclosure (owner decision); nowhere else is a name shown without the person's privacy choice. `author_apartment_id` must be omitted or `null` on topics and comments, else `422 INVALID_AUTHOR_APARTMENT`.
+- **Read and reply:** `GET /posts?post_type=BOARD_TOPIC`, `GET /posts/{id}`, `POST /posts/{id}/comments`. Anyone else gets `404 POST_NOT_FOUND`.
+- **Delete:** the chairman and any board member (see `DELETE /posts/{post_id}`).
+- **No notifications**, not even in the app (owner decision): new topics and comments create no notification and no domain event.
+
 ### `GET /api/v1/communication/emergencies/active`
 Active `EMERGENCY` posts that target the caller (see "Who sees which post"), newest first. Each item is a post object plus `acknowledged_at`: when the caller acknowledged it, or `null`. The UI shows the sticky banner for items with `acknowledged_at: null`.
 
@@ -465,7 +475,8 @@ Ends an emergency: `is_active` becomes `false`, so the banner disappears for eve
 
 ### `GET /api/v1/communication/posts?post_type=FORUM_TOPIC&category=GENERAL&limit=50&offset=0`
 The feed: posts visible to the caller, newest first (`created_at`, then `id`), as a list of post objects.
-- `post_type` and `category` are optional filters; without `post_type` the feed contains every type except `APARTMENT_THREAD`, including resolved emergencies.
+- `post_type` and `category` are optional filters; without `post_type` the feed contains every type except `APARTMENT_THREAD` and `BOARD_TOPIC`, including resolved emergencies.
+- `post_type=BOARD_TOPIC` is the board's micro-forum, newest activity first (`last_activity_at`, then `id`), like the thread inbox.
 - `post_type=APARTMENT_THREAD` is the "Messages" inbox: the caller's threads, newest activity first (`last_activity_at`, then `id`). `apartment_id` narrows it to one apartment's threads (the board opens them from the apartment card); it is accepted only together with `post_type=APARTMENT_THREAD`, else `422 VALIDATION_ERROR`. An apartment the caller cannot see gives an empty list.
 - `limit` 1..100 (default 50), `offset` 0..100000 (default 0).
 
@@ -498,10 +509,11 @@ Creates a post. Response `201 Created` with the post object.
 The post object plus one page of `comments`, oldest first: `[{"id", "post_id", "body", "author_badge", "is_mine", "created_at"}]`. `comments_limit` 1..500 (default 200), `comments_offset` 0..100000; `comments_count` is always the total. A post not visible to the caller is `404 POST_NOT_FOUND`.
 
 ### `DELETE /api/v1/communication/posts/{post_id}`
-(Requires role: `CHAIRMAN`)
-Moderation: deletes a forum topic together with its comments, for everyone. Response `204 No Content`.
+(Requires role: `CHAIRMAN`, or `BOARD` for board topics)
+Moderation: deletes a forum topic (the chairman) or a board topic (the chairman or any board member) together with its comments, for everyone. Response `204 No Content`.
 - A soft delete: the row keeps `deleted_at` and `deleted_by_user_id` for disputes, but every read treats the topic as gone (`404 POST_NOT_FOUND`, also for the chairman and for a second delete).
-- Only `FORUM_TOPIC` posts: an emergency, an official notice or a thread returns `409 POST_NOT_DELETABLE` with its `post_type` (an emergency is resolved instead).
+- Only `FORUM_TOPIC` and `BOARD_TOPIC` posts: an emergency, an official notice or a thread returns `409 POST_NOT_DELETABLE` with its `post_type` (an emergency is resolved instead). A board member deleting a forum topic gets `403 FORBIDDEN`.
+- Every deletion emits `PostDeleted` (see "Domain events"), stored in the building's event history.
 - A post of another building, or an unknown one, is `404 POST_NOT_FOUND`.
 
 ### `POST /api/v1/communication/posts/{post_id}/comments`
@@ -512,6 +524,7 @@ Request: `{"body": "Good idea!", "author_apartment_id": null}`. Response `201 Cr
 Published on the event bus **after** the request's transaction commits (never for a rolled-back change). Payloads carry ids, codes and the target only, no titles, bodies or names; a notifier reads the text through `CommunicationService`.
 - `EmergencyAlertPublished`: `post_id`, `building_id`, `category`, `target_scope`, `target_entrance`, `target_apartment_ids`, `published_by_user_id`.
 - `EmergencyAlertResolved`: `post_id`, `building_id`, `resolved_by_user_id`.
+- `PostDeleted` (E8/P4): a forum topic or a board topic was deleted. `post_id`, `building_id`, `post_type`, `deleted_by_user_id`. Nobody subscribes to it; it is the record of the deletion.
 - `ApartmentMessagePosted` (E8/P3): a new `APARTMENT_THREAD` or a comment on one. `post_id`, `comment_id` (`null` for the thread itself), `building_id`, `apartment_id`, `author_user_id`, `from_board` (the author wrote as the board, without an apartment).
 
 Further moderation (authors deleting their own posts, hiding single comments, reports, a moderation log) is in the Phase 2 backlog, docs/ROADMAP_MVP.md.
@@ -545,7 +558,7 @@ Seeded at startup by `src/core/seed.py` when `SEED_DEMO_DATA=true` (local Docker
 - **Building:** entrance 1 has apartments 1, 2, 3; entrance 2 has 13, 14, 15. Apartments 3 and 13 have no app users. Every apartment has a cold and a hot water meter; the basement has a cold and a hot water master meter.
 - **History:** `2026-07`, `2026-08`, `2026-09` are `LOCKED` with readings for every meter. Readings of apartments without app users were entered by the chairman (`ADMIN_OVERRIDE`); Apt 13 in `2026-08` is `AUTO_ESTIMATED`. The master meters show a small loss over the apartments. Apt 14's cold water reading of `2026-09` was corrected once, so its history has two entries.
 - **October (`2026-10`, `OPEN_FOR_RESIDENTS`):** Apt 1 submitted both meters and Apt 2 its cold water. Apt 15's hot water is a confirmed anomaly (31 m³, a leaking tap). **Apt 14 has submitted nothing**, so the demo can start there; a normal value is its previous value plus about 4.8 m³ (cold) or 2.2 m³ (hot). A delta above 3 × its 3-month average (about 14.4 m³ cold, 6.5 m³ hot) or above the meter limit (25 / 15 m³) triggers the two popups.
-- **Communication:** an active `EMERGENCY` (hot water off) targeted at entrance 2, so Apt 14 sees the banner and Apt 2 does not; an `OFFICIAL_NOTICE` without comments; two forum topics with comments from several residents; an `APARTMENT_THREAD` from the chairman to Apt 14 with the owner's reply (the board and Apt 14 see it, Apt 2 does not). Every demo membership starts on 2024-06-01.
+- **Communication:** an active `EMERGENCY` (hot water off) targeted at entrance 2, so Apt 14 sees the banner and Apt 2 does not; an `OFFICIAL_NOTICE` without comments; two forum topics with comments from several residents; an `APARTMENT_THREAD` from the chairman to Apt 14 with the owner's reply (the board and Apt 14 see it, Apt 2 does not); a `BOARD_TOPIC` about the keys with a reply of the board member (only the chairman and the board see it, by name). Every demo membership starts on 2024-06-01.
 - Seeding publishes and stores no domain events, so no notifications are sent, now or later.
 
 ## 6. Notifications (`notifications`), epic E1

@@ -74,7 +74,11 @@ async def test_a_consistent_apartment_list_is_accepted(
             {"post_type": "FORUM_TOPIC", "is_active": False},
             "ck_comm_posts_only_emergency_inactive",
         ),
-        ({"deleted": True, "deleted_by": True}, "ck_comm_posts_only_forum_deleted"),
+        ({"deleted": True, "deleted_by": True}, "ck_comm_posts_only_topics_deleted"),
+        (
+            {"post_type": "BOARD_TOPIC", "scope": "ENTRANCE", "entrance": 2},
+            "ck_comm_posts_board_topic_whole_building",
+        ),
         (
             {"post_type": "FORUM_TOPIC", "deleted": True},
             "ck_comm_posts_deleted_consistent",
@@ -149,3 +153,25 @@ async def test_a_thread_has_one_apartment_takes_replies_and_activity_never_prece
             async with db_session.begin_nested():
                 await db_session.execute(text(statement), {"id": post_id})
         assert constraint in str(caught.value)
+
+
+async def test_a_board_topic_has_no_author_apartment(
+    db_session: AsyncSession, world: CommWorld
+) -> None:
+    with pytest.raises(IntegrityError) as caught:
+        async with db_session.begin_nested():
+            await db_session.execute(
+                text(
+                    "INSERT INTO comm_posts (id, building_id, author_user_id, author_apartment_id, "
+                    "post_type, title, body) VALUES (:id, :building, :author, :apartment, "
+                    "'BOARD_TOPIC', 'T', 'B')"
+                ),
+                {
+                    "id": uuid.uuid4(),
+                    "building": world.building.id,
+                    "author": world.board.id,
+                    "apartment": world.apt_14.id,
+                },
+            )
+
+    assert "ck_comm_posts_board_topic_whole_building" in str(caught.value)

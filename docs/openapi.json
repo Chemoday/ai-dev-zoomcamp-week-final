@@ -3886,6 +3886,7 @@
           "communication"
         ],
         "summary": "Delete Post",
+        "description": "Delete a forum topic (the chairman) or a board topic (the chairman or a board member).",
         "operationId": "delete_post_api_v1_communication_posts__post_id__delete",
         "security": [
           {
@@ -7148,7 +7149,8 @@
           "EMERGENCY",
           "OFFICIAL_NOTICE",
           "FORUM_TOPIC",
-          "APARTMENT_THREAD"
+          "APARTMENT_THREAD",
+          "BOARD_TOPIC"
         ],
         "title": "PostType"
       },

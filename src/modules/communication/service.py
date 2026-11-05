@@ -33,11 +33,14 @@ from src.modules.communication.events import (
     ApartmentMessagePosted,
     EmergencyAlertPublished,
     EmergencyAlertResolved,
+    PostDeleted,
 )
 from src.modules.communication.models import Comment, EmergencyAck, Post
 from src.modules.communication.policies import (
+    ACTIVITY_SORTED_TYPES,
     FEED_HIDDEN_TYPES,
     can_publish,
+    deletable_types,
     is_deletable,
     sees_all_targets,
     target_problem,
@@ -248,10 +251,11 @@ class CommunicationService:
         offset: int,
         apartment_id: uuid.UUID | None = None,
     ) -> list[PostView]:
-        """The feed, newest first; without post_type it leaves the private threads out.
+        """The feed, newest first; without post_type it leaves threads and board topics out.
 
-        `post_type=APARTMENT_THREAD` is the inbox, sorted by the newest activity, and only it
-        takes `apartment_id` (the router rejects it otherwise).
+        `post_type=APARTMENT_THREAD` (the inbox) and `BOARD_TOPIC` (the board's micro-forum) are
+        sorted by the newest activity; only the inbox takes `apartment_id` (the router rejects
+        it otherwise).
         """
         statement = select(Post).where(self._visible_to(user))
         if post_type is None:
@@ -262,8 +266,8 @@ class CommunicationService:
             statement = statement.where(Post.category == category)
         if apartment_id is not None:
             statement = statement.where(Post.target_apartment_ids.contains([str(apartment_id)]))
-        inbox = post_type == PostType.APARTMENT_THREAD
-        newest = Post.last_activity_at if inbox else Post.created_at
+        by_activity = post_type in ACTIVITY_SORTED_TYPES
+        newest = Post.last_activity_at if by_activity else Post.created_at
         posts = list(
             await self.session.scalars(
                 statement.order_by(newest.desc(), Post.id.desc()).limit(limit).offset(offset)
@@ -286,8 +290,10 @@ class CommunicationService:
             )
         )
         total = (await self._comment_counts([post.id])).get(post.id, 0)
-        badges = await self.property_service.get_masked_author_badges(
-            [_author_key(post), *(_author_key(comment) for comment in comments)]
+        badges = await self._badges(
+            user.building_id,
+            post.post_type == PostType.BOARD_TOPIC,
+            [_author_key(post), *(_author_key(comment) for comment in comments)],
         )
         return PostDetail(
             **self._post_view(user, post, badges[_author_key(post)], total).model_dump(),
@@ -302,7 +308,7 @@ class CommunicationService:
             raise DomainError(
                 status_code=403,
                 error_code="FORBIDDEN",
-                message="Only the board publishes emergencies and official notices.",
+                message="Only the board publishes emergencies, official notices and board topics.",
             )
         if problem := target_problem(
             request.post_type,
@@ -314,6 +320,8 @@ class CommunicationService:
         await self._check_target_exists(user, request)
         if request.post_type == PostType.APARTMENT_THREAD:
             author_apartment_id = await self._check_new_thread(user, request)
+        elif request.post_type == PostType.BOARD_TOPIC:
+            author_apartment_id = self._as_themselves(request.author_apartment_id)
         else:
             author_apartment_id = self._author_apartment(
                 user,
@@ -356,8 +364,10 @@ class CommunicationService:
             )
         elif post.post_type == PostType.APARTMENT_THREAD:
             self._message_posted(post, None, user.id, author_apartment_id)
-        badge = await self.property_service.get_masked_author_badge(user.id, author_apartment_id)
-        return self._post_view(user, post, badge, comments_count=0)
+        key = (user.id, author_apartment_id)
+        named = post.post_type == PostType.BOARD_TOPIC
+        badges = await self._badges(user.building_id, named, [key])
+        return self._post_view(user, post, badges[key], comments_count=0)
 
     async def add_comment(
         self, user: CurrentUserDTO, post_id: uuid.UUID, request: CommentCreateRequest
@@ -373,6 +383,8 @@ class CommunicationService:
             author_apartment_id = self._thread_author(
                 user, _thread_apartment(post), request.author_apartment_id
             )
+        elif post.post_type == PostType.BOARD_TOPIC:
+            author_apartment_id = self._as_themselves(request.author_apartment_id)
         else:
             author_apartment_id = self._author_apartment(
                 user, request.author_apartment_id, default_to_membership=True
@@ -394,34 +406,57 @@ class CommunicationService:
         )
         if post.post_type == PostType.APARTMENT_THREAD:
             self._message_posted(post, comment.id, user.id, author_apartment_id)
-        badge = await self.property_service.get_masked_author_badge(user.id, author_apartment_id)
-        return self._comment_view(user, comment, badge)
+        key = (user.id, author_apartment_id)
+        named = post.post_type == PostType.BOARD_TOPIC
+        badges = await self._badges(user.building_id, named, [key])
+        return self._comment_view(user, comment, badges[key])
 
     async def delete_post(self, user: CurrentUserDTO, post_id: uuid.UUID) -> None:
-        """Moderation: soft-delete a forum topic (with its comments) for everyone.
+        """Moderation: soft-delete a forum topic (the chairman) or a board topic (any board
+        member) with its comments, for everyone, and record it as PostDeleted.
 
         One conditional UPDATE, so a concurrent second delete finds nothing and gets 404.
         """
-        deleted = await self.session.scalar(
-            update(Post)
-            .where(
-                Post.id == post_id,
-                Post.building_id == user.building_id,
-                Post.deleted_at.is_(None),
-                Post.post_type == PostType.FORUM_TOPIC,
-            )
-            .values(deleted_at=datetime.now(UTC), deleted_by_user_id=user.id)
-            .returning(Post.id)
-        )
+        allowed = deletable_types(user.building_role)
+        deleted = None
+        if allowed:
+            deleted = (
+                await self.session.execute(
+                    update(Post)
+                    .where(
+                        Post.id == post_id,
+                        Post.building_id == user.building_id,
+                        Post.deleted_at.is_(None),
+                        Post.post_type.in_(sorted(allowed)),
+                    )
+                    .values(deleted_at=datetime.now(UTC), deleted_by_user_id=user.id)
+                    .returning(Post.id, Post.post_type)
+                )
+            ).first()
         if deleted is not None:
+            assert self.outbox is not None, "writes need the request outbox"
+            self.outbox.add(
+                PostDeleted(
+                    post_id=deleted.id,
+                    building_id=user.building_id,
+                    post_type=deleted.post_type,
+                    deleted_by_user_id=user.id,
+                )
+            )
             return
         post = await self._visible_post(user, post_id)  # 404 when unknown or already deleted
         if not is_deletable(post.post_type):
             raise DomainError(
                 status_code=409,
                 error_code="POST_NOT_DELETABLE",
-                message="Only forum topics can be deleted; resolve an emergency instead.",
+                message="Only forum and board topics can be deleted; resolve an emergency instead.",
                 extra={"post_type": PostType(post.post_type).value},
+            )
+        if post.post_type not in allowed:
+            raise DomainError(
+                status_code=403,
+                error_code="FORBIDDEN",
+                message="Only the chairman deletes forum topics.",
             )
         raise _post_not_found()  # unreachable unless the post changed meanwhile
 
@@ -432,14 +467,14 @@ class CommunicationService:
         """Posts of the caller's building that the caller may see; one rule per post type.
 
         The board sees every post. Otherwise emergencies, notices and forum topics follow their
-        target, and threads the "since they moved in" rule (_visible_threads). A deleted forum
-        topic is hidden from everyone, the chairman included.
+        target, threads the "since they moved in" rule (_visible_threads), and board topics
+        nobody. A deleted topic is hidden from everyone, the chairman included.
         """
         in_building = and_(Post.building_id == user.building_id, Post.deleted_at.is_(None))
         if sees_all_targets(user.building_role):
             return in_building
         targeted = and_(
-            Post.post_type != PostType.APARTMENT_THREAD,
+            Post.post_type.not_in([PostType.APARTMENT_THREAD, PostType.BOARD_TOPIC]),
             CommunicationService._targeting(user),
         )
         threads = and_(
@@ -596,15 +631,46 @@ class CommunicationService:
             raise _invalid_author_apartment()
         return author_apartment_id
 
+    async def _badges(
+        self, building_id: uuid.UUID, by_name: bool, keys: list[AuthorKey]
+    ) -> dict[AuthorKey, AuthorBadgeDTO]:
+        """Author badges from property: masked everywhere, by full name in the board's
+        micro-forum (the documented exception, AGENTS.md), only within the caller's building."""
+        if not keys:
+            return {}
+        if not by_name:
+            return await self.property_service.get_masked_author_badges(keys)
+        named = await self.property_service.get_named_author_badges(
+            building_id, (user_id for user_id, _ in keys)
+        )
+        return {key: named[key[0]] for key in keys}
+
+    @staticmethod
+    def _as_themselves(requested: uuid.UUID | None) -> None:
+        """In the board's micro-forum everyone writes as themselves, never for an apartment."""
+        if requested is not None:
+            raise _invalid_author_apartment()
+
     async def _post_views(self, user: CurrentUserDTO, posts: list[Post]) -> list[PostView]:
         if not posts:
             return []
         counts = await self._comment_counts(post.id for post in posts)
-        badges = await self.property_service.get_masked_author_badges(
-            _author_key(post) for post in posts
+        is_named = {post.id: post.post_type == PostType.BOARD_TOPIC for post in posts}
+        # Two separate lookups: the same author key (e.g. the chairman, no apartment) must never
+        # carry a name from the board's micro-forum onto a notice that residents read.
+        named = await self._badges(
+            user.building_id, True, [_author_key(p) for p in posts if is_named[p.id]]
+        )
+        masked = await self._badges(
+            user.building_id, False, [_author_key(p) for p in posts if not is_named[p.id]]
         )
         return [
-            self._post_view(user, post, badges[_author_key(post)], counts.get(post.id, 0))
+            self._post_view(
+                user,
+                post,
+                (named if is_named[post.id] else masked)[_author_key(post)],
+                counts.get(post.id, 0),
+            )
             for post in posts
         ]
 

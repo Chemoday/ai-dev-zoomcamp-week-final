@@ -8,7 +8,7 @@ from fastapi.exceptions import RequestValidationError
 
 from src.core.exceptions import AUTH_ERRORS, error_responses
 from src.core.security import get_current_user, require_building_roles
-from src.modules.communication.policies import MODERATOR_ROLES, PUBLISHER_ROLES
+from src.modules.communication.policies import PUBLISHER_ROLES
 from src.modules.communication.schemas import (
     COMMENTS_PAGE_DEFAULT,
     COMMENTS_PAGE_MAX,
@@ -34,7 +34,6 @@ router = APIRouter(
 )
 
 publisher = require_building_roles(*sorted(PUBLISHER_ROLES))
-moderator = require_building_roles(*sorted(MODERATOR_ROLES))
 
 
 @router.get("/emergencies/active", response_model=list[EmergencyView])
@@ -154,9 +153,10 @@ async def get_post(
 )
 async def delete_post(
     post_id: uuid.UUID,
-    user: CurrentUserDTO = Depends(moderator),
+    user: CurrentUserDTO = Depends(publisher),
     service: CommunicationService = Depends(get_communication_service),
 ) -> Response:
+    """Delete a forum topic (the chairman) or a board topic (the chairman or a board member)."""
     await service.delete_post(user, post_id)
     return Response(status_code=204)
 

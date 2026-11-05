@@ -9,7 +9,7 @@ import uuid
 from dataclasses import dataclass
 
 from src.core.event_bus import DomainEvent
-from src.modules.communication.schemas import PostCategory, TargetScope
+from src.modules.communication.schemas import PostCategory, PostType, TargetScope
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -48,3 +48,13 @@ class ApartmentMessagePosted(DomainEvent):
     apartment_id: uuid.UUID
     author_user_id: uuid.UUID
     from_board: bool  # the author wrote as the board, without an apartment
+
+
+@dataclass(frozen=True, kw_only=True)
+class PostDeleted(DomainEvent):
+    """A forum topic or a board topic was deleted (soft delete); the building's record of it."""
+
+    post_id: uuid.UUID
+    building_id: uuid.UUID
+    post_type: PostType
+    deleted_by_user_id: uuid.UUID

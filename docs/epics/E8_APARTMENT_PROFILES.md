@@ -50,6 +50,15 @@ From 2026-11-05:
   accountant does not see it.
 - **P2 lays the ground for it:** who sees a post is decided by its type, so a board topic is one
   more type with its own rule, not a special case.
+- **Inside the micro-forum, authors are shown by their full name.** Board members know each other
+  and are public figures of the association, so this reveals nothing; it is the one place where a
+  name is shown without the person's privacy choice, and only to the board.
+- **Board topics can be deleted** by the chairman and by any board member; every deletion is
+  recorded (who and when). Board members may later moderate every topic of the forum (see
+  "Later").
+- **No notifications for board topics**, not even in the app: the board reads the micro-forum
+  when it works with it, and a notification per topic would be noise. Notifications are for
+  personal requests (the threads of section 3).
 
 ## 2. Apartment cards (task P1)
 
@@ -136,16 +145,23 @@ From 2026-11-05:
 - **Post type `BOARD_TOPIC`:** visible to the chairman and the board only, never to the accountant
   or residents. Someone who leaves the board loses access at once; the topics stay with the board,
   so a new chairman inherits them.
-- **Not in the forum feed:** `GET /posts?post_type=BOARD_TOPIC` lists them; replies are comments.
+- **Who writes:** the chairman and the board start topics and comment, always as themselves,
+  never on behalf of an apartment (`author_apartment_id` must be empty). Anyone else gets `403`
+  for a new topic or a deletion (by role) and `404` for reading or commenting an existing one.
+- **Authors by full name:** posts and comments of a board topic carry `display_label` = the
+  author's full name (as registered; "Former resident" after the account was closed) and the
+  usual `role_badge`. The name is still resolved by property (`get_named_author_badges`), never
+  read by communication itself.
+- **Not in the forum feed:** `GET /posts?post_type=BOARD_TOPIC` lists them, newest activity first
+  (`last_activity_at`, as the thread inbox); replies are comments.
+- **Deletion:** `DELETE /posts/{id}` works on a board topic for the chairman and every board
+  member: the same soft delete as forum topics (`deleted_at`, `deleted_by_user_id`), and a durable
+  domain event `PostDeleted` (post, building, type, who) in the building's event history. Forum
+  topics stay deletable by the chairman only.
+- **No notifications** and no domain event for a new topic or comment.
 - **Groundwork for the passport and the calendar:** the calendar will later publish its
   reminders for the board as board topics, and the first, text-only building passport (keys,
   contacts, handover notes) can live in them.
-- Designed in detail when P4 starts. Open:
-  - how authors appear to colleagues (all of them would read "Board", which is useless inside
-    the board; the privacy guardrail still applies);
-  - whether the chairman may delete a topic, like a forum topic, or topics are a record;
-  - notifications for a new topic or reply (likely the quiet in-app default of
-    `APARTMENT_MESSAGE_TO_BOARD`).
 
 ## 6. Tasks
 
@@ -170,3 +186,5 @@ The "My residents" page is frontend work on the A4 endpoints (docs/FRONTEND_GUID
 - "Reveal the real data with a reason" plus an audit log, if the board needs names for legal
   matters (meetings, debts).
 - Closing a thread, and "one notification until read" if the threads get busy.
+- Board members as moderators of the whole forum (deleting any topic), with a moderation log the
+  board can read (owner idea of 2026-11-05).

@@ -25,7 +25,7 @@ All AI coding, testing, and on-call agents operating in this repository MUST fol
 ## 3. Non-Negotiable Guardrails
 - **Strict Module Encapsulation:** Never import `models.py` across different modules in `src/modules/`. Communicate exclusively via `service.py` and DTOs in `schemas.py`.
 - **Precision:** Use `Decimal` / `Numeric(12, 3)` for all meter values. Never use `float`.
-- **Zero PII Leak:** Never return raw `User.full_name`, `email`, or `phone` in `communication` endpoints; always resolve through the privacy badge masker. Never log PII in OpenTelemetry spans or logs.
+- **Zero PII Leak:** Never return raw `User.full_name`, `email`, or `phone` in `communication` endpoints; always resolve through the privacy badge masker. The one exception (owner decision, epic E8): authors of `BOARD_TOPIC` posts and their comments are shown to the board by full name, resolved by `PropertyService.get_named_author_badges`. Never log PII in OpenTelemetry spans or logs.
 - **Single-Command Execution:** All changes must keep `docker compose up --build` and `pytest` passing without manual intervention.
 
 ## 4. Change Workflow

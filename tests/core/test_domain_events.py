@@ -32,8 +32,9 @@ from src.modules.communication.events import (
     ApartmentMessagePosted,
     EmergencyAlertPublished,
     EmergencyAlertResolved,
+    PostDeleted,
 )
-from src.modules.communication.schemas import PostCategory, TargetScope
+from src.modules.communication.schemas import PostCategory, PostType, TargetScope
 from src.modules.meters.events import MeterReadingSubmitted, ReadingPeriodStatusChanged
 from src.modules.meters.schemas import PeriodStatus, ReadingSource
 from src.modules.property.models import Building
@@ -79,6 +80,12 @@ def _samples() -> dict[str, DomainEvent]:
         ),
         "EmergencyAlertResolved": EmergencyAlertResolved(
             post_id=post, building_id=building, resolved_by_user_id=user
+        ),
+        "PostDeleted": PostDeleted(
+            post_id=post,
+            building_id=building,
+            post_type=PostType.BOARD_TOPIC,
+            deleted_by_user_id=user,
         ),
         "MeterReadingSubmitted": MeterReadingSubmitted(
             reading_id=uuid.uuid4(),

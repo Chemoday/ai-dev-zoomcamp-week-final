@@ -5,6 +5,7 @@ import pytest
 from src.modules.property.policies import (
     format_author_badge,
     format_initials,
+    format_named_badge,
     most_private_display_mode,
     resolve_role_badge,
 )
@@ -129,3 +130,12 @@ def test_plain_string_inputs_are_accepted() -> None:
 )
 def test_most_private_display_mode(modes, expected) -> None:
     assert most_private_display_mode(modes) == expected
+
+
+def test_a_board_topic_author_is_named_without_an_apartment() -> None:
+    assert format_named_badge("  Ivan   Petrov ", BuildingRole.CHAIRMAN).model_dump() == {
+        "display_label": "Ivan Petrov",
+        "role_badge": RoleBadge.BOARD,
+    }
+    assert format_named_badge("", BuildingRole.BOARD).display_label == "Board"
+    assert format_named_badge("Former resident", BuildingRole.USER).role_badge == RoleBadge.RESIDENT
