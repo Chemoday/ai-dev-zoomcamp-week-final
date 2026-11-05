@@ -72,7 +72,7 @@ that the mockup shows but the API does not return is either static demo content 
 frontend.
 
 **Tasks from the backend.** When a backend change that the client needs is merged into
-`develop`, the backend agent hands it over into the frontend repository (skill
+`main`, the backend agent hands it over into the frontend repository (skill
 `.claude/skills/frontend-handoff`), touching only `docs/` there:
 - a task per feature in `docs/backlog/NNN-<slug>.md` (the frontend backlog's own template, title
   `[backend <epic>/<task>] ...`) and a row in `docs/backlog/README.md`;

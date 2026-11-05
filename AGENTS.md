@@ -29,13 +29,13 @@ All AI coding, testing, and on-call agents operating in this repository MUST fol
 - **Single-Command Execution:** All changes must keep `docker compose up --build` and `pytest` passing without manual intervention.
 
 ## 4. Change Workflow
-- One issue, one branch, one pull request per task. While the course submission is under review,
-  `main` is frozen: branch from `develop` and open pull requests into `develop`.
-- During the freeze, merges into `develop` are not deployed (CD deploys only pushes to `main`); to
-  try a change on dev, add the label `deploy-dev` to its pull request. The frontend sync workflow
-  opens pull requests into `main`, so it is paused until the freeze ends.
+- One issue, one branch, one pull request per task: branch from `main` and open the pull request
+  into `main`. A merge into `main` deploys to dev (CD); prod is promoted by hand on the owner's
+  request (docs/DEPLOYMENT.md). To try a change on dev before merging, add the label
+  `deploy-dev` to its pull request. (The `main` freeze during the course review ended on
+  2026-11-05; `develop` is no longer used.)
 - **CTO review before merge:** when a task is done and `pytest` is green, a fresh reviewer agent
-  without the development context reviews only the branch commits (`git fetch` first, then `git diff origin/develop...HEAD`) and
+  without the development context reviews only the branch commits (`git fetch` first, then `git diff origin/main...HEAD`) and
   the current code for quality, security, bugs and the guardrails above. The implementing agent
   verifies every finding, fixes the confirmed ones in the same branch, and lists all findings
   (fixed / rejected and why) in the pull request. The owner approves the merge.
@@ -43,6 +43,6 @@ All AI coding, testing, and on-call agents operating in this repository MUST fol
   do not push yet; the reviewer checks those commits. Make fixes as `git commit --fixup=<sha>` on
   the commit they belong to; a re-review after major fixes looks only at the fixups
   (`git diff <reviewed-sha>..HEAD`). Then fold them with
-  `GIT_SEQUENCE_EDITOR=: git rebase -i --autosquash origin/develop`, rerun the checks, push once
+  `GIT_SEQUENCE_EDITOR=: git rebase -i --autosquash origin/main`, rerun the checks, push once
   and open the pull request with the reviewed SHA and the findings table. Once a branch is pushed,
   its history is never rewritten: later changes (owner review, CI) are new commits, no force-push.

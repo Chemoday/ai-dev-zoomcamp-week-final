@@ -9,8 +9,8 @@ name, so no domain had to be bought. Caddy obtains Let's Encrypt certificates fo
 | **dev** | https://dev.164-68-121-228.sslip.io:8443 | Automatically, on every push to `main` that passes CI |
 | **prod** | https://164-68-121-228.sslip.io:8443 | Manually, by promoting a commit that already ran on dev |
 
-While the course submission is under review, `main` is frozen and work goes to `develop`; see
-AGENTS.md, section 4, for how dev deploys work during the freeze.
+Work goes into `main` through pull requests (AGENTS.md, section 4); a pull request can be tried
+on dev before merging with the label `deploy-dev`.
 
 > **Port 8443 is temporary.** Port `443` on the VPS is still used by an Outline VPN server. Once
 > it moves, the switch to `443` is a re-run of `bootstrap.sh` with `HTTPS_PORT=443` plus an update
