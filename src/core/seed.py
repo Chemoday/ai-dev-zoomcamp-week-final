@@ -25,9 +25,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.config import settings
 from src.core.database import build_engine, transaction
 from src.core.telemetry import configure_logging
+from src.core.validation import canonical_email
 from src.modules.communication.models import Comment, Post
 from src.modules.communication.schemas import PostCategory, PostType, TargetScope
 from src.modules.meters.models import MeterDevice, MeterReading, MeterReadingLog, ReadingPeriod
+from src.modules.meters.policies import period_due_date
 from src.modules.meters.schemas import MeterUnit, PeriodStatus, ReadingSource, ResourceType
 from src.modules.property.models import Apartment, ApartmentMembership, Building, User
 from src.modules.property.schemas import BuildingRole, DisplayMode, RelationType
@@ -49,6 +51,8 @@ def demo_id(name: str) -> uuid.UUID:
 DEMO_BUILDING_ID = demo_id("building")
 DEMO_REGISTRY_CODE = "80123456"
 DEMO_ADDRESS = "Sõpruse pst 12, Kristiine, 10615 Tallinn"
+# The demo residents moved in long before every demo post, so they see the demo thread (E8/P2).
+DEMO_MOVED_IN = datetime(2024, 6, 1, tzinfo=UTC)
 
 
 # --- The demo building --------------------------------------------------------------------------
@@ -105,7 +109,7 @@ class DemoUser:
 
     @property
     def email(self) -> str:
-        return f"{self.full_name.lower().replace(' ', '.')}@demo.invalid"
+        return canonical_email(f"{self.full_name.replace(' ', '.')}@demo.invalid")
 
 
 DEMO_USERS: tuple[DemoUser, ...] = (
@@ -158,9 +162,7 @@ def _q(value: Decimal) -> Decimal:
 
 
 def _due_date(period_code: str, deadline_day: int) -> datetime:
-    year, month = (int(part) for part in period_code.split("-"))
-    year, month = (year + 1, 1) if month == 12 else (year, month + 1)
-    return datetime(year, month, deadline_day, 23, 59, 59, tzinfo=UTC)
+    return period_due_date(period_code, deadline_day, settings.INSTANCE_TIMEZONE)
 
 
 _INSERT_ORDER = (
@@ -247,6 +249,7 @@ class _Builder:
                         can_view_bills=is_owner,
                         can_vote=is_owner,
                         privacy_display_mode=demo.display_mode,
+                        started_at=DEMO_MOVED_IN,
                     )
                 )
         return building
@@ -412,25 +415,56 @@ class _Builder:
             body="16-inch wheels, good condition. Free to a neighbour, pick it up in entrance 1.",
             created_at=now - timedelta(days=1),
         )
-        self.add(alert, notice, bikes, give_away)
+        # A board <-> apartment thread (E8/P2): the chairman writes as the board, the owner of
+        # apartment 14 answers from the apartment.
+        thread = Post(
+            id=demo_id("post:thread-14"),
+            building_id=building.id,
+            author_user_id=users[DemoUserKey.CHAIRMAN].id,
+            post_type=PostType.APARTMENT_THREAD,
+            category=PostCategory.GENERAL,
+            title="Access to the cold water meter in apartment 14",
+            body="Hello! The September cold water reading was corrected after submission. Could "
+            "you double-check the meter when you submit the October reading?",
+            target_scope=TargetScope.APARTMENT_LIST,
+            target_apartment_ids=[str(apartments["14"].id)],
+            created_at=now - timedelta(hours=30),
+        )
+        # The board's micro-forum (E8/P4): only the chairman and the board see it, by name.
+        keys = Post(
+            id=demo_id("post:board-keys"),
+            building_id=building.id,
+            author_user_id=users[DemoUserKey.CHAIRMAN].id,
+            post_type=PostType.BOARD_TOPIC,
+            category=PostCategory.GENERAL,
+            title="Where the keys to the basement and the roof are",
+            body="The basement key is in the board's box in entrance 1; the roof key is with the "
+            "chairman. Please write here when you take one.",
+            created_at=now - timedelta(days=4),
+        )
+        self.add(alert, notice, bikes, give_away, thread, keys)
         comments = (
             (bikes, DemoUserKey.TENANT_2, "2", "Yes, please. I carry my bike up to the 1st floor."),
             (bikes, DemoUserKey.BOARD, "15", "The board can put it on the next meeting's agenda."),
             (bikes, DemoUserKey.OWNER_1, "1", "Good idea, but please leave room for prams."),
             (give_away, DemoUserKey.OWNER_14, "14", "My son would love it. Is it still free?"),
+            (thread, DemoUserKey.OWNER_14, "14", "Sure, I will check it tonight."),
+            (keys, DemoUserKey.BOARD, None, "Took the basement key on Monday, back on Tuesday."),
         )
         for step, (post, author, number, body) in enumerate(comments):
+            created_at = post.created_at + timedelta(hours=step + 1)
             self.add(
                 Comment(
                     id=demo_id(f"comment:{step}"),
                     post_id=post.id,
                     building_id=building.id,
                     author_user_id=users[author].id,
-                    author_apartment_id=apartments[number].id,
+                    author_apartment_id=apartments[number].id if number else None,
                     body=body,
-                    created_at=post.created_at + timedelta(hours=step + 1),
+                    created_at=created_at,
                 )
             )
+            post.last_activity_at = max(post.last_activity_at or post.created_at, created_at)
 
 
 async def seed_demo_data(session: AsyncSession, now: datetime | None = None) -> bool:

@@ -36,7 +36,7 @@ Repositories, commits and the way a frontend change reaches dev (Google AI Studi
 
 ## 2. Acting as a user (demo mode)
 
-There is **no login endpoint** in the MVP. The UI acts as a seeded user:
+There is **no login endpoint** in the MVP (sign-in is planned in epic E7, section 12). The UI acts as a seeded user:
 
 1. `GET /api/v1/demo/users` (no auth) returns the role switcher entries:
    `user_id`, `label` ("Owner Apt 14"), `building_role`, `apartment_number`, `relation_type`.
@@ -73,6 +73,10 @@ Build the navigation from `GET /api/v1/property/me` (`building_role`, `membershi
 | Resolve an emergency | no | yes | yes | no |
 | Delete a forum topic | no | no | yes | no |
 | Forum: read, post topics, comment | yes | yes | yes | yes |
+| Apartment cards (`/property/apartments`) | no | yes | yes | no |
+| Apartment readings (`/meters/apartments/{id}/readings`) | own apartments | every apartment | every apartment | every apartment |
+| Messages with the board (`APARTMENT_THREAD`) | own apartments, threads since moving in | every apartment | every apartment | only as a member of an apartment |
+| Board micro-forum (`BOARD_TOPIC`): read, post, comment, delete | no | yes | yes | no |
 
 A user with no apartment gets `apartments: []` from the dashboard; hide the meter card, do not
 show an error. `GET /property/me` never returns the user's own name or email: greet with the
@@ -169,22 +173,31 @@ any level ──► 422 READING_BELOW_PREVIOUS  → show previous_value, no popu
 - **CSV export needs the auth header**, so a plain `<a href>` does not work: `fetch` it with
   `X-Demo-User-Id`, turn the response into a `Blob` and download it with the file name from
   `Content-Disposition` (`readings-2026-10.csv`). `404 EXPORTER_NOT_ENABLED` hides the button.
-- `due_date` is informational; periods do not close automatically.
+- **Apartment cards** (epic E8, chairman and board): `GET /property/apartments` for the list
+  (number, entrance, floor, area, owner / tenant / family counts) and
+  `GET /property/apartments/{id}` for one card. Residents are only `{relation_type, since}`:
+  show "Owner since 1 Oct 2026", never try to find out who it is. The card's meter block comes
+  from `GET /meters/apartments/{id}/readings` (the latest 24 periods, newest first; each meter
+  lists only the periods that have a reading, so align them by `period_code`;
+  `source: "AUTO_ESTIMATED"` is an estimate). The same readings call works for a resident's own
+  apartment and an accountant (who has no cards).
+- Periods do not close automatically. `due_date` (end of the local deadline day) is shown to users
+  and, once notifications exist (docs/API.md section 6), drives the reading reminders.
 
 ## 8. Emergencies and the forum
 
 - **Banner:** `GET /communication/emergencies/active` returns the alerts that target the caller.
   Show the sticky red banner for items with `acknowledged_at: null`; "Acknowledge" is
   `POST /emergencies/{id}/acknowledge` (idempotent, per user). Poll the endpoint (e.g. every
-  30-60 s and on window focus); there are no push notifications in the MVP.
+  30-60 s and on window focus). The notification bell polls separately (section 11).
 - The chairman and the board see **every** active emergency, including those targeted at another
   entrance; show the target ("Entrance 2") in their banner.
 - **Resolve** (`POST /emergencies/{id}/resolve`, board) ends it for everyone; it stays readable in
   the feed with `is_active: false`.
 - **Publishing:** `target_scope` `ALL_BUILDING` (no other target fields), `ENTRANCE`
   (`target_entrance`) or `APARTMENT_LIST` (`target_apartment_ids`, 1..500). Forum topics are
-  always `ALL_BUILDING`. Apartment ids and entrances come from the chairman matrix
-  (`apartments[].apartment_id`, `entrance`, `floor`); there is no separate apartments endpoint.
+  always `ALL_BUILDING`. Apartment ids and entrances come from `GET /property/apartments`
+  (chairman, board) or the chairman matrix (`apartments[].apartment_id`, `entrance`, `floor`).
 - **Author badges** are already masked by the backend. Render
   `"<display_label> • <role_badge>"` (`"Apt. 14 • OWNER"`). `display_label` is English text that
   may contain a name the author chose to show; display it as is, do not parse or translate it.
@@ -204,10 +217,32 @@ any level ──► 422 READING_BELOW_PREVIOUS  → show previous_value, no popu
   emergencies and notices answer `409 POST_NOT_DELETABLE`.
 - **Free text limits:** title 1..255, post body 1..10000, comment 1..4000 characters after
   trimming. Control characters are rejected. Show a counter and trim before checking "empty".
+- **Messages with the board** (`APARTMENT_THREAD`, docs/API.md section 4):
+  - A "Messages" page lists `GET /communication/posts?post_type=APARTMENT_THREAD`, sorted by
+    `last_activity_at`; show it next to the title. The forum feed (no `post_type`) never contains
+    threads. On the apartment card the board adds `&apartment_id=<id>`.
+  - New thread: `POST /communication/posts` with `post_type: "APARTMENT_THREAD"`,
+    `target_scope: "APARTMENT_LIST"`, `target_apartment_ids: [<one apartment>]`, no
+    `author_apartment_id` and `comments_enabled: true`. A resident picks one of their own
+    apartments (`GET /property/me`); the board starts from the apartment card.
+  - Replies are ordinary comments; omit `author_apartment_id`, the server decides whether the
+    caller writes from the apartment or as the board.
+  - `422 APARTMENT_HAS_NO_RESIDENTS`: nobody in the apartment has an account yet, so nobody
+    could read the thread; say so instead of a generic error.
+  - No delete or edit buttons on threads.
+- **Board micro-forum** (`BOARD_TOPIC`, chairman and board only; docs/API.md section 4):
+  - Its own page, e.g. "Board room": `GET /communication/posts?post_type=BOARD_TOPIC` (newest
+    activity first); new topic with `POST /communication/posts` and `post_type: "BOARD_TOPIC"`,
+    without target fields and without `author_apartment_id`; replies are comments.
+  - Authors appear by full name (`display_label`), on purpose and only here: render the badge as
+    elsewhere, do not add anything to it.
+  - Every board member may delete a topic (`DELETE /communication/posts/{id}`); ask for
+    confirmation. Nothing notifies about new topics, so show the newest activity at the top.
+  - The forum feed (no `post_type`) never contains board topics.
 
 ## 9. Dates and ids
 
-- Timestamps are ISO 8601 in UTC (`2026-11-04T23:59:59Z`). Display them in the building's local
+- Timestamps are ISO 8601 in UTC (`2026-11-04T21:59:59Z`, i.e. 23:59:59 in Tallinn). Display them in the building's local
   time (Tallinn, `Europe/Tallinn`) with `Intl.DateTimeFormat`, not with string slicing.
 - All ids are UUID strings; treat them as opaque.
 
@@ -219,3 +254,169 @@ any level ──► 422 READING_BELOW_PREVIOUS  → show previous_value, no popu
   ids are fine).
 - Do not cache other users' data across a role switch: clear the client cache when the acting
   user changes.
+
+## 11. Notifications: the bell and the feed
+
+Contract: docs/API.md section 6. The backend creates notifications from events; the client only
+reads them. There is **no WebSocket and no server-sent events** (owner decision 2026-10-31): the
+client polls, which is enough for a building and needs no extra infrastructure. Reaching a user
+whose app is closed is the job of the external channels (e-mail, Telegram, WebPush, mobile push),
+not of the feed.
+
+- **Badge:** `GET /notifications/unread-count` every **60 s** while the tab is visible
+  (`document.visibilityState === "visible"`). Stop the timer while the tab is hidden, and poll at
+  once when it becomes visible again and after a role switch (the acting user changed). The user's
+  own actions never notify that user, so they need no extra poll. One timer per tab, no parallel
+  requests: skip a tick while the previous request is still running.
+- **Feed:** load `GET /notifications/feed` when the bell is opened and when the count changed while
+  it is open; page with `limit`/`offset`. Do not poll the feed itself.
+- **Errors:** on a network error or `5xx` keep the last count and retry on the next tick; do not
+  shorten the interval. `404` on these routes means the module is switched off
+  (`NOTIFICATIONS_ENABLED=false`): hide the bell.
+- **Read:** `POST /notifications/feed/{id}/read` when an item is opened, "mark all read" with
+  `POST /notifications/feed/read-all`. Neither response contains the count: after "read all" set the
+  badge to 0; after a single read subtract 1 only if the item was unread in the client's list (the
+  call is idempotent), or simply fetch `unread-count` again.
+- **Texts:** the feed returns codes (`event_type`, `params`), not texts; render them per locale,
+  like `error_code`. Load the post (`subject_id`) if the title is needed.
+- **Messages with the board** (epic E8): `APARTMENT_MESSAGE` reads "New message from the board"
+  when `params.from_board` is `true`, else "New message in your apartment's conversation with the
+  board"; `APARTMENT_MESSAGE_TO_BOARD` reads "New message from apartment
+  `{params.apartment_number}`". Both open the thread (`subject_id`). In the preferences, the
+  board's type is off outside the app by default; show it only to the chairman and the board.
+  A notification stays in the feed after its reader moved out or left the board: `404` on the
+  thread then means "no longer available", not an error.
+- The emergency banner keeps its own polling (section 8); an emergency also appears in the feed.
+- **Linking Telegram** (settings page; only when `GET /notifications/preferences` lists
+  `telegram` without `CHANNEL_NOT_ENABLED` or `DEMO_MODE`): `POST /notifications/telegram/link-code`
+  returns a one-time `code` and a `deep_link`; show the link (and the code for typing
+  `/start <code>`), valid 10 minutes. `429 RATE_LIMITED` carries `retry_after_seconds`. After the
+  user pressed Start in Telegram, reload `GET /notifications/bindings`; "Unlink" is
+  `DELETE /notifications/bindings/{binding_id}`. Chat ids are never shown or sent.
+- **Unsubscribe page** `/unsubscribe#<token>` (N8, linked from non-mandatory e-mails; no sign-in
+  needed, works in demo mode too):
+  1. Read the token from `location.hash` and remove the hash at once
+     (`history.replaceState(null, "", "/unsubscribe")`), as on the link page of section 12.
+  2. Show "Stop e-mails like this one?" and one button; call
+     `POST /api/v1/notifications/unsubscribe?token=<token>` (no body, no auth header) only on its
+     click: mail scanners open links but do not click.
+  3. On `200`, show the localized name of `event_type` ("Reading reminders by e-mail are off") and
+     a link to the notification settings to turn it back on (sign-in needed there). On
+     `400 INVALID_LINK`: "This link no longer works; change e-mails in the notification settings."
+- **Telegram:** the bot also understands `/stop` (unlinks the chat); the settings page can mention
+  it next to "Link Telegram".
+- **WebPush** (settings page, "Notify this browser"; only when the preferences list `webpush`
+  without `CHANNEL_NOT_ENABLED` or `DEMO_MODE`, and the browser has `PushManager`):
+  1. Register a service worker, ask `Notification.requestPermission()` on a click (never on page
+     load), get the key from `GET /notifications/webpush/vapid-public-key` and call
+     `registration.pushManager.subscribe({userVisibleOnly: true, applicationServerKey: key})`.
+  2. Send `subscription.toJSON()` plus a `label` (e.g. "Chrome on Android", 1..100 characters) to
+     `POST /notifications/webpush/subscriptions`; keep the returned `binding_id` locally. `201` is a
+     new device, `200` an update of this one; call it again after each login and when the
+     subscription changes. `409 DEVICE_LIMIT_REACHED`: at most 10 devices, show the bindings list.
+  3. The service worker's `push` event carries JSON
+     `{"v": 1, "event_type", "title", "body", "url", "tag", "urgent"}`: call
+     `showNotification(title, {body, tag, data: {url}, requireInteraction: urgent})`, and on
+     `notificationclick` open `url`. The texts are already in the user's language.
+  4. **On logout** delete the binding (`DELETE /notifications/bindings/{binding_id}`) and call
+     `subscription.unsubscribe()`, so a shared browser stops receiving the previous user's alerts.
+  5. **On page load** (logged in) compare `(await registration.pushManager.getSubscription())
+     ?.options.applicationServerKey` (an `ArrayBuffer`: encode it as base64url without padding
+     first) with the served key. If they differ (the server's key was
+     changed), delete the stored binding, call `unsubscribe()` and subscribe again; otherwise the
+     device keeps failing and still counts towards the 10 devices.
+
+## 12. Sign-in and accounts (epic E7)
+
+Contract: docs/API.md section 7, all of it in `docs/openapi.json` (the password since task A5).
+
+**Demo mode.** Until an environment leaves demo mode, keep the role switcher of section 2. The
+sign-in screens work next to it. Account pages (Security, My residents, People) refuse the demo
+header, so they need a real sign-in even in demo mode.
+
+### Tokens
+- **Access token in memory only:** a module-level variable, never `localStorage`,
+  `sessionStorage` or a readable cookie.
+- **Refresh:**
+  - On app start, call `POST /auth/refresh` with `credentials: "same-origin"` and
+    `X-Requested-With: fetch`. `200` means signed in; `401 SESSION_EXPIRED` means show the
+    sign-in screen.
+  - Refresh again about a minute before `expires_in` runs out.
+  - On `401 INVALID_TOKEN` from any call, refresh once and repeat that call once.
+  - `401 UNKNOWN_USER` means the account was closed: drop the token and show the sign-in screen.
+  - Allow one refresh at a time per tab. Several tabs at once are fine: the server has a grace
+    window.
+- **Bearer and demo header:** send `Authorization: Bearer <access_token>`. Once signed in, do not
+  send `X-Demo-User-Id`.
+- **CSRF header:** send `X-Requested-With: fetch` on every `/api/v1/auth/*` call.
+
+### Screens
+- **Sign in:**
+  - An e-mail field (at most 254 characters after trimming; the server answers 422 beyond) and
+    "Send me a link". After sending, always show "If this e-mail is
+    registered, a link is on its way", and allow "Resend" only after 60 seconds.
+  - A second tab, "Sign in with a password". On `401 INVALID_CREDENTIALS` show one generic error
+    text. On `429` show a countdown from `retry_after_seconds` and suggest the link.
+- **Link page** `/login/link#<token>`:
+  1. Read the token from `location.hash`, then remove the hash at once with
+     `history.replaceState(null, "", "/login/link")`.
+  2. Show a "Continue" button, and call `POST /auth/magic-link/redeem` only on its click (mail
+     scanners open links but do not click).
+  3. Then:
+     - `SIGNED_IN`: go to the app;
+     - `REGISTRATION_REQUIRED`: show the registration form;
+     - `SIGN_IN_TO_ACCEPT`: show the invitation ("You are invited as a tenant of apartment 14").
+       First try `POST /auth/refresh`: if the person is signed in, show "Accept" at once.
+       Otherwise show "Sign in to accept". Signing in by link opens another tab, so this page
+       may be reloaded; the invitation link stays valid, and opening it again is the simple way
+       back. "Accept" calls `POST /auth/invitations/accept` with the token. "Not now" only closes
+       the page; there is no decline call, and the invitation simply expires;
+     - `400 INVALID_LINK`: "This link is used, expired or no longer valid", plus the sign-in
+       form.
+- **Registration** (after an invitation link):
+  - The heading comes from `invitation`, e.g. "You are invited as the owner of apartment 14".
+  - Fields: full name, an optional phone, the language, and how the name is shown to neighbours
+    (the preview of section 1). Hide the last one for `STAFF`.
+  - Submit to `POST /auth/registration` within 30 minutes. After that, open the link again.
+  - On `409 EMAIL_ALREADY_REGISTERED`: "Sign in, then accept the invitation".
+- **Settings > Security:**
+  - `GET /auth/password` tells whether a password is set: show "Set a password", or "Change" and
+    "Remove". Fetch it again after a change or a removal.
+  - Set, change or remove the password. Ask for the current password, or offer a new sign-in link,
+    when the answer is `403 REAUTHENTICATION_REQUIRED`. Rules to show: at least 15 characters; a
+    phrase of a few words is fine. Show a character counter and a "show password" toggle, and map
+    `PASSWORD_TOO_WEAK.reason` (`TOO_SHORT`, `TOO_LONG`, `TOO_COMMON`) to a hint.
+  - Password fields: `autocomplete="current-password"` / `"new-password"`, no autocorrect or
+    autocapitalize, and the "show password" toggle on the sign-in form too. Any script is allowed,
+    and a wrong keyboard layout is the usual cause of a failed sign-in: the toggle lets the person
+    see it.
+  - The list of sessions: `device_kind` localized, with "Sign out" per session and "Sign out
+    everywhere".
+- **Sign out:** first delete the WebPush binding (section 11, it needs the Bearer token), then
+  call `POST /auth/logout` and drop the access token from memory.
+- **My residents** (owners, one block per owned apartment), from
+  `GET /auth/apartments/{id}/residents`:
+  - residents, with `invited_email` where the owner invited them, so tenants who all show as
+    "Apt. 14" can be told apart;
+  - "Invite a tenant" (an e-mail), plus "Replace" and "Remove" for each tenant;
+  - "Resend" and "Cancel" for each pending invitation;
+  - on `409 TENANT_LIMIT_REACHED`: "At most 3 tenants".
+- **Chairman > People:**
+  - The list of people comes from `GET /auth/users`: each person with a label, the role and the
+    memberships, plus the ids for the actions below. Labels follow the person's privacy mode, so
+    the page shows no names a person did not agree to show. `invited_email` helps tell apart
+    people you invited, staff included; `is_me` marks your own row (for a handover: make someone
+    else chairman, then lower your own role).
+  - Invite an owner (an e-mail and the apartment number) or staff (an e-mail and a role).
+  - The invitation list with its statuses (`NO_LONGER_VALID` explained). E-mails typed by owners
+    appear masked.
+  - For each person: change the role (explain `409 LAST_CHAIRMAN`), end a membership, or close
+    the account. The confirmation names the effects: signed out everywhere, personal data
+    removed. If `account_closed` comes back, say so.
+
+### Privacy
+- The API returns e-mail addresses only from invitations: in full to the person who typed them
+  in, and masked to everyone else who may see the invitation (co-owners, the chairman, another
+  chairman). It never returns phone numbers.
+- Do not put e-mails or tokens into analytics, URLs (except the fragment of the link page) or
+  logs.

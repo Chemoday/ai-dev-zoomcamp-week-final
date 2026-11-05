@@ -21,6 +21,11 @@ services:
       DATABASE_URL: postgresql+asyncpg://app:app@db:5432/app
       ENVIRONMENT: local
       DEMO_MODE_ENABLED: "true"
+      # Local-only login secrets (docs/ARCHITECTURE.md 4.7); deployed environments use their .env.
+      JWT_SECRET_KEY: local-only-jwt-secret-change-me-0123456789
+      AUTH_HASH_SECRET: local-only-auth-hash-secret-change-me-0123456789
+      # Local-only key of the notification hashes (chat ids, unsubscribe links).
+      NOTIFICATIONS_HASH_SECRET: local-only-notifications-hash-secret-0123456789
       SEED_DEMO_DATA: "true"
       LOG_LEVEL: INFO
       # Traces, metrics and logs go to the collector, then to Grafana (docs/OBSERVABILITY.md).
@@ -73,6 +78,17 @@ services:
       - ./incidents:/agent/incidents
     depends_on:
       - lgtm
+
+  # Optional local mail catcher for looking at notification e-mails by hand; never deployed.
+  # `docker compose --profile mail up`, web UI on http://localhost:8025. To send to it, run the
+  # backend with DEMO_MODE_ENABLED=false, ENABLED_PLUGINS=common.csv_export,common.email_smtp,
+  # SMTP_HOST=mailpit, SMTP_PORT=1025, SMTP_TLS=none, SMTP_FROM and PUBLIC_BASE_URL (e.g. in a
+  # docker-compose.override.yml); docs/epics/E1_NOTIFICATIONS.md 6.1.
+  mailpit:
+    image: axllent/mailpit:v1.32.0
+    profiles: ["mail"]
+    ports:
+      - "${MAILPIT_PORT:-8025}:8025"
 
 volumes:
   pgdata:

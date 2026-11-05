@@ -69,10 +69,16 @@ _OUTBOX_KEY = "event_outbox"
 
 
 def session_outbox(session: AsyncSession, bus: EventBus) -> EventOutbox:
-    """The event outbox of this session's unit of work (created on first use)."""
+    """The event outbox of this session's unit of work (created on first use).
+
+    Its events are also stored in core_domain_events within the same transaction, so they are
+    published even after a crash or a failing handler (src/core/domain_events.py).
+    """
     outbox = session.info.get(_OUTBOX_KEY)
     if outbox is None:
-        outbox = session.info[_OUTBOX_KEY] = EventOutbox(bus)
+        from src.core.domain_events import DomainEventStore  # imports this module's Base
+
+        outbox = session.info[_OUTBOX_KEY] = EventOutbox(bus, DomainEventStore(session))
     return outbox
 
 
@@ -81,7 +87,8 @@ async def transaction(session: AsyncSession) -> AsyncIterator[AsyncSession]:
     """One unit of work: commit on success, roll back on any exception.
 
     Domain events collected in the session's outbox are published only after the COMMIT
-    succeeded, and dropped otherwise.
+    succeeded, and dropped otherwise (their stored rows roll back with the change). After
+    publishing, the outbox marks the rows in a short follow-up transaction.
     """
     committed = False
     try:

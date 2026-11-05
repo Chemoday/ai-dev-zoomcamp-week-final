@@ -3,6 +3,14 @@ import os
 # Demo impersonation is off by default; the suite authenticates with X-Demo-User-Id. This must be
 # set before src.core.config builds the cached settings on import.
 os.environ.setdefault("DEMO_MODE_ENABLED", "true")
+# Login secrets are required at startup (docs/ARCHITECTURE.md 4.7); test-only values. Tokens
+# without a session (create_access_token) are allowed in the test environment only.
+os.environ.setdefault("ENVIRONMENT", "test")
+os.environ.setdefault("JWT_SECRET_KEY", "test-only-jwt-secret-at-least-32-bytes")
+os.environ.setdefault("AUTH_HASH_SECRET", "test-only-auth-hash-secret-at-least-32-bytes")
+os.environ.setdefault("NOTIFICATIONS_HASH_SECRET", "test-only-notifications-secret-32-bytes")
+os.environ.setdefault("AUTH_ALLOW_SESSIONLESS_TOKENS", "true")
+os.environ.setdefault("AUTH_CLEANUP_ENABLED", "false")
 
 # Metric readers can only be attached when the global meter provider is created, and importing
 # src.main creates an app (and the provider) right away. So register the test reader first.
@@ -18,6 +26,7 @@ import asyncio
 import io
 import json
 from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager
 
 import pytest
 from alembic import command
@@ -29,7 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from src.core.config import get_settings
 from src.core.database import build_engine, get_db_session, transaction
-from src.core.event_bus import DomainEvent, event_bus
+from src.core.event_bus import DomainEvent, EventBus
 from src.core.migrations import alembic_config
 from src.core.telemetry import (
     PIIScrubbingSpanExporter,
@@ -108,13 +117,31 @@ def db_app(app: FastAPI, db_session: AsyncSession) -> Iterator[FastAPI]:
         finally:
             db_session.expunge_all()
 
+    @asynccontextmanager
+    async def subscriber_session() -> AsyncIterator[AsyncSession]:
+        # Event handlers (e.g. notifications) write inside the test transaction too. Like a real
+        # session closing, a failing handler loses its uncommitted writes.
+        try:
+            yield db_session
+        except BaseException:
+            await db_session.rollback()
+            raise
+
     app.dependency_overrides[get_db_session] = override_db_session
+    app.state.notifications_session_factory = subscriber_session
+    app.state.auth_session_factory = subscriber_session  # background work of module auth
     yield app
     app.dependency_overrides.pop(get_db_session, None)
 
 
 @pytest.fixture
-def published_events() -> Iterator[list[DomainEvent]]:
+def event_bus(app: FastAPI) -> EventBus:
+    """The test app's own event bus (one per app instance)."""
+    return app.state.event_bus
+
+
+@pytest.fixture
+def published_events(event_bus: EventBus) -> Iterator[list[DomainEvent]]:
     """Every domain event published on the app's bus during the test, in order."""
     received: list[DomainEvent] = []
 
@@ -187,3 +214,15 @@ def log_capture(app: FastAPI) -> Iterator[LogCapture]:
     configure_logging(level="INFO", json_logs=True, stream=capture.stream)
     yield capture
     configure_logging(level="INFO", json_logs=True)
+
+
+# --- E-mail ------------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def smtp_server():
+    """An in-process SMTP server (tests/smtp_server.py) that records what it accepts."""
+    from tests.smtp_server import running_smtp_server
+
+    with running_smtp_server() as server:
+        yield server

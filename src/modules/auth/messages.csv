@@ -1,0 +1,43 @@
+key,en,ru,et
+magic_link.subject,Your sign-in link,Ваша ссылка для входа,Teie sisselogimislink
+magic_link.text,"Open this link to sign in. It works once, for 15 minutes:
+{link}
+
+If you did not ask to sign in, ignore this e-mail: nobody can sign in without the link.","Откройте эту ссылку, чтобы войти. Она действует один раз, 15 минут:
+{link}
+
+Если вы не запрашивали вход, просто проигнорируйте это письмо: без ссылки никто не сможет войти.","Sisselogimiseks avage see link. See kehtib üks kord, 15 minutit:
+{link}
+
+Kui te sisselogimist ei taotlenud, eirake seda kirja: ilma lingita ei saa keegi sisse logida."
+invitation.subject,You are invited to your apartment association,Приглашение в квартирное товарищество,Kutse korteriühistusse
+invitation.text,"You are invited {target}.
+
+Open this link to accept the invitation. The link works for 7 days from the invitation:
+{link}
+
+If you did not expect this invitation, ignore this e-mail: nothing happens without the link.","Вас приглашают {target}.
+
+Откройте эту ссылку, чтобы принять приглашение. Ссылка действует 7 дней с момента приглашения:
+{link}
+
+Если вы не ждали этого приглашения, просто проигнорируйте письмо: без ссылки ничего не произойдёт.","Teid kutsutakse {target}.
+
+Kutse vastuvõtmiseks avage see link. Link kehtib 7 päeva alates kutse saatmisest:
+{link}
+
+Kui te seda kutset ei oodanud, eirake seda kirja: ilma lingita ei juhtu midagi."
+invitation.target.owner,as the owner of apartment {apartment},как владельца квартиры {apartment},korteri {apartment} omanikuks
+invitation.target.tenant,as a tenant of apartment {apartment},как арендатора квартиры {apartment},korteri {apartment} üürnikuks
+invitation.target.board,as a board member,в правление,juhatuse liikmeks
+invitation.target.accountant,as the accountant,как бухгалтера,raamatupidajaks
+invitation.target.chairman,as the chairman,как председателя,esimeheks
+password_changed.subject,Your password was changed,Ваш пароль изменён,Teie parool muudeti
+password_changed.text,"The password for signing in to your apartment association was just set, changed or removed.
+
+If it was you, there is nothing to do. If it was not you, sign in with an e-mail link at {link}, set a new password and sign out everywhere under Settings > Security.","Пароль для входа в квартирное товарищество только что задали, изменили или удалили.
+
+Если это были вы, ничего делать не нужно. Если нет, войдите по ссылке из письма на {link}, задайте новый пароль и выйдите на всех устройствах в разделе «Настройки → Безопасность».","Korteriühistusse sisselogimise parool määrati, muudeti või eemaldati just praegu.
+
+Kui see olite teie, ei ole vaja midagi teha. Kui mitte, logige aadressil {link} sisse e-posti lingiga, määrake uus parool ja logige kõigist seadmetest välja jaotises „Seaded → Turvalisus“."
+footer,This is an automatic message from your apartment association: {site_url},Это автоматическое сообщение вашего квартирного товарищества: {site_url},See on teie korteriühistu automaatne teade: {site_url}

@@ -53,9 +53,10 @@ Every push becomes a reviewable part of the next sync pull request.
 | `VITE_BACKEND_URL` for `bun run dev`: set, the dev server proxies `/api` to that backend; unset, it uses its built-in mock API | Local development against a local backend, the dev URL, or no backend at all |
 | `index.html` is a static file, configuration comes from the API | The backend never rewrites the client, so the client can move to its own server later |
 
-**Not part of the app:** the AI Studio workspace (`.aistudio/`) and the mockups in
-`public/assets/aistudio/`. The sync leaves them out, so they never reach this repository or a
-build. Keep app files out of these two folders.
+**Not part of the app:** the AI Studio workspace (`.aistudio/`), the mockups in
+`public/assets/aistudio/` and `docs/` (the frontend backlog and the contract copies handed over
+by the backend). The sync leaves them out, so they never reach this repository or a build. Keep
+app files out of these three folders.
 
 **Never commit:** `node_modules/`, `dist/`, `.env` files (only `.env.example`), API keys.
 AI Studio templates often read `GEMINI_API_KEY` / `process.env.API_KEY`: the client does not
@@ -70,6 +71,22 @@ that the mockup shows but the API does not return is either static demo content 
 `DEMO` badge, or a request for the backend (next rule). Never change backend code from the
 frontend.
 
+**Tasks from the backend.** When a backend change that the client needs is merged into
+`develop`, the backend agent hands it over into the frontend repository (skill
+`.claude/skills/frontend-handoff`), touching only `docs/` there:
+- a task per feature in `docs/backlog/NNN-<slug>.md` (the frontend backlog's own template, title
+  `[backend <epic>/<task>] ...`) and a row in `docs/backlog/README.md`;
+- fresh copies of `docs/openapi.json`, `docs/API.md` and `docs/FRONTEND_GUIDE.md` (the originals
+  stay in this repository; the copies are overwritten on every handoff, never edited there);
+- `docs/BACKEND_HANDOFF.md`: which backend commit was handed over last, and the items of each
+  handoff; the handoff commit also gets a tag `backend-handoff/<backend sha>`.
+
+Sync the AI Studio workspace with GitHub **before** a handoff (the backend agent asks for it) and
+**again right after it, before any other change**: AI Studio may push with force, and unsynced
+work would drop the handoff commit. Then ask it to implement the item. The Frontend sync workflow
+does not copy the frontend's `docs/` back into this repository. Merge a sync pull request that
+uses a handed-over item only after that backend change is on `main`.
+
 **Missing backend data.** Open an issue in **this** repository with the label `backend-request`:
 the screen, the mockup element, the fields you need and a suggested endpoint. The backend answers
 with an API change and a new `docs/openapi.json`; the frontend then regenerates its types.
@@ -83,7 +100,7 @@ automatically, so work in progress in AI Studio never reaches this repository or
 frontend has a version that `main` does not:
 
 1. it copies the frontend repository into `frontend/`, without `.git`, `node_modules`, `dist`,
-   `.env` files, `.aistudio/` and `public/assets/aistudio/`;
+   `.env` files, `.aistudio/`, `public/assets/aistudio/` and `docs/`;
 2. writes the synced commit into `frontend/.source-commit`;
 3. force-pushes the single branch `frontend/sync` (one commit on top of `main`) and opens, or
    updates, the pull request `feat(frontend): sync <short sha>` with the frontend commit messages

@@ -1,4 +1,4 @@
-"""Domain events of the communication module, published on core.event_bus after commit.
+"""Domain events of the communication module, published on the app's event bus after commit.
 
 Payloads carry ids, codes and the target only: no names, and no free text (titles and bodies),
 so a handler that logs an event can never leak what a neighbour wrote. A notifier that needs the
@@ -9,7 +9,7 @@ import uuid
 from dataclasses import dataclass
 
 from src.core.event_bus import DomainEvent
-from src.modules.communication.schemas import PostCategory, TargetScope
+from src.modules.communication.schemas import PostCategory, PostType, TargetScope
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -32,3 +32,29 @@ class EmergencyAlertResolved(DomainEvent):
     post_id: uuid.UUID
     building_id: uuid.UUID
     resolved_by_user_id: uuid.UUID
+
+
+@dataclass(frozen=True, kw_only=True)
+class ApartmentMessagePosted(DomainEvent):
+    """A board <-> apartment thread was started (comment_id None) or answered (epic E8).
+
+    Recipients are not in the payload: the notifier asks CommunicationService who sees the
+    thread, so the one visibility rule decides.
+    """
+
+    post_id: uuid.UUID
+    comment_id: uuid.UUID | None
+    building_id: uuid.UUID
+    apartment_id: uuid.UUID
+    author_user_id: uuid.UUID
+    from_board: bool  # the author wrote as the board, without an apartment
+
+
+@dataclass(frozen=True, kw_only=True)
+class PostDeleted(DomainEvent):
+    """A forum topic or a board topic was deleted (soft delete); the building's record of it."""
+
+    post_id: uuid.UUID
+    building_id: uuid.UUID
+    post_type: PostType
+    deleted_by_user_id: uuid.UUID

@@ -30,7 +30,9 @@ def test_token_roundtrip() -> None:
     settings = Settings(JWT_SECRET_KEY=SECRET)
     user_id = uuid.uuid4()
 
-    assert decode_access_token(create_access_token(user_id, settings), settings) == user_id
+    claims = decode_access_token(create_access_token(user_id, settings), settings)
+
+    assert (claims.user_id, claims.session_id, claims.auth_time) == (user_id, None, None)
 
 
 def test_zero_ttl_means_already_expired_not_default_ttl() -> None:

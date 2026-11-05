@@ -58,6 +58,15 @@ for env_name in dev prod; do
         log "generating database secret for $env_name"
         printf 'POSTGRES_PASSWORD=%s\n' "$(openssl rand -hex 24)" > "$env_file"
     fi
+    # Login secrets (epic E7): added once, never rotated here (rotating signs everyone out).
+    # A hand-edited file may lack its final newline; never glue a secret onto the last line.
+    [[ -z "$(tail -c1 "$env_file")" ]] || echo >> "$env_file"
+    for secret_name in JWT_SECRET_KEY AUTH_HASH_SECRET; do
+        if ! grep -q "^${secret_name}=" "$env_file"; then
+            log "generating $secret_name for $env_name"
+            printf '%s=%s\n' "$secret_name" "$(openssl rand -hex 32)" >> "$env_file"
+        fi
+    done
     chown deploy:deploy "$env_file"
     chmod 600 "$env_file"
 done

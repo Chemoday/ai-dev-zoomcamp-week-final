@@ -9,6 +9,9 @@ name, so no domain had to be bought. Caddy obtains Let's Encrypt certificates fo
 | **dev** | https://dev.164-68-121-228.sslip.io:8443 | Automatically, on every push to `main` that passes CI |
 | **prod** | https://164-68-121-228.sslip.io:8443 | Manually, by promoting a commit that already ran on dev |
 
+While the course submission is under review, `main` is frozen and work goes to `develop`; see
+AGENTS.md, section 4, for how dev deploys work during the freeze.
+
 > **Port 8443 is temporary.** Port `443` on the VPS is still used by an Outline VPN server. Once
 > it moves, the switch to `443` is a re-run of `bootstrap.sh` with `HTTPS_PORT=443` plus an update
 > of the `DEV_URL` / `PROD_URL` repository variables. Certificates are issued over port `80`
@@ -97,8 +100,9 @@ over on dev, the dev database has to be emptied; prod is never reset by a deploy
    PUBLIC_IP=164.68.121.228 HTTPS_PORT=8443 DEPLOY_PUBKEY_FILE=./ci_deploy.pub bash bootstrap.sh
    ```
    This creates the `deploy` user and the `/opt/aap` layout, generates a random database password
-   per environment, creates the `aap-edge` network and starts Caddy. Re-running it is safe:
-   secrets, deploy state and certificates are kept.
+   and the login secrets (`JWT_SECRET_KEY`, `AUTH_HASH_SECRET`) per environment, creates the
+   `aap-edge` network and starts Caddy. Re-running it is safe: existing secrets, deploy state and
+   certificates are kept, and missing secrets are added.
 2. **GitHub repository settings**:
    - Secrets: `DEPLOY_SSH_KEY` (private half of the CI key) and `DEPLOY_KNOWN_HOSTS` (the VPS
      ed25519 host key, verified against `/etc/ssh/ssh_host_ed25519_key.pub`).
@@ -111,6 +115,28 @@ over on dev, the dev database has to be emptied; prod is never reset by a deploy
 
 - `DEMO_MODE_ENABLED=true` in both environments, so reviewers can switch roles with
   `X-Demo-User-Id`. The deployed databases contain seeded demo data only.
+- **E-mail:** the backend is only an SMTP client of an external provider; no mail server runs in
+  the image or on the VPS, and environments share nothing. When e-mail goes live (after a real
+  login, docs/BACKLOG.md B-7), each environment gets its own `SMTP_*` values, `SMTP_FROM`,
+  `PUBLIC_BASE_URL`, `NOTIFICATIONS_HASH_SECRET` (at least 32 bytes; it signs the unsubscribe
+  links since N8, and the backend refuses to start without it) and `common.email_smtp` in
+  `ENABLED_PLUGINS` in its `.env` (docs/epics/E1_NOTIFICATIONS.md 6.1). The provider must sign
+  the mail with DKIM, or large mail services ignore the one-click unsubscribe headers.
+- **Login secrets (epic E7):** the backend refuses to start without `JWT_SECRET_KEY` and
+  `AUTH_HASH_SECRET` (at least 32 bytes each), and `docker-compose.deploy.yml` refuses to start
+  without them in `/opt/aap/<env>/.env`. A deploy without them fails its health check and rolls
+  back. **Before the first deploy that contains E7/A2** (including a pull request labelled
+  `deploy-dev`), add them as root on the VPS:
+  ```bash
+  for e in dev prod; do f=/opt/aap/$e/.env; [ -z "$(tail -c1 "$f")" ] || echo >> "$f"
+    for k in JWT_SECRET_KEY AUTH_HASH_SECRET; do
+      grep -q "^$k=" "$f" || printf '%s=%s\n' "$k" "$(openssl rand -hex 32)" >> "$f"; done; done
+  ```
+  - Re-running `bootstrap.sh` adds them too, but only with exactly the parameters of step 1
+    (`HTTPS_PORT=8443`): with the default port it would move the edge proxy onto 443, which
+    another service on this VPS uses.
+  - Never rotate `AUTH_HASH_SECRET` casually: it signs everyone out and voids all open links and
+    invitations.
 - Troubleshooting (as root on the VPS):
   `docker compose -p aap-dev logs -f backend`, `cat /opt/aap/dev/history`,
   `docker logs aap-edge-caddy-1`.

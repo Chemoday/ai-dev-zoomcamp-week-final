@@ -144,6 +144,17 @@ class PeriodDTO(BaseModel):
     due_date: datetime
 
 
+class DuePeriodRefDTO(BaseModel):
+    """An open period with a deadline, for the reading reminders (system-level, notifications)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    period_id: uuid.UUID
+    building_id: uuid.UUID
+    period_code: str
+    due_date: datetime
+
+
 class PeriodListResponse(BaseModel):
     periods: list[PeriodDTO]  # newest first
 
@@ -164,6 +175,37 @@ class ReadingResponse(BaseModel):
     consumption_delta: MeterAmount
     source: ReadingSource
     is_anomaly_confirmed: bool
+
+
+APARTMENT_HISTORY_PERIODS = 24  # periods in GET /meters/apartments/{id}/readings
+
+
+class ApartmentReading(BaseModel):
+    period_code: str
+    reading_id: uuid.UUID
+    value: MeterAmount
+    consumption_delta: MeterAmount
+    source: ReadingSource
+    is_anomaly_confirmed: bool
+
+
+class ApartmentMeterHistory(BaseModel):
+    meter_id: uuid.UUID
+    resource_type: ResourceType
+    serial_number: str
+    location_label: str
+    unit: MeterUnit
+    is_active: bool
+    readings: list[ApartmentReading]  # newest first, only periods with a reading
+
+
+class ApartmentReadingsResponse(BaseModel):
+    """One apartment's readings across the latest periods (the E8 card and the resident's chart)."""
+
+    apartment_id: uuid.UUID
+    apartment_number: str
+    periods: list[PeriodDTO]  # newest first
+    meters: list[ApartmentMeterHistory]
 
 
 class DashboardMeter(BaseModel):

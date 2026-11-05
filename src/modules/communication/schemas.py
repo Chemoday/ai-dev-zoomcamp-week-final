@@ -9,16 +9,31 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Annotated
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StrictBool, StrictInt
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    model_validator,
+)
 
 from src.core.validation import safe_text
-from src.modules.property.schemas import AuthorBadgeDTO
+from src.modules.property.schemas import (
+    AuthorBadgeDTO,
+    TargetScope,
+)
 
 
 class PostType(StrEnum):
     EMERGENCY = "EMERGENCY"
     OFFICIAL_NOTICE = "OFFICIAL_NOTICE"
     FORUM_TOPIC = "FORUM_TOPIC"
+    # A private conversation between the board and one apartment (epic E8, task P2).
+    APARTMENT_THREAD = "APARTMENT_THREAD"
+    # The micro-forum of the chairman and the board (epic E8, task P4).
+    BOARD_TOPIC = "BOARD_TOPIC"
 
 
 class PostCategory(StrEnum):
@@ -26,12 +41,6 @@ class PostCategory(StrEnum):
     WATER_SHUTOFF = "WATER_SHUTOFF"
     MAINTENANCE = "MAINTENANCE"
     MARKETPLACE = "MARKETPLACE"
-
-
-class TargetScope(StrEnum):
-    ALL_BUILDING = "ALL_BUILDING"
-    ENTRANCE = "ENTRANCE"
-    APARTMENT_LIST = "APARTMENT_LIST"
 
 
 TITLE_MAX_LENGTH = 255  # VARCHAR(255)
@@ -79,6 +88,12 @@ class PostCreateRequest(BaseModel):
     # The apartment the author writes from; it decides the badge (docs/API.md, section 4).
     author_apartment_id: uuid.UUID | None = None
 
+    @model_validator(mode="after")
+    def _threads_take_replies(self) -> "PostCreateRequest":
+        if self.post_type == PostType.APARTMENT_THREAD and not self.comments_enabled:
+            raise ValueError("a thread with the board always takes replies (comments_enabled)")
+        return self
+
 
 class CommentCreateRequest(BaseModel):
     """Body of POST /api/v1/communication/posts/{post_id}/comments."""
@@ -107,6 +122,8 @@ class PostView(BaseModel):
     comments_enabled: bool
     comments_count: int
     created_at: datetime
+    # The newest comment's time, or created_at without comments; the thread inbox sorts by it.
+    last_activity_at: datetime
 
 
 class EmergencyView(PostView):
@@ -136,3 +153,35 @@ class AcknowledgeResponse(BaseModel):
 class ResolveResponse(BaseModel):
     post_id: uuid.UUID
     is_active: bool
+
+
+class EmergencyRefDTO(BaseModel):
+    """An emergency as the notifications module sees it (system-level; no author name).
+
+    `author_user_id` is only compared, never shown: notifications skip the author. `title` and
+    `body` are the board's own text, sent as the emergency message (owner decision, E1 section 5);
+    never log them.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    post_id: uuid.UUID
+    building_id: uuid.UUID
+    author_user_id: uuid.UUID
+    is_active: bool
+    target_scope: TargetScope
+    target_entrance: int | None
+    target_apartment_ids: tuple[uuid.UUID, ...]
+    title: str
+    body: str
+    category: PostCategory
+
+
+class ThreadRefDTO(BaseModel):
+    """A board <-> apartment thread as the notifications module sees it (no title, no body)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    post_id: uuid.UUID
+    building_id: uuid.UUID
+    apartment_id: uuid.UUID

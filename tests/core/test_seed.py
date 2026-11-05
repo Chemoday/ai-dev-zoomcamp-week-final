@@ -238,6 +238,22 @@ async def test_the_forum_shows_each_residents_privacy_choice(
     assert "@demo.invalid" not in feed.text
 
 
+async def test_the_board_and_apartment_14_share_a_thread(
+    seeded: AsyncSession, api_client: AsyncClient
+) -> None:
+    params = {"post_type": "APARTMENT_THREAD"}
+    url = "/api/v1/communication/posts"
+    owner = await api_client.get(url, params=params, headers=as_demo(DemoUserKey.OWNER_14))
+    board = await api_client.get(url, params=params, headers=as_demo(DemoUserKey.BOARD))
+    tenant = await api_client.get(url, params=params, headers=as_demo(DemoUserKey.TENANT_2))
+
+    (thread,) = owner.json()
+    assert board.json() == [{**thread, "is_mine": False}]
+    assert tenant.json() == []
+    assert thread["comments_count"] == 1
+    assert thread["last_activity_at"] > thread["created_at"]
+
+
 # --- Demo users for the role switcher -------------------------------------------------------------
 
 
@@ -327,3 +343,21 @@ async def test_a_large_reading_of_owner_14_goes_through_both_popups(
     assert step_2.json()["error_code"] == "ANOMALY_CONFIRMATION_STEP_2"
     assert saved.status_code == 200
     assert saved.json()["is_anomaly_confirmed"] is True
+
+
+async def test_the_board_shares_a_topic_by_name(
+    seeded: AsyncSession, api_client: AsyncClient
+) -> None:
+    params = {"post_type": "BOARD_TOPIC"}
+    url = "/api/v1/communication/posts"
+    board = await api_client.get(url, params=params, headers=as_demo(DemoUserKey.BOARD))
+    owner = await api_client.get(url, params=params, headers=as_demo(DemoUserKey.OWNER_14))
+
+    (topic,) = board.json()
+    assert topic["comments_count"] == 1
+    assert topic["author_badge"] == {"display_label": "Oleg Sidorov", "role_badge": "BOARD"}
+    detail = await api_client.get(f"{url}/{topic['id']}", headers=as_demo(DemoUserKey.CHAIRMAN))
+    assert [c["author_badge"]["display_label"] for c in detail.json()["comments"]] == [
+        "Peeter Saar"
+    ]
+    assert owner.json() == []

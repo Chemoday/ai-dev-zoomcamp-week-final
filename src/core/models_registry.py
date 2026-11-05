@@ -5,6 +5,15 @@ Each module that introduces models MUST add its import here (see docs/BACKEND_CO
 """
 
 from src.core.database import Base
+from src.core.domain_events import DomainEventRecord  # noqa: F401
+from src.modules.auth.models import (  # noqa: F401
+    AuthAttempt,
+    AuthInvitation,
+    AuthSession,
+    AuthToken,
+    RefreshToken,
+    UserIdentity,
+)
 from src.modules.communication.models import Comment, EmergencyAck, Post  # noqa: F401
 from src.modules.meters.models import (  # noqa: F401
     MeterDevice,
@@ -12,12 +21,12 @@ from src.modules.meters.models import (  # noqa: F401
     MeterReadingLog,
     ReadingPeriod,
 )
+from src.modules.notifications.models import ChannelBinding, Delivery, Preference  # noqa: F401
 from src.modules.property.models import (  # noqa: F401
     Apartment,
     ApartmentMembership,
     Building,
     User,
-    UserIdentity,
 )
 
 __all__ = ["Base"]

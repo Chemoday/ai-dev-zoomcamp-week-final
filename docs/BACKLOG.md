@@ -167,3 +167,124 @@ There is no check inside the data itself.
 - Is `ENVIRONMENT` enough, or does each instance need its own id (several associations on one
   host, see B-1)?
 - Should a prod copy in dev be anonymised automatically?
+
+## B-5. Readings more often than once a period (smart meters)
+
+- **Status:** note only, no work planned. Raised 2026-10-31.
+
+### Current state
+Several submissions within one period are already handled: `UNIQUE(meter_id, period_id)` keeps
+one reading per meter and period, and every change writes an audit row to
+`meters_reading_logs`. A new submission overwrites the value within the rules of
+`POST /api/v1/meters/readings` in docs/API.md (residents only while the period is open, never over
+a board correction, never once a later period has a reading).
+Nothing to change for manual readings.
+
+### When it matters
+Smart electricity meters deliver hourly or 15-minute values, used to split costs by the exchange
+price. If we support that, store the raw time series in a separate table (fed by the IoT readings
+API, epic E4) and derive the period reading from it; do not put time series into
+`meters_readings`.
+
+## B-6. Debt reminders
+
+- **Status:** open, depends on epic E2. Raised 2026-10-31.
+
+### Problem
+Reminding residents about unpaid bills needs payment data. By the decision in
+[E2](epics/E2_BILLING_EXPORT.md) payments and balances live in the external accounting software,
+so we do not have them.
+
+### Options
+- Import bank statements (ISO 20022 camt.053) and match payments by reference number.
+- Read balances from the accounting software API (country plugin, e.g. Merit Aktiva).
+
+Delivery itself reuses epic E1 (a new event type, e.g. `PaymentOverdue`).
+
+## B-7. Real login before external notifications
+
+- **Status:** open, **tracked in epic E7** ([docs/epics/E7_LOGIN.md](epics/E7_LOGIN.md)). Blocks real use of e-mail, Telegram and WebPush (epic E1). Raised 2026-10-31.
+
+### Problem
+There is no login: users act through `X-Demo-User-Id` (demo mode) or a Bearer JWT that only an
+operator can mint. Every environment (docker compose, dev, prod) runs in demo mode, where anyone
+can act as the chairman. External notifications there would let anyone broadcast fake emergencies
+to real Telegram chats, devices and mailboxes. So, by owner decision, demo mode delivers in-app
+notifications only, and the external channels are verified by automated tests.
+
+### Needed before external channels go live
+- A real login (e-mail magic link or password first; Smart-ID / Web eID later, see
+  `core_user_identities`).
+- An environment without demo mode, with its own Telegram bot and secrets
+  (`TELEGRAM_WEBHOOK_SECRET`, `NOTIFICATIONS_HASH_SECRET`, VAPID keys, SMTP).
+
+## B-8. Installer and e-mail for self-hosting
+
+- **Status:** open, design notes. Related to B-7 (real login). Raised 2026-10-31.
+
+### Installer
+`deploy/bootstrap.sh` already sets up the user, directories, database secrets and Caddy with HTTPS.
+It can grow into a wizard that asks a few questions and does the rest:
+- generates every secret itself (`JWT_SECRET_KEY`, `NOTIFICATIONS_HASH_SECRET`,
+  `TELEGRAM_WEBHOOK_SECRET`) and the VAPID key pair for WebPush;
+- asks for the domain, optional SMTP settings and an optional Telegram bot token;
+- Telegram bots cannot be created automatically (it is a one-minute chat with @BotFather): the
+  person pastes the token, and the script calls `setWebhook` itself.
+
+The app container only needs outgoing connections (SMTP provider, Telegram API, push services) and
+the incoming HTTPS that Caddy already serves (Telegram webhooks accept ports 443, 80, 88 and 8443).
+
+### E-mail
+- **No own mail server**, neither in a container nor next to it. Mail from a fresh VPS ends up in
+  spam (no IP reputation, PTR, SPF/DKIM/DMARC), and many VPS providers block outgoing port 25.
+- The app is only an **SMTP client** of an external provider on port 587 (STARTTLS) or 465 (TLS),
+  using a transactional e-mail service with a free tier, or a regular mailbox with an app password for a small building.
+- Good delivery needs mail from an own domain, with the SPF/DKIM records the provider gives;
+  `sslip.io` hostnames cannot carry them, so real e-mail needs a domain (a mailbox account works
+  without one).
+
+### Several associations on one server (Phase 3 managed cloud)
+One SMTP account and one Telegram bot shared by all instances (a shared delivery service) instead
+of one per association.
+
+---
+
+## B-9. Elections of the board chairman and the board members
+
+- **Status:** title only, not designed yet (owner, 2026-11-01). Related to epic E3 (governance and
+  voting).
+
+## B-10. A change of the apartment's owner (sale, death)
+
+- **Status:** open, notes only; **must be thought through very carefully** in the planning session
+  before epic E3, together with the right to vote: who the owner is decides who votes.
+- **Raised:** 2026-11-02, by the CTO review of E7/A4.
+
+### Problem
+When a flat is sold or its owner dies, the new owner joins by an `OWNER` invitation, but only the
+chairman can end the old owner's membership, alone and without a trace. That is too much power
+for one person. Asking the old owner to agree (for example within a month, with silence counting
+as consent) does not help: silence is still the chairman's decision a month later, a refusal
+either blocks a real sale or means nothing, a dead person cannot answer, and the new owner waits
+outside the system meanwhile.
+
+### What already fits
+- A new owner joins by an `OWNER` invitation, at once; an `OWNER` invitation also raises a tenant
+  of that flat to owner (E7/A4).
+- Ending one membership closes the account only when nothing else is left (the automatic closing
+  of E7).
+
+### Constraints
+- **The same for every country:** no national register. The land register is not used (who owns a
+  flat is not public data there); the fact is the board's recorded decision with its reason.
+- **Every such change is written to the board's action log** (with E8's audit log).
+- **The whole building is never told:** who owns which flat is personal data, and a notice would
+  reveal a sale or a death. Only the people concerned are told: the person, the co-owners of that
+  flat and its tenants (their access depends on an owner).
+- The account is not deleted: one membership ends.
+
+### Ideas to check in the session (not decisions)
+- Ending an `OWNER` membership needs a reason and a second board member's confirmation (the
+  "four eyes" principle); a board of one waits a period instead.
+- Co-owners and shares, inheritance (a flat without an owner for months), and what the auditor or
+  the general meeting sees.

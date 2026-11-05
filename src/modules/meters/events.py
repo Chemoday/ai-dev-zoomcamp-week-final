@@ -1,4 +1,4 @@
-"""Domain events of the meters module, published on core.event_bus.
+"""Domain events of the meters module, published on the app's event bus and stored durably.
 
 Payloads carry ids, codes and Decimal values only: never names, emails or phones.
 """
@@ -16,6 +16,7 @@ class MeterReadingSubmitted(DomainEvent):
     """A reading was created or changed (by a resident, an admin, an estimate or IoT)."""
 
     reading_id: uuid.UUID
+    building_id: uuid.UUID
     meter_id: uuid.UUID
     apartment_id: uuid.UUID | None  # None for a Building Master Meter
     period_code: str

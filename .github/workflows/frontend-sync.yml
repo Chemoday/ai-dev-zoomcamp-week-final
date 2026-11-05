@@ -66,12 +66,13 @@ jobs:
           previous=$(cat platform/frontend/.source-commit 2>/dev/null || true)
           echo "previous=$previous" >> "$GITHUB_OUTPUT"
 
-          # Not copied: git data, build output, secrets, and the AI Studio workspace with the
-          # mockups (they are design input, not part of the app). .gitkeep and .source-commit
-          # belong to this repository.
+          # Not copied: git data, build output, secrets, the AI Studio workspace with the
+          # mockups (they are design input, not part of the app) and docs/ (the backend hands
+          # its contract and the frontend backlog over there; the originals live here).
+          # .gitkeep and .source-commit belong to this repository.
           rsync -a --delete \
             --exclude=/.git/ --exclude=node_modules/ --exclude=/dist/ \
-            --exclude=/.aistudio/ --exclude=/public/assets/aistudio/ \
+            --exclude=/.aistudio/ --exclude=/public/assets/aistudio/ --exclude=/docs/ \
             --include=.env.example --exclude='.env*' \
             --exclude=/.gitkeep --exclude=/.source-commit \
             source/ platform/frontend/

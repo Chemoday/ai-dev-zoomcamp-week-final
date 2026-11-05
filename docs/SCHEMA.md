@@ -2,31 +2,32 @@
 
 All tables use `UUID` primary keys (`uuid4`), UTC timestamps (`TIMESTAMPTZ`), and module-prefixed table names to maintain strict logical boundaries inside a single PostgreSQL database.
 
-## 1. Users & Identity Providers (tables `core_*`, owned by module `property`)
+## 1. Users & Identity Providers (tables `core_*`: `core_users` owned by module `property`, `core_user_identities` by `auth`)
 
-> **Ownership rule:** the `core_users` and `core_user_identities` tables keep the `core_` prefix because every module references users by FK, but their SQLAlchemy models (`User`, `UserIdentity`) live in `src/modules/property/models.py`, as listed in `src/core/models_registry.py`. `src/core/` holds no domain models. Other modules never import these models: they read users only through DTOs: `CurrentUserDTO` from `get_current_user` (`src/core/security.py`) or `PropertyService` methods such as `get_masked_author_badge`.
+> **Ownership rule:** the `core_users` and `core_user_identities` tables keep the `core_` prefix because every module references users by FK, but their SQLAlchemy models live in their owning modules (`User` in `src/modules/property/models.py`, `UserIdentity` in `src/modules/auth/models.py` since A5), as listed in `src/core/models_registry.py`. `src/core/` holds no domain models. Other modules never import these models: they read users only through DTOs: `CurrentUserDTO` from `get_current_user` (`src/core/security.py`) or `PropertyService` methods such as `get_masked_author_badge`.
 
 ### Table: `core_users`
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
 | `id` | `UUID` | `PK` | Internal user ID |
 | `building_id` | `UUID` | `FK(property_buildings.id), NOT NULL, INDEX` | Building the user belongs to. `building_role` applies to this building, and it is the source of `CurrentUserDTO.building_id` (also for staff without an apartment membership) |
-| `email` | `VARCHAR(255)` | `UNIQUE, NULLABLE` | Email (optional for offline/PIN-only elderly residents) |
-| `full_name` | `VARCHAR(255)` | `NOT NULL` | Real name (NEVER exposed raw in forum APIs or telemetry logs) |
-| `phone` | `VARCHAR(50)` | `NULLABLE` | Emergency contact phone (visible only to Chairman/Board) |
+| `email` | `VARCHAR(255)` | `UNIQUE, NULLABLE` | Email (optional for offline/PIN-only elderly residents). Stored in canonical form (trimmed, NFKC, lower case), so the unique index is case-insensitive; a migration lower-cases the existing rows and stops if two collide. `NULL` after an account is closed |
+| `full_name` | `VARCHAR(255)` | `NOT NULL` | Real name (NEVER exposed raw in forum APIs or telemetry logs). Entered by the person at registration; `"Former resident"` after the account is closed |
+| `phone` | `VARCHAR(50)` | `NULLABLE` | Emergency contact phone (visible only to Chairman/Board). `NULL` after the account is closed |
+| `locale` | `VARCHAR(5)` | `NULLABLE, CHECK IN ('et', 'ru', 'en')` | Language of notifications sent outside the app. `NULL` = the instance default `DEFAULT_LOCALE` |
 | `building_role` | `VARCHAR(32)` | `NOT NULL, DEFAULT 'USER'` | Enum: `CHAIRMAN`, `BOARD`, `ACCOUNTANT`, `USER` |
-| `is_active` | `BOOLEAN` | `NOT NULL, DEFAULT TRUE` | Account status |
+| `is_active` | `BOOLEAN` | `NOT NULL, DEFAULT TRUE` | Account status. `false` only for a closed account (there is no reversible deactivation) |
 | `created_at` | `TIMESTAMPTZ` | `NOT NULL` | Creation timestamp |
 
 ### Table: `core_user_identities`
-*(Decouples authentication from user profile; ready for Estonian Smart-ID / Web eID / Magic Links without storing raw `isikukood` in plain text)*
+*(Decouples authentication from user profile; ready for Estonian Smart-ID / Web eID / Magic Links without storing raw `isikukood` in plain text.)* Owned by module `auth` since A5 (model in `src/modules/auth/models.py`; migration 011 adds `created_at` and `requires_link_sign_in`, section 7). For `provider = 'password'`, `subject_hash` is the keyed HMAC (`AUTH_HASH_SECRET`) of the user id and `secret_data` the encoded Argon2id hash; future eID providers store the keyed HMAC of the personal code. All rows of a user are deleted when the account is closed.
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
 | `id` | `UUID` | `PK` | Identity record ID |
 | `user_id` | `UUID` | `FK(core_users.id), INDEX` | Linked user |
 | `provider` | `VARCHAR(50)` | `NOT NULL` | `'password'`, `'pin_token'`, `'ee_smart_id'`, `'ee_id_card'` |
-| `subject_hash` | `VARCHAR(128)` | `NOT NULL, INDEX` | Salted SHA-256 hash of identifier (e.g., `hash("EE:3850101xxxx")`) |
-| `secret_data` | `VARCHAR(255)` | `NULLABLE` | Bcrypt password hash or token hash |
+| `subject_hash` | `VARCHAR(128)` | `NOT NULL, INDEX` | Keyed HMAC-SHA-256 of the identifier (e.g. of `"EE:3850101xxxx"`) |
+| `secret_data` | `VARCHAR(255)` | `NULLABLE` | Argon2id password hash (encoded, with its parameters) |
 | `UNIQUE` | `(provider, subject_hash)` | | Prevents duplicate external identities |
 
 ---
@@ -67,6 +68,8 @@ All tables use `UUID` primary keys (`uuid4`), UTC timestamps (`TIMESTAMPTZ`), an
 | `can_view_bills` | `BOOLEAN` | `NOT NULL, DEFAULT TRUE` | Allowed to see apartment invoices |
 | `can_vote` | `BOOLEAN` | `NOT NULL, DEFAULT FALSE` | `TRUE` only for `OWNER` |
 | `privacy_display_mode`| `VARCHAR(32)`| `NOT NULL, DEFAULT 'APARTMENT_ONLY'` | Enum: `APARTMENT_ONLY`, `INITIALS`, `FULL_NAME` |
+| `started_at` | `TIMESTAMPTZ` | `NOT NULL, DEFAULT now()` | When the membership started; reopening an ended membership sets it to now. API `since`. The migration fills existing rows with the time of the migration |
+| `ended_at` | `TIMESTAMPTZ` | `NULLABLE` | Set when the membership ends (a tenant replaced or removed, a flat sold, an account closed). Every membership query filters `ended_at IS NULL` (docs/ARCHITECTURE.md 4.3); an ended membership is reopened, not duplicated, when the person is invited to the same apartment again |
 | `UNIQUE` | `(apartment_id, user_id)` | | One membership record per user per apartment |
 
 ---
@@ -94,7 +97,7 @@ All tables use `UUID` primary keys (`uuid4`), UTC timestamps (`TIMESTAMPTZ`), an
 | `building_id` | `UUID` | `FK(property_buildings.id)` | Building ID |
 | `period_code` | `VARCHAR(7)` | `NOT NULL, INDEX` | Format `'YYYY-MM'` (e.g., `'2026-10'`) |
 | `status` | `VARCHAR(32)` | `NOT NULL` | Enum: `OPEN_FOR_RESIDENTS`, `REVIEW_BY_BOARD`, `LOCKED` |
-| `due_date` | `TIMESTAMPTZ` | `NOT NULL` | e.g., `2026-11-04 23:59:59 UTC` |
+| `due_date` | `TIMESTAMPTZ` | `NOT NULL` | End of the local deadline day in `INSTANCE_TIMEZONE` (default `Europe/Tallinn`), stored in UTC: `2026-11-04 23:59:59` Tallinn = `2026-11-04 21:59:59 UTC`. Reading reminders are computed from it. Migration 006 moved deadlines written by the old rule (23:59:59 UTC) to local midnight of the same date |
 | `UNIQUE` | `(building_id, period_code)` | | One accounting period per month per building |
 
 ### Table: `meters_readings`
@@ -148,7 +151,7 @@ All tables use `UUID` primary keys (`uuid4`), UTC timestamps (`TIMESTAMPTZ`), an
 | `building_id` | `UUID` | `FK(property_buildings.id), INDEX` | Building ID |
 | `author_user_id` | `UUID` | `FK(core_users.id), NOT NULL, INDEX` | Internal author ID (masked before API output, never returned) |
 | `author_apartment_id`| `UUID` | `NULLABLE` | Context apartment for privacy badge resolution (`NULL` = no apartment context, e.g. a board post) |
-| `post_type` | `VARCHAR(32)` | `NOT NULL, INDEX` | Enum: `EMERGENCY`, `OFFICIAL_NOTICE`, `FORUM_TOPIC` |
+| `post_type` | `VARCHAR(32)` | `NOT NULL, INDEX` | Enum: `EMERGENCY`, `OFFICIAL_NOTICE`, `FORUM_TOPIC`, `APARTMENT_THREAD` (a conversation between the board and one apartment, epic E8), `BOARD_TOPIC` (the board's micro-forum, epic E8, migration 014) |
 | `category` | `VARCHAR(50)` | `NOT NULL, DEFAULT 'GENERAL'` | Enum: `GENERAL`, `WATER_SHUTOFF`, `MAINTENANCE`, `MARKETPLACE` |
 | `title` | `VARCHAR(255)` | `NOT NULL` | Headline |
 | `body` | `TEXT` | `NOT NULL` | Content (the API caps it at 10000 characters) |
@@ -156,9 +159,10 @@ All tables use `UUID` primary keys (`uuid4`), UTC timestamps (`TIMESTAMPTZ`), an
 | `target_entrance` | `INTEGER` | `NULLABLE` | Populated if `target_scope == 'ENTRANCE'` |
 | `target_apartment_ids`| `JSONB` | `NULLABLE` | Non-empty array of apartment UUID strings if `target_scope == 'APARTMENT_LIST'` (SQL `NULL` otherwise, never JSON `null`) |
 | `is_active` | `BOOLEAN` | `NOT NULL, DEFAULT TRUE` | For `EMERGENCY`: `TRUE` while the banner is active, `FALSE` once resolved. Always `TRUE` for other types |
-| `comments_enabled` | `BOOLEAN` | `NOT NULL, DEFAULT TRUE` | Board can disable comments on official notices |
+| `comments_enabled` | `BOOLEAN` | `NOT NULL, DEFAULT TRUE` | Board can disable comments on official notices. Always `TRUE` for `APARTMENT_THREAD` |
 | `created_at` | `TIMESTAMPTZ` | `NOT NULL, INDEX` | Creation timestamp |
-| `deleted_at` | `TIMESTAMPTZ` | `NULLABLE` | Set when the chairman deleted the forum topic (soft delete: hidden from every read) |
+| `last_activity_at` | `TIMESTAMPTZ` | `NOT NULL` | `created_at` of the post, moved to the `created_at` of each new comment with `greatest()` (concurrent comments never move it back). Migration 012 fills existing rows from their newest comment. The thread inbox sorts by it |
+| `deleted_at` | `TIMESTAMPTZ` | `NULLABLE` | Set when a forum topic (by the chairman) or a board topic (by the chairman or a board member) was deleted (soft delete: hidden from every read) |
 | `deleted_by_user_id` | `UUID` | `FK(core_users.id), NULLABLE` | Who deleted it |
 
 ### Table: `comm_comments`
@@ -185,9 +189,253 @@ All tables use `UUID` primary keys (`uuid4`), UTC timestamps (`TIMESTAMPTZ`), an
 **Integrity constraints of `comm_*` tables** (enforced by PostgreSQL, covered by `tests/core/test_migrations.py`):
 - Every enum column (`post_type`, `category`, `target_scope`) has a named `CHECK (… IN (…))`.
 - `ck_comm_posts_target_consistent`: `ALL_BUILDING` has neither entrance nor apartment list; `ENTRANCE` has an entrance and no list; `APARTMENT_LIST` has a non-empty JSON array of canonical lowercase UUID strings (checked with `jsonb_path_exists`) and no entrance. The list is tested with an explicit `IS NOT NULL`, because a CHECK whose result is `NULL` counts as passed. `target_entrance > 0`. Covered by `tests/communication/test_models.py`.
-- `ck_comm_posts_forum_whole_building`: a `FORUM_TOPIC` is always `ALL_BUILDING`.
+- `ck_comm_posts_forum_whole_building`: a `FORUM_TOPIC` is always `ALL_BUILDING`; `ck_comm_posts_board_topic_whole_building`: so is a `BOARD_TOPIC` (its audience is the board, decided by the post type), and it has no author apartment. That its comments have no author apartment either is checked by the service only.
+- `ck_comm_posts_thread_one_apartment`: an `APARTMENT_THREAD` is `APARTMENT_LIST` with exactly one apartment (`NOT jsonb_path_exists(target_apartment_ids, '$[1]')`; the target check above already makes the list a non-empty array). `ck_comm_posts_thread_comments_enabled`: an `APARTMENT_THREAD` always takes comments.
+- `ck_comm_posts_activity_after_creation`: `last_activity_at >= created_at`.
+- Index `ix_comm_posts_building_type_activity (building_id, post_type, last_activity_at)` for the thread inbox.
 - `ck_comm_posts_only_emergency_inactive`: only an `EMERGENCY` can have `is_active = FALSE`.
 - Titles and bodies are never blank (`btrim(...) <> ''`).
-- `ck_comm_posts_only_forum_deleted`: only a `FORUM_TOPIC` can be deleted; `ck_comm_posts_deleted_consistent`: `deleted_at` and `deleted_by_user_id` are set together.
+- `ck_comm_posts_only_topics_deleted` (was `ck_comm_posts_only_forum_deleted` before migration 014): only a `FORUM_TOPIC` or a `BOARD_TOPIC` can be deleted (threads are a record); `ck_comm_posts_deleted_consistent`: `deleted_at` and `deleted_by_user_id` are set together.
 - **One building per row chain.** `comm_posts` is `UNIQUE (id, building_id)`. Composite foreign keys guarantee that a comment is in its post's building, `(post_id, building_id)` → `comm_posts`, and that the author's context apartment of a post or comment is in that building, `(author_apartment_id, building_id)` → `property_apartments`. A `NULL` apartment is not checked.
 - Not enforced by the database: that a targeted apartment id exists (JSONB has no foreign keys) and that the author belongs to the building. The service checks both on insert.
+
+---
+
+## 5. Module: `notifications` (epic E1)
+
+*Design: [docs/epics/E1_NOTIFICATIONS.md](epics/E1_NOTIFICATIONS.md). `notif_channel_bindings`, `notif_preferences` and `notif_deliveries` exist since task N2 (migration 006); `notif_link_codes` and `notif_link_attempts` since Telegram (N4, migration 007).*
+
+Shared enums (each has a named `CHECK (… IN (…))`):
+- `channel`: `in_app`, `email`, `telegram`, `webpush`; *(planned, N7)* `mobile_push` (push to the
+  native phone app through FCM). N7 adds it in a migration to every `channel` check below, including
+  the binding checks, so wherever `('telegram', 'webpush')` appears it becomes
+  `('telegram', 'webpush', 'mobile_push')`.
+- `event_type`: `EMERGENCY_PUBLISHED`, `EMERGENCY_RESOLVED`, `READING_DEADLINE`, `PERIOD_REVIEW`,
+  `APARTMENT_MESSAGE`, `APARTMENT_MESSAGE_TO_BOARD` (epic E8, migration 013)
+- delivery `status`: `PENDING`, `SENDING`, `SENT`, `FAILED`, `SKIPPED`
+
+### Table: `notif_channel_bindings`
+*(Where a user can be reached on an external channel: one Telegram chat, or one WebPush device. E-mail needs no binding: a user is reachable when `core_users.email` is set; `in_app` is always available.)*
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PK` | Binding ID |
+| `user_id` | `UUID` | `FK(core_users.id), NOT NULL, INDEX` | Owner of the binding |
+| `channel` | `VARCHAR(16)` | `NOT NULL, CHECK IN ('telegram', 'webpush')` | |
+| `config` | `JSONB` | `NULLABLE` | Telegram: `{"chat_id": 123}`; WebPush: `{"endpoint", "p256dh", "auth"}`; mobile push *(N7)*: `{"token", "platform"}` (`android` or `ios`). Wiped (`NULL`) on revoke. Never returned by the API, never logged |
+| `address_hash` | `VARCHAR(64)` | `NOT NULL` | Hex HMAC-SHA-256 (key `NOTIFICATIONS_HASH_SECRET`) of the chat id, the endpoint URL or the FCM token. Keyed, because a plain hash of a 10-digit chat id is reversible |
+| `label` | `VARCHAR(100)` | `NULLABLE` | Device label chosen by the client, e.g. `"Chrome on Android"` |
+| `created_at` | `TIMESTAMPTZ` | `NOT NULL` | |
+| `revoked_at` | `TIMESTAMPTZ` | `NULLABLE` | Set on unlink, on logout (the client deletes its device binding), on a Telegram 403, on a push service 404/410 or an endpoint that fails the check at send time, when another user subscribes the same endpoint, or *(N7)* on FCM `UNREGISTERED` / `SENDER_ID_MISMATCH` and a token refresh (`replaces_binding_id`) |
+| `UNIQUE` | `(channel, address_hash) WHERE revoked_at IS NULL` | | Partial unique index `uq_notif_channel_bindings_active_address`: an active chat or endpoint belongs to one user. Moving it to another user revokes the old binding first |
+| `UNIQUE` | `(user_id) WHERE channel = 'telegram' AND revoked_at IS NULL` | | Partial unique index `uq_notif_channel_bindings_one_telegram`: one active Telegram chat per user |
+
+- `ck_notif_channel_bindings_config_revoked`: `(revoked_at IS NULL) = (config IS NOT NULL)`.
+- **Retention:** a binding revoked more than `NOTIFICATIONS_RETENTION_DAYS` ago that no delivery refers to is deleted by the scheduler.
+- At most 10 active WebPush bindings per user (checked by the service under advisory locks on the user, then the endpoint); *(N7)* likewise at most 10 active mobile push bindings.
+
+### Table: `notif_preferences`
+*(Only deviations from the defaults are stored; no row means the default of docs/API.md section 6.)*
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PK` | |
+| `user_id` | `UUID` | `FK(core_users.id), NOT NULL` | |
+| `event_type` | `VARCHAR(32)` | `NOT NULL` | Enum `event_type` |
+| `channel` | `VARCHAR(16)` | `NOT NULL` | Enum `channel` |
+| `enabled` | `BOOLEAN` | `NOT NULL` | |
+| `updated_at` | `TIMESTAMPTZ` | `NOT NULL` | |
+| `UNIQUE` | `(user_id, event_type, channel)` | | |
+
+### Table: `notif_link_codes`
+*(One-time codes that link a Telegram chat to a user.)*
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PK` | |
+| `user_id` | `UUID` | `FK(core_users.id), NOT NULL, INDEX` | |
+| `code_hash` | `VARCHAR(64)` | `NOT NULL, UNIQUE` | Hex HMAC-SHA-256 of the upper-cased code (Crockford base32, 8 characters); the code itself is shown once and never stored |
+| `created_at` | `TIMESTAMPTZ` | `NOT NULL` | Used for the limit of 5 codes per user per hour |
+| `expires_at` | `TIMESTAMPTZ` | `NOT NULL` | `created_at + 10 minutes` |
+| `used_at` | `TIMESTAMPTZ` | `NULLABLE` | Set when a chat redeemed the code; a used or expired code is rejected |
+
+### Table: `notif_link_attempts`
+*(Rate limit for `/start <code>` messages: at most 10 per chat per hour, counted across processes.)*
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PK` | |
+| `address_hash` | `VARCHAR(64)` | `NOT NULL` | Same keyed hash of the Telegram chat id as in `notif_channel_bindings` |
+| `attempted_at` | `TIMESTAMPTZ` | `NOT NULL` | |
+| `succeeded` | `BOOLEAN` | `NOT NULL` | |
+| `INDEX` | `(address_hash, attempted_at)` | | |
+
+Rows of `notif_link_codes` and `notif_link_attempts` older than 24 hours are deleted by the scheduler.
+
+### Table: `notif_deliveries`
+*(One message to one user on one channel; for `telegram` / `webpush` also one binding. Holds no message text and no contact data: titles and links are rendered from the subject.)*
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PK` | Delivery ID (also the in-app notification id) |
+| `user_id` | `UUID` | `FK(core_users.id), NOT NULL` | Recipient |
+| `channel` | `VARCHAR(16)` | `NOT NULL` | Enum `channel` |
+| `binding_id` | `UUID` | `FK(notif_channel_bindings.id), NULLABLE` | Set exactly for `telegram` and `webpush` |
+| `event_type` | `VARCHAR(32)` | `NOT NULL` | Enum `event_type` |
+| `dedup_key` | `VARCHAR(128)` | `NOT NULL` | `emergency:{post_id}`, `emergency_resolved:{post_id}`, `reading_deadline:{period_id}`, `period_review:{period_id}:{event_id}` (the event id of that status change, so a reopened period can be reviewed again), `apartment_message:{post_id}` for a new thread and `apartment_message:{post_id}:{comment_id}` for a reply |
+| `subject_type` | `VARCHAR(16)` | `NOT NULL, CHECK IN ('post', 'period')` | What the notification is about |
+| `subject_id` | `UUID` | `NOT NULL` | `comm_posts.id` or `meters_periods.id` (no FK: other modules' tables) |
+| `params` | `JSONB` | `NOT NULL, DEFAULT '{}'` | PII-free render parameters: `category`, `target_scope`, `target_entrance`, `period_code`, `due_date`; for thread messages `apartment_id`, `apartment_number`, `from_board` |
+| `locale` | `VARCHAR(5)` | `NOT NULL, CHECK IN ('et', 'ru', 'en')` | Language for the external text, resolved at insert time (`core_users.locale` or `DEFAULT_LOCALE`) |
+| `priority` | `SMALLINT` | `NOT NULL` | `0` for `EMERGENCY_PUBLISHED` only, `1` for everything else; lower is sent first |
+| `status` | `VARCHAR(16)` | `NOT NULL` | Enum delivery `status` |
+| `attempts` | `INTEGER` | `NOT NULL, DEFAULT 0` | Send attempts so far (at most 5); the claim increments it |
+| `next_attempt_at` | `TIMESTAMPTZ` | `NOT NULL` | When a `PENDING` row is due |
+| `lease_until` | `TIMESTAMPTZ` | `NULLABLE` | Set while `SENDING`; an expired lease is claimed again |
+| `last_attempt_at` | `TIMESTAMPTZ` | `NULLABLE` | |
+| `error_code` | `VARCHAR(64)` | `NULLABLE` | Machine code of the last failure or skip reason. Skips: `DEMO_MODE`, `CHANNEL_NOT_ENABLED`, `USER_INACTIVE`, `NO_EMAIL`, `PREFERENCE_OFF`, `POST_RESOLVED`, `EMERGENCY_TOO_OLD`, `DEADLINE_PASSED` (a reading reminder after `due_date`), `SUBJECT_NOT_FOUND`, `BINDING_REVOKED`. Failures: `SMTP_REJECTED`, `SMTP_AUTH_FAILED`, `SMTP_NOT_SUPPORTED`, `EMAIL_INVALID`, `TELEGRAM_BLOCKED`, `TELEGRAM_CHAT_NOT_FOUND`, `WEBPUSH_GONE` (404/410), `WEBPUSH_ENDPOINT_REJECTED`, `WEBPUSH_INVALID_KEYS` (these five also revoke the binding), `TELEGRAM_BAD_REQUEST`, `TELEGRAM_AUTH_FAILED`, `WEBPUSH_AUTH_FAILED`, `WEBPUSH_PAYLOAD_TOO_LARGE`, `WEBPUSH_REJECTED`, `LEASE_EXPIRED`, or the last retryable code (`SMTP_TEMPORARY`, `SMTP_UNAVAILABLE`, `TELEGRAM_RATE_LIMITED`, `TELEGRAM_UNAVAILABLE`, `WEBPUSH_RATE_LIMITED`, `WEBPUSH_UNAVAILABLE`, `CHANNEL_TIMEOUT`, `CHANNEL_ERROR`, `PREPARE_ERROR`) after 5 attempts. Never provider text |
+| `trace_id` | `VARCHAR(32)` | `NULLABLE` | Trace of the request that caused the event |
+| `created_at` | `TIMESTAMPTZ` | `NOT NULL` | |
+| `sent_at` | `TIMESTAMPTZ` | `NULLABLE` | |
+| `read_at` | `TIMESTAMPTZ` | `NULLABLE` | In-app only: when the user read it |
+
+**Integrity constraints and indexes of `notif_deliveries`:**
+- Constraint names use the full table name, like the rest of the schema.
+- `uq_notif_deliveries_dedup`: `UNIQUE NULLS NOT DISTINCT (dedup_key, user_id, channel, binding_id)`, a named constraint so inserts can use `ON CONFLICT ON CONSTRAINT … DO NOTHING`.
+- `ck_notif_deliveries_binding_channel`: `binding_id IS NOT NULL` exactly when `channel IN ('telegram', 'webpush')`.
+- `ck_notif_deliveries_lease`: `lease_until IS NOT NULL` exactly when `status = 'SENDING'`.
+- `ck_notif_deliveries_read_in_app`: `read_at` only for `channel = 'in_app'`.
+- `ck_notif_deliveries_attempts`: `attempts BETWEEN 0 AND 5`; `ck_notif_deliveries_priority`: `priority IN (0, 1)`.
+- `ix_notif_deliveries_due`: partial index `(priority, next_attempt_at) WHERE status IN ('PENDING', 'SENDING')` for the dispatcher.
+- `ix_notif_deliveries_feed`: `(user_id, created_at DESC) WHERE channel = 'in_app'` for the feed.
+- **Claiming never breaks the `attempts` check.** The claim takes `PENDING` rows that are due and `SENDING` rows whose lease expired, both only with `attempts < 5`. In the same transaction, an expired `SENDING` row with `attempts = 5` becomes `FAILED` with `error_code = 'LEASE_EXPIRED'`.
+- `in_app` rows are inserted as `SENT` with `attempts = 0` and `next_attempt_at = sent_at = created_at`, and never go through the dispatcher.
+- **Retention:** rows older than `NOTIFICATIONS_RETENTION_DAYS` (default 180) are deleted by the scheduler.
+
+---
+
+## 6. Core infrastructure (`src/core`): durable domain events
+
+*`src/core/` holds no domain models, but it owns this infrastructure table: the persistent part of the event outbox (docs/BACKEND_CONVENTIONS.md 2.B). Its model lives in `src/core/` and is listed in `src/core/models_registry.py`.*
+
+### Table: `core_domain_events`
+*(Every domain event, written in the same transaction as the change that caused it. Payloads carry ids, codes and values only, never names, e-mails, phones, titles or bodies.)*
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PK` | The event's `event_id` |
+| `event_type` | `VARCHAR(64)` | `NOT NULL` | Class name, e.g. `EmergencyAlertPublished`; resolved through the event type registry |
+| `building_id` | `UUID` | `NULLABLE` | Building of the event when it has one (no FK: kept for statistics even after building data changes). N1b adds `building_id` to `MeterReadingSubmitted`, so every current event has one |
+| `payload` | `JSONB` | `NOT NULL` | The event's fields; UUIDs, `Decimal` values and timestamps as strings, enums as their values |
+| `traceparent` | `VARCHAR(64)` | `NULLABLE` | W3C trace context of the request that caused the event; the relay continues that trace, so deliveries keep the request's `trace_id` |
+| `occurred_at` | `TIMESTAMPTZ` | `NOT NULL` | The event's `occurred_at` |
+| `published_at` | `TIMESTAMPTZ` | `NULLABLE` | Set once every handler succeeded; `NULL` = still to publish |
+| `publish_attempts` | `INTEGER` | `NOT NULL, DEFAULT 0` | Failed or claimed attempts so far (at most 10) |
+| `next_attempt_at` | `TIMESTAMPTZ` | `NOT NULL` | When the relay may take the row (`occurred_at` at first); moved forward on every claim, which also keeps other workers away |
+| `failed_at` | `TIMESTAMPTZ` | `NULLABLE` | Set when the 10th attempt fails; the row is skipped from then on (poison row: logged and counted in `domain_events.failed`) |
+| `last_error` | `VARCHAR(64)` | `NULLABLE` | Machine code, e.g. `UNKNOWN_EVENT_TYPE`, `PAYLOAD_INVALID`, `HANDLER_FAILED`; never exception text |
+
+- `ix_core_domain_events_unpublished`: partial index `(next_attempt_at) WHERE published_at IS NULL AND failed_at IS NULL`, for the relay.
+- `ix_core_domain_events_building_time`: `(building_id, occurred_at)`, for statistics.
+- **Retention:** the relay deletes published rows older than `DOMAIN_EVENTS_RETENTION_DAYS` (default 365; `0` keeps them forever). Unpublished and failed rows are kept for investigation.
+- Seeding (`src/core/seed.py`) writes no events.
+
+---
+
+## 7. Module: `auth` (epic E7)
+
+*Design: [docs/epics/E7_LOGIN.md](epics/E7_LOGIN.md). API: docs/API.md section 7. `auth_sessions` and `auth_refresh_tokens` exist since A2 (migration 008, which also stores the existing `core_users.email` values in canonical form). `auth_tokens` and `auth_attempts` exist since A3 (migration 009). `auth_invitations` and the invitation column of `auth_tokens` exist since A4 (migration 010, which also adds `property_memberships.started_at` and `ended_at`). `core_user_identities` moved here with A5 (migration 011).*
+
+*All hashes are keyed HMAC-SHA-256 (hex, 64 characters) with `AUTH_HASH_SECRET`; a prefix such as `ip:` or `user:` is part of the hashed input, never stored. Rotating the secret ends every session and voids every open link and invitation.*
+
+### Table: `core_user_identities` (moved here from `property`)
+Columns as in section 1, plus:
+- `created_at` `TIMESTAMPTZ NOT NULL`;
+- `requires_link_sign_in` `BOOLEAN NOT NULL DEFAULT false`: set on a password after 100 failures
+  in a day; cleared when the person signs in with an e-mail link or sets a new password. While
+  set, the password login answers like any failure.
+- Partial unique index `uq_core_user_identities_password_user`: `(user_id) WHERE provider =
+  'password'`, one password per account even after `AUTH_HASH_SECRET` is rotated (setting a
+  password updates the row, `subject_hash` included).
+
+### Table: `auth_sessions`
+*(One sign-in on one device; its refresh tokens rotate.)*
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PK` | Session id, the `sid` claim of access tokens |
+| `user_id` | `UUID` | `FK(core_users.id), NOT NULL, INDEX` | |
+| `auth_method` | `VARCHAR(16)` | `NOT NULL, CHECK IN ('MAGIC_LINK', 'PASSWORD', 'REGISTRATION')` | How the person signed in |
+| `authenticated_at` | `TIMESTAMPTZ` | `NOT NULL` | When the person proved control (the `auth_time` claim); a refresh does not change it |
+| `last_used_at` | `TIMESTAMPTZ` | `NOT NULL` | Last refresh |
+| `expires_at` | `TIMESTAMPTZ` | `NOT NULL` | 7 days after the last refresh, never after `max_expires_at` |
+| `max_expires_at` | `TIMESTAMPTZ` | `NOT NULL` | `authenticated_at + 90 days` |
+| `revoked_at` | `TIMESTAMPTZ` | `NULLABLE` | Logout, "sign out everywhere", a reused refresh token, a password change, an account closed |
+| `device_kind` | `VARCHAR(16)` | `NOT NULL, CHECK IN ('DESKTOP_BROWSER', 'MOBILE_BROWSER', 'UNKNOWN')` | Coarse, from the `User-Agent`; the raw header is never stored |
+
+### Table: `auth_refresh_tokens`
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PK` | |
+| `session_id` | `UUID` | `FK(auth_sessions.id) ON DELETE CASCADE, NOT NULL, INDEX` | |
+| `token_hash` | `VARCHAR(64)` | `NOT NULL, UNIQUE` | Keyed hash of the 32-byte cookie value |
+| `created_at` | `TIMESTAMPTZ` | `NOT NULL` | |
+| `rotated_at` | `TIMESTAMPTZ` | `NULLABLE` | Set when replaced; a use more than 60 s later revokes the session |
+| `replaced_by_id` | `UUID` | `FK(auth_refresh_tokens.id), NULLABLE` | The successor |
+
+- Partial unique index `uq_auth_refresh_tokens_current`: `(session_id) WHERE rotated_at IS NULL`, so a session has one current token.
+- A refresh locks the token row (`SELECT … FOR UPDATE`), so two refreshes of one token are serialized.
+
+### Table: `auth_invitations`
+*(The only way into the system and the only way to another apartment or a staff role: docs/API.md section 7, "Invitations".)*
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PK` | |
+| `building_id` | `UUID` | `FK(property_buildings.id), NOT NULL` | |
+| `kind` | `VARCHAR(16)` | `NOT NULL, CHECK IN ('OWNER', 'TENANT', 'STAFF')` | |
+| `email` | `VARCHAR(255)` | `NOT NULL, INDEX` | Canonical form |
+| `apartment_id` | `UUID` | `FK(property_apartments.id), NULLABLE` | Set exactly for `OWNER` and `TENANT` |
+| `building_role` | `VARCHAR(32)` | `NULLABLE, CHECK IN ('BOARD', 'ACCOUNTANT', 'CHAIRMAN')` | Set exactly for `STAFF` |
+| `invited_by_user_id` | `UUID` | `FK(core_users.id), NULLABLE` | `NULL` for the operator command (first chairman) |
+| `created_at` | `TIMESTAMPTZ` | `NOT NULL` | |
+| `last_sent_at` | `TIMESTAMPTZ` | `NOT NULL` | |
+| `expires_at` | `TIMESTAMPTZ` | `NOT NULL` | `last_sent_at + 7 days`; a resend by the inviter or the chairman moves it, a resend through `POST …/magic-link` does not |
+| `accepted_at` | `TIMESTAMPTZ` | `NULLABLE` | |
+| `accepted_user_id` | `UUID` | `FK(core_users.id), NULLABLE` | Set with `accepted_at` |
+| `membership_id` | `UUID` | `FK(property_memberships.id), NULLABLE` | The membership this invitation created or reopened (API `invited_email`; for `STAFF`, `accepted_user_id` plays this part); `NULL` for `STAFF` and when acceptance changed nothing |
+| `applied` | `BOOLEAN` | `NULLABLE` | Set with `accepted_at`: whether acceptance changed anything |
+
+- `ck_auth_invitations_target`: `apartment_id IS NOT NULL` exactly when `kind IN ('OWNER', 'TENANT')`, and `building_role IS NOT NULL` exactly when `kind = 'STAFF'`.
+- Partial unique index `uq_auth_invitations_open`: `UNIQUE NULLS NOT DISTINCT (kind, email, apartment_id, building_role) WHERE accepted_at IS NULL`. One open invitation per target, from anyone. A new invitation for a target whose open one has expired replaces it in the same transaction.
+- Partial index `ix_auth_invitations_open_tenants`: `(apartment_id) WHERE kind = 'TENANT' AND accepted_at IS NULL`, for the tenant limit. The limit counts unexpired rows together with the active tenant memberships, under a lock on the apartment's row (`SELECT … FOR UPDATE` through `PropertyService`).
+
+### Table: `auth_tokens`
+*(One-time links. The plain token exists only in the e-mail and in memory while it is sent.)*
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PK` | |
+| `purpose` | `VARCHAR(16)` | `NOT NULL, CHECK IN ('MAGIC_LINK', 'INVITATION', 'REGISTRATION')` | `…/magic-link/redeem` accepts `MAGIC_LINK` and `INVITATION`, `…/registration` only `REGISTRATION`, `…/invitations/accept` only `INVITATION` |
+| `token_hash` | `VARCHAR(64)` | `NOT NULL, UNIQUE` | Keyed hash of the 32 random bytes |
+| `user_id` | `UUID` | `FK(core_users.id), NULLABLE, INDEX` | Set exactly for `MAGIC_LINK` |
+| `invitation_id` | `UUID` | `FK(auth_invitations.id) ON DELETE CASCADE, NULLABLE, INDEX` | Set exactly for `INVITATION` and `REGISTRATION` |
+| `created_at` | `TIMESTAMPTZ` | `NOT NULL` | |
+| `expires_at` | `TIMESTAMPTZ` | `NOT NULL, INDEX` | 15 minutes (`MAGIC_LINK`), the invitation's `expires_at` (`INVITATION`), 30 minutes (`REGISTRATION`) |
+| `used_at` | `TIMESTAMPTZ` | `NULLABLE` | A used token is rejected |
+
+- **The invitation token's life:**
+  - It is used up only when the invitation is accepted (registration or accept).
+  - Each redeem that answers `REGISTRATION_REQUIRED` deletes the invitation's previous `REGISTRATION` token and creates a new one.
+  - A resend deletes all the invitation's tokens and creates a new `INVITATION` token.
+  - At most one `INVITATION` token per invitation (partial unique index `uq_auth_tokens_invitation_link` on `(invitation_id) WHERE purpose = 'INVITATION'`).
+- `ck_auth_tokens_owner`: `user_id` is set exactly for `MAGIC_LINK`, `invitation_id` exactly for the other purposes.
+
+### Table: `auth_attempts`
+*(Limits counted across processes, like `notif_link_attempts`.)*
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PK` | |
+| `kind` | `VARCHAR(16)` | `NOT NULL, CHECK IN ('MAGIC_LINK', 'REDEEM', 'PASSWORD', 'INVITATION')` | |
+| `subject_hash` | `VARCHAR(64)` | `NOT NULL` | Keyed hash of what is counted: `email:<canonical e-mail>`, `ip:<address>`, `pair:<e-mail>\|<address>` or `user:<inviter id>`; an IPv6 address counts by its /64 |
+| `succeeded` | `BOOLEAN` | `NOT NULL` | |
+| `attempted_at` | `TIMESTAMPTZ` | `NOT NULL` | |
+| `INDEX` | `(kind, subject_hash, attempted_at)` | | |
+
+**Retention** (the `auth` clean-up loop, hourly):
+- attempts older than 24 hours;
+- used or expired tokens;
+- sessions expired or revoked more than 7 days ago (their refresh tokens cascade);
+- open invitations whose `expires_at` is more than 30 days ago (one that no longer applies expires like any other);
+- accepted invitations with a `membership_id`: 30 days after that membership ended (`PropertyService.membership_end_times`); an applied `STAFF` invitation (API `invited_email` of `GET /auth/users`): kept while `accepted_user_id` is active and holds that `building_role` (`PropertyService.building_roles`), then deleted by the next run; all other accepted invitations (`applied = false`): 30 days after acceptance.

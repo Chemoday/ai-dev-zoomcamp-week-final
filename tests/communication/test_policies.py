@@ -6,9 +6,11 @@ import pytest
 
 from src.modules.communication.policies import (
     can_publish,
+    deletable_types,
     is_deletable,
     sees_all_targets,
     target_problem,
+    thread_author_apartment,
 )
 from src.modules.communication.schemas import PostType, TargetScope
 from src.modules.property.schemas import BuildingRole
@@ -30,6 +32,13 @@ APARTMENT = uuid.uuid4()
         (PostType.FORUM_TOPIC, BuildingRole.USER, True),
         (PostType.FORUM_TOPIC, BuildingRole.ACCOUNTANT, True),
         (PostType.FORUM_TOPIC, BuildingRole.CHAIRMAN, True),
+        # Membership of the thread's apartment is checked by the service.
+        (PostType.APARTMENT_THREAD, BuildingRole.USER, True),
+        (PostType.APARTMENT_THREAD, BuildingRole.ACCOUNTANT, True),
+        (PostType.BOARD_TOPIC, BuildingRole.CHAIRMAN, True),
+        (PostType.BOARD_TOPIC, BuildingRole.BOARD, True),
+        (PostType.BOARD_TOPIC, BuildingRole.ACCOUNTANT, False),
+        (PostType.BOARD_TOPIC, BuildingRole.USER, False),
     ],
 )
 def test_who_may_publish(post_type: PostType, role: BuildingRole, allowed: bool) -> None:
@@ -52,6 +61,8 @@ def test_only_the_board_sees_every_target() -> None:
         (PostType.EMERGENCY, TargetScope.APARTMENT_LIST, None, [APARTMENT]),
         (PostType.OFFICIAL_NOTICE, TargetScope.ENTRANCE, 1, None),
         (PostType.FORUM_TOPIC, TargetScope.ALL_BUILDING, None, None),
+        (PostType.APARTMENT_THREAD, TargetScope.APARTMENT_LIST, None, [APARTMENT]),
+        (PostType.BOARD_TOPIC, TargetScope.ALL_BUILDING, None, None),
     ],
 )
 def test_consistent_targets_pass(post_type, scope, entrance, apartments) -> None:
@@ -70,6 +81,17 @@ def test_consistent_targets_pass(post_type, scope, entrance, apartments) -> None
         (PostType.EMERGENCY, TargetScope.APARTMENT_LIST, None, None, "at least one"),
         (PostType.EMERGENCY, TargetScope.APARTMENT_LIST, None, [], "at least one"),
         (PostType.EMERGENCY, TargetScope.APARTMENT_LIST, 2, [APARTMENT], "does not take"),
+        (PostType.APARTMENT_THREAD, TargetScope.ALL_BUILDING, None, None, "exactly one"),
+        (PostType.BOARD_TOPIC, TargetScope.ENTRANCE, 2, None, "Board topics take no target"),
+        (PostType.APARTMENT_THREAD, TargetScope.ENTRANCE, 2, None, "exactly one"),
+        (PostType.APARTMENT_THREAD, TargetScope.APARTMENT_LIST, None, None, "exactly one"),
+        (
+            PostType.APARTMENT_THREAD,
+            TargetScope.APARTMENT_LIST,
+            None,
+            [APARTMENT, uuid.uuid4()],
+            "exactly one",
+        ),
     ],
 )
 def test_inconsistent_targets_are_explained(post_type, scope, entrance, apartments, fragment):
@@ -83,3 +105,19 @@ def test_only_forum_topics_are_deletable() -> None:
     assert is_deletable(PostType.FORUM_TOPIC)
     assert not is_deletable(PostType.EMERGENCY)
     assert not is_deletable(PostType.OFFICIAL_NOTICE)
+    assert not is_deletable(PostType.APARTMENT_THREAD)
+    assert is_deletable(PostType.BOARD_TOPIC)
+
+
+def test_who_deletes_what() -> None:
+    assert deletable_types(BuildingRole.CHAIRMAN) == {PostType.FORUM_TOPIC, PostType.BOARD_TOPIC}
+    assert deletable_types(BuildingRole.BOARD) == {PostType.BOARD_TOPIC}
+    assert deletable_types(BuildingRole.ACCOUNTANT) == frozenset()
+    assert deletable_types(BuildingRole.USER) == frozenset()
+
+
+def test_a_member_writes_from_the_thread_apartment_and_anyone_else_as_the_board() -> None:
+    other = uuid.uuid4()
+    assert thread_author_apartment(APARTMENT, {APARTMENT, other}) == APARTMENT
+    assert thread_author_apartment(APARTMENT, {other}) is None
+    assert thread_author_apartment(APARTMENT, set()) is None

@@ -1,4 +1,7 @@
-"""Domain events are published only after the unit of work commits, and dropped otherwise."""
+"""Domain events are published only after the unit of work commits, and dropped otherwise.
+
+Their durable rows (core_domain_events) are covered in tests/core/test_domain_events.py.
+"""
 
 from dataclasses import dataclass
 from typing import Any
@@ -11,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database import DbSession, get_event_outbox, session_outbox, transaction
 from src.core.event_bus import DomainEvent, EventOutbox, InMemoryEventBus
+from src.core.events_registry import get_event_registry
 from src.core.exceptions import DomainError
 from src.modules.property.models import Building
 
@@ -20,13 +24,24 @@ class SomethingHappened(DomainEvent):
     name: str
 
 
+get_event_registry().register(SomethingHappened)
+
+
 class FakeSession:
-    """Just enough of AsyncSession for `transaction`: records commit and rollback."""
+    """Just enough of AsyncSession for `transaction` and the event store: records commit and
+    rollback; staged rows and statements are kept but not executed."""
 
     def __init__(self, log: list[str], fail_commit: bool = False) -> None:
         self.info: dict[str, Any] = {}
         self.log = log
         self.fail_commit = fail_commit
+        self.added: list[Any] = []
+
+    def add(self, row: Any) -> None:
+        self.added.append(row)
+
+    async def execute(self, statement: Any) -> None:
+        return None
 
     async def commit(self) -> None:
         if self.fail_commit:
@@ -56,7 +71,9 @@ async def test_events_are_published_after_the_commit_in_order() -> None:
         session_outbox(session, bus).add(SomethingHappened(name="b"))
         log.append("work done")
 
-    assert log == ["work done", "commit", "handled a", "handled b"]
+    # The second commit is the short follow-up transaction that marks the rows published.
+    assert log == ["work done", "commit", "handled a", "handled b", "commit"]
+    assert [row.payload for row in session.added] == [{"name": "a"}, {"name": "b"}]
     assert session.info == {}, "the outbox does not outlive its unit of work"
 
 
@@ -94,7 +111,8 @@ async def test_a_failing_publish_never_fails_the_committed_work(log_capture) -> 
     async with transaction(session):
         session_outbox(session, BrokenBus()).add(SomethingHappened(name="a"))
 
-    assert log == ["commit"]
+    # The follow-up commit schedules a retry instead of marking the row published.
+    assert log == ["commit", "commit"]
     assert any(r["event"] == "domain_event_publish_failed" for r in log_capture.records)
 
 

@@ -23,7 +23,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.core.database import Base, uuid_pk, varchar_enum
-from src.modules.property.schemas import BuildingRole, DisplayMode, RelationType
+from src.modules.property.schemas import BuildingRole, DisplayMode, Locale, RelationType
 
 
 class Building(Base):
@@ -67,23 +67,10 @@ class User(Base):
         default=lambda: datetime.now(UTC),
         server_default=func.now(),
     )
-
-
-class UserIdentity(Base):
-    __tablename__ = "core_user_identities"
-    __table_args__ = (
-        UniqueConstraint(
-            "provider", "subject_hash", name="uq_core_user_identities_provider_subject"
-        ),
+    # Language of notifications sent outside the app; NULL = Settings.DEFAULT_LOCALE.
+    locale: Mapped[Locale | None] = mapped_column(
+        varchar_enum(Locale, "ck_core_users_locale", length=5), nullable=True
     )
-
-    id: Mapped[uuid.UUID] = uuid_pk()
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("core_users.id"), nullable=False, index=True
-    )
-    provider: Mapped[str] = mapped_column(String(50), nullable=False)
-    subject_hash: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
-    secret_data: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
 
 class Apartment(Base):
@@ -138,3 +125,13 @@ class ApartmentMembership(Base):
         default=DisplayMode.APARTMENT_ONLY,
         server_default=DisplayMode.APARTMENT_ONLY.value,
     )
+    # When the membership started; reopening an ended one sets it to now (API `since`).
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        server_default=func.now(),
+    )
+    # Set when the membership ends; every membership query filters `ended_at IS NULL`
+    # (docs/ARCHITECTURE.md 4.3). An ended membership is reopened, never duplicated.
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

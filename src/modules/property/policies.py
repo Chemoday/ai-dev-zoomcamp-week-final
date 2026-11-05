@@ -1,10 +1,12 @@
-"""Pure privacy-masking rules (no database access; unit-tested directly).
+"""Pure rules of the property module (no database access; unit-tested directly): privacy
+masking and the targeting rule shared with communication and notifications.
 
 Badge texts are English, like everything the backend returns (see docs/API.md,
 "Author badge rules").
 """
 
-from collections.abc import Iterable
+import uuid
+from collections.abc import Collection, Iterable
 
 from src.modules.property.schemas import (
     AuthorBadgeDTO,
@@ -12,6 +14,7 @@ from src.modules.property.schemas import (
     DisplayMode,
     RelationType,
     RoleBadge,
+    TargetScope,
 )
 
 APARTMENT_LABEL = "Apt."
@@ -25,6 +28,9 @@ BUILDING_ROLE_LABELS: dict[BuildingRole, str] = {
 }
 
 _BOARD_ROLES = frozenset({BuildingRole.CHAIRMAN, BuildingRole.BOARD})
+
+# Who sees the apartment cards (epic E8): the board, not the accountant (docs/API.md section 1).
+CARD_VIEWER_ROLES = _BOARD_ROLES
 
 # From most private to least private.
 _PRIVACY_ORDER = (DisplayMode.APARTMENT_ONLY, DisplayMode.INITIALS, DisplayMode.FULL_NAME)
@@ -88,3 +94,36 @@ def format_author_badge(
         display_label=label,
         role_badge=resolve_role_badge(relation_type, building_role),
     )
+
+
+def format_named_badge(full_name: str, building_role: BuildingRole) -> AuthorBadgeDTO:
+    """The author of a board topic, as the board sees them: the full name, never an apartment.
+
+    The one place a name is shown without the person's privacy choice (owner decision, epic E8):
+    board members know each other and act publicly for the association. A blank name falls back
+    to the role label.
+    """
+    return AuthorBadgeDTO(
+        display_label=" ".join(full_name.split()) or BUILDING_ROLE_LABELS[building_role],
+        role_badge=resolve_role_badge(None, building_role),
+    )
+
+
+def apartment_in_target(
+    scope: TargetScope,
+    target_entrance: int | None,
+    target_apartment_ids: Collection[uuid.UUID],
+    *,
+    apartment_id: uuid.UUID,
+    entrance: int,
+) -> bool:
+    """Whether an apartment is in the target of an alert or notice.
+
+    The one rule for who is targeted: notification recipients use it directly, and the SQL filter
+    of communication's post visibility is kept equal to it by tests.
+    """
+    if scope == TargetScope.ALL_BUILDING:
+        return True
+    if scope == TargetScope.ENTRANCE:
+        return target_entrance is not None and entrance == target_entrance
+    return apartment_id in target_apartment_ids

@@ -1,0 +1,26 @@
+key,en,ru,et
+subject.EMERGENCY_PUBLISHED,Emergency: {title},Авария: {title},Avarii: {title}
+subject.EMERGENCY_RESOLVED,Resolved: {title},Устранено: {title},Lahendatud: {title}
+subject.READING_DEADLINE,Meter readings for {period_code} are due,Пора передать показания счётчиков за {period_code},Arvestinäitude esitamise tähtaeg: {period_code}
+subject.PERIOD_REVIEW,Readings for {period_code} are ready for review,Показания за {period_code} готовы к проверке,Perioodi {period_code} näidud on ülevaatamiseks valmis
+text.EMERGENCY_RESOLVED,"The emergency ""{title}"" has been resolved.",Авария «{title}» устранена.,Avarii „{title}“ on lahendatud.
+text.READING_DEADLINE,Please submit your meter readings for {period_code} by {due_date}.,"Пожалуйста, передайте показания счётчиков за {period_code} до {due_date}.",Palun esitage arvestinäidud perioodi {period_code} eest hiljemalt {due_date}.
+text.PERIOD_REVIEW,The meter readings for {period_code} were sent to the board for review.,Показания за {period_code} переданы правлению на проверку.,Perioodi {period_code} näidud saadeti juhatusele ülevaatamiseks.
+subject.APARTMENT_MESSAGE.FROM_BOARD,New message from the board,Новое сообщение от правления,Uus sõnum juhatuselt
+text.APARTMENT_MESSAGE.FROM_BOARD,The board wrote to your apartment. Open the conversation on the site to read the message.,"Правление написало вашей квартире. Откройте переписку на сайте, чтобы прочитать сообщение.",Juhatus kirjutas teie korterile. Sõnumi lugemiseks avage vestlus veebilehel.
+subject.APARTMENT_MESSAGE.FROM_RESIDENT,New message in your apartment's conversation with the board,Новое сообщение в переписке вашей квартиры с правлением,Uus sõnum teie korteri vestluses juhatusega
+text.APARTMENT_MESSAGE.FROM_RESIDENT,A resident of your apartment wrote in the conversation with the board. Open it on the site to read the message.,"Жилец вашей квартиры написал в переписке с правлением. Откройте её на сайте, чтобы прочитать сообщение.",Teie korteri elanik kirjutas vestluses juhatusega. Sõnumi lugemiseks avage see veebilehel.
+subject.APARTMENT_MESSAGE_TO_BOARD,New message from apartment {apartment_number},Новое сообщение от квартиры {apartment_number},Uus sõnum korterist {apartment_number}
+text.APARTMENT_MESSAGE_TO_BOARD,Apartment {apartment_number} wrote to the board. Open the conversation on the site to read the message.,"Квартира {apartment_number} написала правлению. Откройте переписку на сайте, чтобы прочитать сообщение.",Korter {apartment_number} kirjutas juhatusele. Sõnumi lugemiseks avage vestlus veebilehel.
+line.affected,Affected: {target},Затронуто: {target},Puudutab: {target}
+target.ALL_BUILDING,the whole building,весь дом,kogu maja
+target.ENTRANCE,entrance {entrance},подъезд {entrance},trepikoda {entrance}
+target.APARTMENT_LIST,selected apartments,отдельные квартиры,valitud korterid
+footer,"This is an automatic message from your apartment association. Details, contacts and notification settings are on the site: {site_url}","Это автоматическое сообщение вашего квартирного товарищества. Подробности, контакты и настройки уведомлений на сайте: {site_url}","See on teie korteriühistu automaatne teade. Üksikasjad, kontaktid ja teavituste seaded on veebilehel: {site_url}"
+bot.linked,Done: this chat now receives the notifications of your apartment association. Send /stop to unlink it.,"Готово: этот чат теперь получает уведомления вашего квартирного товарищества. Чтобы отвязать его, отправьте /stop.",Valmis: see vestlus saab nüüd teie korteriühistu teavitusi. Sidumise eemaldamiseks saatke /stop.
+bot.already_linked,This chat is already linked to your account.,Этот чат уже привязан к вашей учётной записи.,See vestlus on juba teie kontoga seotud.
+bot.invalid_code,"This code is wrong, used or expired. Create a new one in the notification settings on the site.","Код неверный, уже использован или устарел. Создайте новый в настройках уведомлений на сайте.","See kood on vale, kasutatud või aegunud. Looge uus kood veebilehe teavituste seadetes."
+bot.how_to_link,"To get notifications here, open the notification settings on the site and press ""Link Telegram"".","Чтобы получать уведомления здесь, откройте настройки уведомлений на сайте и нажмите «Привязать Telegram».",Siia teavituste saamiseks avage veebilehel teavituste seaded ja vajutage „Seo Telegram“.
+bot.stopped,"Done: this chat no longer receives notifications. To link it again, open the notification settings on the site.","Готово: этот чат больше не получает уведомления. Чтобы привязать его снова, откройте настройки уведомлений на сайте.",Valmis: see vestlus ei saa enam teavitusi. Uuesti sidumiseks avage veebilehel teavituste seaded.
+line.unsubscribe,Stop these e-mails: {link},Больше не получать такие письма: {link},Selliste kirjade saamise lõpetamine: {link}
+line.mandatory,Emergency alerts cannot be turned off in the settings.,Оповещения об авариях нельзя отключить в настройках.,Avariiteateid ei saa seadetes välja lülitada.

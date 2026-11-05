@@ -1,8 +1,10 @@
 """Application settings loaded from environment variables (and an optional .env file)."""
 
 from functools import lru_cache
+from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # HS256 keys shorter than the hash output are brute-forceable (RFC 7518, section 3.2).
@@ -25,10 +27,30 @@ class Settings(BaseSettings):
     # Off unless enabled explicitly: a real association must never get fictitious residents.
     SEED_DEMO_DATA: bool = False
 
-    # Bearer tokens are rejected while no secret is configured (safe default: no forgeable key).
+    # Required: the app refuses to start without it (src/modules/auth/policies.py,
+    # validate_auth_settings). Empty here only so that tools importing the settings still work.
     JWT_SECRET_KEY: str = ""
     JWT_ALGORITHM: str = "HS256"
-    JWT_ACCESS_TOKEN_TTL_MINUTES: int = 60
+    JWT_ACCESS_TOKEN_TTL_MINUTES: int = Field(default=15, ge=1)
+
+    # Login (module auth, docs/ARCHITECTURE.md 4.7). Key of every auth hash: required, at least
+    # 32 bytes; rotating it ends every session and voids every open link and invitation.
+    AUTH_HASH_SECRET: SecretStr = SecretStr("")
+    # The refresh cookie lives this long and is extended on use; a session ends after the cap.
+    AUTH_SESSION_IDLE_DAYS: int = Field(default=7, ge=1)
+    AUTH_SESSION_MAX_DAYS: int = Field(default=90, ge=1)
+    # Accept access tokens without a session id (create_access_token in tests). Only allowed for
+    # ENVIRONMENT local, dev or test.
+    AUTH_ALLOW_SESSIONLESS_TOKENS: bool = False
+    # The hourly clean-up of ended sessions, used or expired links and old attempts.
+    AUTH_CLEANUP_ENABLED: bool = True
+    # Send login e-mails while demo mode is on (only ENVIRONMENT local, dev or test, and dev only
+    # behind a password gate: in demo mode anyone can act as the chairman).
+    AUTH_MAIL_IN_DEMO: bool = False
+    # Optional: in demo mode, only these recipient domains (comma-separated) get login e-mails.
+    AUTH_DEMO_MAIL_DOMAINS: str = ""
+    # Active tenants plus pending tenant invitations allowed per apartment (owner decision).
+    MAX_TENANTS_PER_APARTMENT: int = Field(default=3, ge=1)
 
     # Comma-separated plugin modules under src/plugins/ (docs/ARCHITECTURE.md).
     ENABLED_PLUGINS: str = "common.csv_export"
@@ -39,9 +61,75 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     LOG_JSON: bool = True
 
+    # Notifications (docs/ARCHITECTURE.md section 3): the whole module, the language of messages
+    # sent outside the app when a user chose none, and the local time zone of the building
+    # (reading deadlines end at local midnight).
+    NOTIFICATIONS_ENABLED: bool = True
+    DEFAULT_LOCALE: Literal["et", "ru", "en"] = "et"
+    INSTANCE_TIMEZONE: str = "Europe/Tallinn"
+    # The loop that sends notifications on external channels (tests call one tick directly).
+    NOTIFICATIONS_DISPATCHER_ENABLED: bool = True
+    # The loop that publishes reading reminders and deletes old rows (every 10 minutes).
+    NOTIFICATIONS_SCHEDULER_ENABLED: bool = True
+    # Deliveries (and the in-app feed) older than this are deleted, and revoked bindings too.
+    NOTIFICATIONS_RETENTION_DAYS: int = Field(default=180, ge=1)
+    # Reminders start this many days before the local deadline day, between 09:00 and 21:00.
+    READING_REMINDER_DAYS_BEFORE: int = Field(default=2, ge=0, le=28)
+    # Base URL of the site, linked from every external message; required with an external channel.
+    PUBLIC_BASE_URL: str = ""
+
+    # E-mail (plugin common.email_smtp): the app is only an SMTP client of an external provider.
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = Field(default=587, ge=1, le=65535)
+    SMTP_USERNAME: str = ""
+    SMTP_PASSWORD: SecretStr = SecretStr("")
+    SMTP_FROM: str = ""
+    # starttls: port 587; tls: implicit TLS, port 465; none: only for a local test server.
+    SMTP_TLS: Literal["starttls", "tls", "none"] = "starttls"
+
+    # Key of the HMAC over chat ids, push endpoints, link codes and unsubscribe tokens (at least
+    # 32 bytes); required with common.telegram, common.webpush or common.email_smtp. Never rotate
+    # it without rehashing the bindings (rotating also voids the unsubscribe links of old mail).
+    NOTIFICATIONS_HASH_SECRET: SecretStr = SecretStr("")
+
+    # Telegram (plugin common.telegram): one bot per environment; updates arrive by webhook.
+    TELEGRAM_BOT_TOKEN: SecretStr = SecretStr("")
+    TELEGRAM_BOT_USERNAME: str = ""
+    # Telegram sends it back in X-Telegram-Bot-Api-Secret-Token: 32+ characters of [A-Za-z0-9_-].
+    TELEGRAM_WEBHOOK_SECRET: SecretStr = SecretStr("")
+
+    # WebPush (plugin common.webpush): the VAPID key pair as base64url (public: 65 bytes, private:
+    # 32 bytes; `python -m src.plugins.common.webpush generate-vapid-keys`) and a contact for the
+    # push services, "mailto:..." or "https://...". One key pair per environment.
+    VAPID_PUBLIC_KEY: str = ""
+    VAPID_PRIVATE_KEY: SecretStr = SecretStr("")
+    VAPID_SUBJECT: str = ""
+
+    # Durable domain events (docs/BACKEND_CONVENTIONS.md 2.B): the relay that publishes events a
+    # crash or a failing handler left behind, and how long published events are kept (0 = always).
+    DOMAIN_EVENTS_RELAY_ENABLED: bool = True
+    DOMAIN_EVENTS_RETENTION_DAYS: int = Field(default=365, ge=0)
+
     OTEL_SERVICE_NAME: str = "apartment-platform-backend"
     # OTLP/HTTP collector base URL, e.g. "http://otel-collector:4318". Empty disables export.
     OTEL_EXPORTER_OTLP_ENDPOINT: str = ""
+
+    @field_validator("INSTANCE_TIMEZONE")
+    @classmethod
+    def _timezone_exists(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError(f"unknown INSTANCE_TIMEZONE {value!r}") from exc
+        return value
+
+    @field_validator("PUBLIC_BASE_URL")
+    @classmethod
+    def _public_base_url_is_http(cls, value: str) -> str:
+        value = value.strip().rstrip("/")
+        if value and not value.startswith(("https://", "http://")):
+            raise ValueError("PUBLIC_BASE_URL must start with https:// or http://")
+        return value
 
     @field_validator("JWT_SECRET_KEY")
     @classmethod

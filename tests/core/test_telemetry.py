@@ -5,6 +5,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from src.core.telemetry import (
     REDACTED,
     PIIScrubbingSpanExporter,
+    _scrub_attributes,
     add_otel_trace_context,
     mask_pii_text,
     scrub_pii,
@@ -101,3 +102,51 @@ def test_span_exporter_never_exports_pii_in_attributes_events_or_status() -> Non
     assert "ivan@example.com" not in exception.attributes["exception.message"]
     assert "ivan@example.com" not in (exported.status.description or "")
     assert exported.context.trace_id == span.get_span_context().trace_id
+
+
+def test_mask_pii_text_masks_telegram_bot_tokens() -> None:
+    token = "123456789:AAFakeTokenForTelemetryTests_012345678"
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+
+    assert token not in mask_pii_text(f"POST {url} failed")
+
+
+def test_httpx_request_logs_are_silenced(app) -> None:
+    import logging
+
+    # Bot API URLs carry the token, and httpx logs every URL at INFO.
+    assert logging.getLogger("httpx").getEffectiveLevel() >= logging.WARNING
+    assert logging.getLogger("httpcore").getEffectiveLevel() >= logging.WARNING
+
+
+def test_push_endpoints_and_keys_are_redacted() -> None:
+    scrubbed = scrub_pii({"endpoint": "https://fcm.googleapis.com/fcm/send/x", "p256dh": "BC"})
+
+    assert scrubbed == {"endpoint": REDACTED, "p256dh": REDACTED}
+
+
+def test_a_token_in_a_query_string_is_redacted_from_the_request_span() -> None:
+    """The unsubscribe link (N8) carries its token in the query string; the ASGI instrumentation
+    copies the whole URL into the span (http.url, http.target, url.query)."""
+    from opentelemetry.instrumentation.asgi import collect_request_attributes
+
+    token = "Ab0_-Ab0_-Ab0_-Ab0_-Ab0_-Ab0_-Ab0_-Ab0_-xyz"
+    scope = {
+        "type": "http",
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "https",
+        "server": ("kyu.example.test", 443),
+        "path": "/api/v1/notifications/unsubscribe",
+        "raw_path": b"/api/v1/notifications/unsubscribe",
+        "query_string": f"token={token}&utm=1".encode(),
+        "headers": [],
+        "client": ("198.51.100.1", 4000),
+    }
+
+    scrubbed = _scrub_attributes(collect_request_attributes(scope))
+
+    assert token not in repr(scrubbed)
+    assert any(REDACTED in str(value) for value in scrubbed.values())
+    assert "utm=1" in repr(scrubbed), "other parameters stay readable"
+    assert mask_pii_text("/feed?unread_only=false&limit=50") == "/feed?unread_only=false&limit=50"
