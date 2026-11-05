@@ -146,7 +146,7 @@ async def test_a_thread_is_a_record(api_client: AsyncClient, world: CommWorld) -
     assert response.status_code == 409
     assert response.json() == {
         "error_code": "POST_NOT_DELETABLE",
-        "message": "Only forum topics can be deleted; resolve an emergency instead.",
+        "message": "Only forum and board topics can be deleted; resolve an emergency instead.",
         "post_type": "APARTMENT_THREAD",
     }
     acknowledge = await api_client.post(

@@ -96,6 +96,19 @@ def format_author_badge(
     )
 
 
+def format_named_badge(full_name: str, building_role: BuildingRole) -> AuthorBadgeDTO:
+    """The author of a board topic, as the board sees them: the full name, never an apartment.
+
+    The one place a name is shown without the person's privacy choice (owner decision, epic E8):
+    board members know each other and act publicly for the association. A blank name falls back
+    to the role label.
+    """
+    return AuthorBadgeDTO(
+        display_label=" ".join(full_name.split()) or BUILDING_ROLE_LABELS[building_role],
+        role_badge=resolve_role_badge(None, building_role),
+    )
+
+
 def apartment_in_target(
     scope: TargetScope,
     target_entrance: int | None,

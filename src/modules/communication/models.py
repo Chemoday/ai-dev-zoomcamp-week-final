@@ -98,10 +98,17 @@ class Post(Base):
         ),
         CheckConstraint("btrim(title) <> ''", name="ck_comm_posts_title_not_blank"),
         CheckConstraint("btrim(body) <> ''", name="ck_comm_posts_body_not_blank"),
-        # Moderation: only forum topics are deleted, and a deletion always names who did it.
+        # Moderation: only forum and board topics are deleted, and a deletion names who did it.
         CheckConstraint(
-            "post_type = 'FORUM_TOPIC' OR deleted_at IS NULL",
-            name="ck_comm_posts_only_forum_deleted",
+            "post_type IN ('FORUM_TOPIC', 'BOARD_TOPIC') OR deleted_at IS NULL",
+            name="ck_comm_posts_only_topics_deleted",
+        ),
+        # The board's micro-forum (E8/P4): its audience is the post type, authors write as
+        # themselves.
+        CheckConstraint(
+            "post_type <> 'BOARD_TOPIC'"
+            " OR (target_scope = 'ALL_BUILDING' AND author_apartment_id IS NULL)",
+            name="ck_comm_posts_board_topic_whole_building",
         ),
         CheckConstraint(
             "(deleted_at IS NULL) = (deleted_by_user_id IS NULL)",

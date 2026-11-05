@@ -22,6 +22,7 @@ from src.modules.property.models import (
 from src.modules.property.policies import (
     apartment_in_target,
     format_author_badge,
+    format_named_badge,
     most_private_display_mode,
 )
 from src.modules.property.schemas import (
@@ -421,6 +422,27 @@ class PropertyService:
     ) -> AuthorBadgeDTO:
         badges = await self.get_masked_author_badges([(user_id, apartment_id)])
         return badges[(user_id, apartment_id)]
+
+    async def get_named_author_badges(
+        self, building_id: uuid.UUID, user_ids: Iterable[uuid.UUID]
+    ) -> dict[uuid.UUID, AuthorBadgeDTO]:
+        """Authors of board topics by full name (epic E8, the documented exception to masking).
+
+        Only communication's BOARD_TOPIC posts and comments use it; a closed account shows
+        "Former resident", which closing writes into the name. Names of other buildings are
+        never returned.
+        """
+        ids = set(user_ids)
+        if not ids:
+            return {}
+        rows = await self.session.execute(
+            select(User.id, User.full_name, User.building_role).where(
+                User.id.in_(ids), User.building_id == building_id
+            )
+        )
+        return {
+            user_id: format_named_badge(full_name, role) for user_id, full_name, role in rows.all()
+        }
 
     async def get_masked_author_badges(
         self, authors: Iterable[AuthorKey]

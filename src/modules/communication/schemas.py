@@ -32,6 +32,8 @@ class PostType(StrEnum):
     FORUM_TOPIC = "FORUM_TOPIC"
     # A private conversation between the board and one apartment (epic E8, task P2).
     APARTMENT_THREAD = "APARTMENT_THREAD"
+    # The micro-forum of the chairman and the board (epic E8, task P4).
+    BOARD_TOPIC = "BOARD_TOPIC"
 
 
 class PostCategory(StrEnum):
