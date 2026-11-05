@@ -12,7 +12,7 @@ docs/FRONTEND_GIT_WORKFLOW.md section 2 ("Tasks from the backend").
 
 ## Repositories and access
 
-- Backend: this repository, branch `develop`. The contract is final only after the backend pull
+- Backend: this repository, branch `main`. The contract is final only after the backend pull
   request is merged; never hand over an unmerged contract.
 - Frontend: the repository in the Actions variable `FRONTEND_REPOSITORY` of this repository:
   `cd <this repo>; gh api repos/{owner}/{repo}/actions/variables/FRONTEND_REPOSITORY --jq .value`
@@ -57,7 +57,7 @@ backlog. A correction to a handed-over task is a new item that names the old one
 0. **Before anything, ask the owner** to sync the AI Studio workspace with GitHub (push or pull
    all pending work). Unsynced AI Studio work is exactly what a later force push would use to
    overwrite `main`, dropping the handoff. Wait for the answer.
-1. **Pin both sides.** `git fetch` here and pin `sha=$(git rev-parse --short origin/develop)`; use
+1. **Pin both sides.** `git fetch` here and pin `sha=$(git rev-parse --short origin/main)`; use
    `git show $sha:<path>` and `$sha` everywhere below. Clone the frontend repository **fresh**
    into the scratchpad (delete an old clone first: leftover commits must never be pushed again).
 2. **Check that the previous handoff survived.** Take the newest tag `backend-handoff/*` in the
@@ -117,8 +117,8 @@ backlog. A correction to a handed-over task is a new item that names the old one
 
 - The owner's local folder `docs/frontend/` here is theirs: never read it as a source, never
   stage it.
-- During the `main` freeze, `develop` is not deployed, so the frontend works against its mock API;
-  every item must keep the mock in step with the contract.
+- The frontend also works against its mock API (AI Studio has no backend), so every item must
+  keep the mock in step with the contract.
 - A frontend version that uses a handed-over item must reach `main` here only after the backend
   change is on `main` (docs/FRONTEND_GIT_WORKFLOW.md section 2).
 - If the frontend needs data the contract lacks, that is a `backend-request` issue in this

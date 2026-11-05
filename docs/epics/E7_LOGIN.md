@@ -297,7 +297,7 @@ query filters, the demo rules and the settings.
 
 ## 7. Tasks
 
-Each task is one issue, one branch from `develop`, one PR into `develop`, and passes the CTO
+Each task is one issue, one branch from `main`, one PR into `main`, and passes the CTO
 review before merge (AGENTS.md section 4).
 
 | # | Task | Done when |
