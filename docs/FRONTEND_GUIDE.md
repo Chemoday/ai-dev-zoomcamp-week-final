@@ -76,6 +76,7 @@ Build the navigation from `GET /api/v1/property/me` (`building_role`, `membershi
 | Apartment cards (`/property/apartments`) | no | yes | yes | no |
 | Apartment readings (`/meters/apartments/{id}/readings`) | own apartments | every apartment | every apartment | every apartment |
 | Messages with the board (`APARTMENT_THREAD`) | own apartments, threads since moving in | every apartment | every apartment | only as a member of an apartment |
+| Board micro-forum (`BOARD_TOPIC`): read, post, comment, delete | no | yes | yes | no |
 
 A user with no apartment gets `apartments: []` from the dashboard; hide the meter card, do not
 show an error. `GET /property/me` never returns the user's own name or email: greet with the
@@ -229,6 +230,15 @@ any level ──► 422 READING_BELOW_PREVIOUS  → show previous_value, no popu
   - `422 APARTMENT_HAS_NO_RESIDENTS`: nobody in the apartment has an account yet, so nobody
     could read the thread; say so instead of a generic error.
   - No delete or edit buttons on threads.
+- **Board micro-forum** (`BOARD_TOPIC`, chairman and board only; docs/API.md section 4):
+  - Its own page, e.g. "Board room": `GET /communication/posts?post_type=BOARD_TOPIC` (newest
+    activity first); new topic with `POST /communication/posts` and `post_type: "BOARD_TOPIC"`,
+    without target fields and without `author_apartment_id`; replies are comments.
+  - Authors appear by full name (`display_label`), on purpose and only here: render the badge as
+    elsewhere, do not add anything to it.
+  - Every board member may delete a topic (`DELETE /communication/posts/{id}`); ask for
+    confirmation. Nothing notifies about new topics, so show the newest activity at the top.
+  - The forum feed (no `post_type`) never contains board topics.
 
 ## 9. Dates and ids
 
