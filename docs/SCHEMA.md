@@ -151,7 +151,7 @@ All tables use `UUID` primary keys (`uuid4`), UTC timestamps (`TIMESTAMPTZ`), an
 | `building_id` | `UUID` | `FK(property_buildings.id), INDEX` | Building ID |
 | `author_user_id` | `UUID` | `FK(core_users.id), NOT NULL, INDEX` | Internal author ID (masked before API output, never returned) |
 | `author_apartment_id`| `UUID` | `NULLABLE` | Context apartment for privacy badge resolution (`NULL` = no apartment context, e.g. a board post) |
-| `post_type` | `VARCHAR(32)` | `NOT NULL, INDEX` | Enum: `EMERGENCY`, `OFFICIAL_NOTICE`, `FORUM_TOPIC` |
+| `post_type` | `VARCHAR(32)` | `NOT NULL, INDEX` | Enum: `EMERGENCY`, `OFFICIAL_NOTICE`, `FORUM_TOPIC`, `APARTMENT_THREAD` (a conversation between the board and one apartment, epic E8) |
 | `category` | `VARCHAR(50)` | `NOT NULL, DEFAULT 'GENERAL'` | Enum: `GENERAL`, `WATER_SHUTOFF`, `MAINTENANCE`, `MARKETPLACE` |
 | `title` | `VARCHAR(255)` | `NOT NULL` | Headline |
 | `body` | `TEXT` | `NOT NULL` | Content (the API caps it at 10000 characters) |
@@ -159,8 +159,9 @@ All tables use `UUID` primary keys (`uuid4`), UTC timestamps (`TIMESTAMPTZ`), an
 | `target_entrance` | `INTEGER` | `NULLABLE` | Populated if `target_scope == 'ENTRANCE'` |
 | `target_apartment_ids`| `JSONB` | `NULLABLE` | Non-empty array of apartment UUID strings if `target_scope == 'APARTMENT_LIST'` (SQL `NULL` otherwise, never JSON `null`) |
 | `is_active` | `BOOLEAN` | `NOT NULL, DEFAULT TRUE` | For `EMERGENCY`: `TRUE` while the banner is active, `FALSE` once resolved. Always `TRUE` for other types |
-| `comments_enabled` | `BOOLEAN` | `NOT NULL, DEFAULT TRUE` | Board can disable comments on official notices |
+| `comments_enabled` | `BOOLEAN` | `NOT NULL, DEFAULT TRUE` | Board can disable comments on official notices. Always `TRUE` for `APARTMENT_THREAD` |
 | `created_at` | `TIMESTAMPTZ` | `NOT NULL, INDEX` | Creation timestamp |
+| `last_activity_at` | `TIMESTAMPTZ` | `NOT NULL` | `created_at` of the post, moved to the `created_at` of each new comment with `greatest()` (concurrent comments never move it back). Migration 012 fills existing rows from their newest comment. The thread inbox sorts by it |
 | `deleted_at` | `TIMESTAMPTZ` | `NULLABLE` | Set when the chairman deleted the forum topic (soft delete: hidden from every read) |
 | `deleted_by_user_id` | `UUID` | `FK(core_users.id), NULLABLE` | Who deleted it |
 
@@ -189,9 +190,12 @@ All tables use `UUID` primary keys (`uuid4`), UTC timestamps (`TIMESTAMPTZ`), an
 - Every enum column (`post_type`, `category`, `target_scope`) has a named `CHECK (… IN (…))`.
 - `ck_comm_posts_target_consistent`: `ALL_BUILDING` has neither entrance nor apartment list; `ENTRANCE` has an entrance and no list; `APARTMENT_LIST` has a non-empty JSON array of canonical lowercase UUID strings (checked with `jsonb_path_exists`) and no entrance. The list is tested with an explicit `IS NOT NULL`, because a CHECK whose result is `NULL` counts as passed. `target_entrance > 0`. Covered by `tests/communication/test_models.py`.
 - `ck_comm_posts_forum_whole_building`: a `FORUM_TOPIC` is always `ALL_BUILDING`.
+- `ck_comm_posts_thread_one_apartment`: an `APARTMENT_THREAD` is `APARTMENT_LIST` with exactly one apartment (`NOT jsonb_path_exists(target_apartment_ids, '$[1]')`; the target check above already makes the list a non-empty array). `ck_comm_posts_thread_comments_enabled`: an `APARTMENT_THREAD` always takes comments.
+- `ck_comm_posts_activity_after_creation`: `last_activity_at >= created_at`.
+- Index `ix_comm_posts_building_type_activity (building_id, post_type, last_activity_at)` for the thread inbox.
 - `ck_comm_posts_only_emergency_inactive`: only an `EMERGENCY` can have `is_active = FALSE`.
 - Titles and bodies are never blank (`btrim(...) <> ''`).
-- `ck_comm_posts_only_forum_deleted`: only a `FORUM_TOPIC` can be deleted; `ck_comm_posts_deleted_consistent`: `deleted_at` and `deleted_by_user_id` are set together.
+- `ck_comm_posts_only_forum_deleted`: only a `FORUM_TOPIC` can be deleted (threads are a record); `ck_comm_posts_deleted_consistent`: `deleted_at` and `deleted_by_user_id` are set together.
 - **One building per row chain.** `comm_posts` is `UNIQUE (id, building_id)`. Composite foreign keys guarantee that a comment is in its post's building, `(post_id, building_id)` → `comm_posts`, and that the author's context apartment of a post or comment is in that building, `(author_apartment_id, building_id)` → `property_apartments`. A `NULL` apartment is not checked.
 - Not enforced by the database: that a targeted apartment id exists (JSONB has no foreign keys) and that the author belongs to the building. The service checks both on insert.
 

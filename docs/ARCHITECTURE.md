@@ -207,6 +207,7 @@ Every query that resolves people filters closed accounts (`core_users.is_active`
 | `has_delivery_email`, `with_delivery_email` | yes (A4) | n/a |
 | `get_delivery_contact`, `get_recipient`, `is_user_active` | yes | n/a |
 | `get_masked_author_badges` | no (history: closed authors keep a masked badge) | yes (A4): an ended membership counts as "no longer a member" |
+| `has_active_members` (E8/P2: a thread needs a reader) | yes | yes |
 | `list_apartments`, `get_building` | n/a | n/a |
 | demo user list (`src/core/demo.py`) | yes; apartment and relation come from the static `DEMO_USERS`, not from live memberships | n/a |
 

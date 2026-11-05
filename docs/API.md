@@ -27,7 +27,7 @@ All errors share one JSON shape, `{"error_code": "...", "message": "...", ...ext
 | 404 | `NOT_FOUND`, `MEMBERSHIP_NOT_FOUND`, `METER_NOT_FOUND`, `PERIOD_NOT_FOUND`, `READING_NOT_FOUND`, `POST_NOT_FOUND`, `NOTIFICATION_NOT_FOUND`, `APARTMENT_NOT_FOUND`, `EXPORTER_NOT_ENABLED` | Unknown route, a resource that does not exist or is not visible to you, or a disabled plugin |
 | 409 | `ANOMALY_CONFIRMATION_STEP_1/2`, `PERIOD_CLOSED`, `PERIOD_LOCKED`, `PERIOD_NOT_IN_REVIEW`, `INVALID_PERIOD_TRANSITION`, `READING_SET_BY_BOARD`, `LATER_READING_EXISTS`, `COMMENTS_DISABLED`, `POST_NOT_DELETABLE` | The request is valid, but conflicts with the current state |
 | 405 | `METHOD_NOT_ALLOWED` | The route exists but not for this HTTP method |
-| 422 | `VALIDATION_ERROR`, `READING_BELOW_PREVIOUS`, `REASON_REQUIRED`, `ESTIMATE_OUT_OF_RANGE`, `INVALID_TARGET`, `INVALID_AUTHOR_APARTMENT`, `PREFERENCE_MANDATORY` | Invalid input; for `VALIDATION_ERROR` the details are in `errors`. Free-text fields reject control characters, e.g. NUL |
+| 422 | `VALIDATION_ERROR`, `READING_BELOW_PREVIOUS`, `REASON_REQUIRED`, `ESTIMATE_OUT_OF_RANGE`, `INVALID_TARGET`, `INVALID_AUTHOR_APARTMENT`, `APARTMENT_HAS_NO_RESIDENTS`, `PREFERENCE_MANDATORY` | Invalid input; for `VALIDATION_ERROR` the details are in `errors`. Free-text fields reject control characters, e.g. NUL |
 | 500 | `INTERNAL_SERVER_ERROR` | Unhandled error; the body carries `trace_id` |
 | other | `HTTP_<status>` | Any other framework-level HTTP error |
 
@@ -72,11 +72,14 @@ The payload never contains the raw `full_name`, `email` or `phone`, not even the
       "can_view_bills": true,
       "can_vote": true,
       "privacy_display_mode": "APARTMENT_ONLY",
+      "since": "2026-10-01T09:00:00Z",
       "preview_badge": { "display_label": "Apt. 14", "role_badge": "OWNER" }
     }
   ]
 }
 ```
+`since` is when the membership started; reopening an ended membership sets it to that moment. Board threads of the apartment started before it are not visible to the member (section 4).
+
 The payload also has `"locale": "et" | "ru" | "en" | null`: the language of notifications sent outside the app (`null` = the instance default). It is not personal data.
 
 Ended memberships are not listed. Memberships are ordered by entrance, then apartment number in natural order (`2`, `10`, `14`, `14A`). The top-level `privacy_display_mode` is the most private mode across the memberships (`APARTMENT_ONLY` when there are none); it is the mode used when the user acts without an apartment context. Only memberships of apartments in the user's own building are returned.
@@ -385,8 +388,12 @@ Executes plugins/common/csv_export and streams a CSV file of the period's readin
 - Every post belongs to one building. Users of another building never see it: `404 POST_NOT_FOUND`.
 - **Targeting** (`target_scope`): `ALL_BUILDING` reaches everyone in the building; `ENTRANCE` reaches users with an apartment in `target_entrance`; `APARTMENT_LIST` reaches members of the apartments in `target_apartment_ids`. A user with several apartments sees the posts targeted at any of them.
 - `CHAIRMAN` and `BOARD` see every post of the building, including alerts targeted elsewhere (they publish and resolve them). `ACCOUNTANT` and `USER` see only what targets them, so an accountant without an apartment sees only `ALL_BUILDING` posts.
-- A post that exists but does not target you returns the same `404 POST_NOT_FOUND` as an unknown one, so ids cannot be probed.
-- Forum topics are always `ALL_BUILDING`. Targeting is meant for `EMERGENCY` and `OFFICIAL_NOTICE`.
+- **Each post type has one visibility rule**, used by the feed, the post, its comments and the acknowledgement:
+  - `EMERGENCY`, `OFFICIAL_NOTICE`: the target, as above;
+  - `FORUM_TOPIC`: the whole building;
+  - `APARTMENT_THREAD`: the chairman and the board see every thread. A member of the thread's apartment sees the threads started no earlier than their membership (`since <= created_at`, see `GET /property/me`), so a new tenant does not read the previous tenant's conversations. A member who wrote in a thread from that apartment (started it or commented) keeps seeing it with any active membership in that apartment; writing as the board does not count. Nobody else: not former members, not other residents, not an accountant who is not a member.
+- A post that exists but is not visible to you returns the same `404 POST_NOT_FOUND` as an unknown one, so ids cannot be probed.
+- Forum topics are always `ALL_BUILDING`. Targeting is meant for `EMERGENCY` and `OFFICIAL_NOTICE`; a thread targets exactly one apartment.
 
 ### Who may publish
 | `post_type` | Who | Badge context when `author_apartment_id` is omitted |
@@ -394,8 +401,9 @@ Executes plugins/common/csv_export and streams a CSV file of the period's readin
 | `EMERGENCY` | `CHAIRMAN`, `BOARD` | none: the board speaks as the board (`Chairman` / `Board`) |
 | `OFFICIAL_NOTICE` | `CHAIRMAN`, `BOARD` | none |
 | `FORUM_TOPIC` | everyone in the building | the author's first apartment (entrance, then natural number order) |
+| `APARTMENT_THREAD` | `CHAIRMAN`, `BOARD` to any apartment; anyone else to an apartment they are a member of | decided by the server (see "Board <-> apartment threads") |
 
-Anyone else gets `403 FORBIDDEN`. Comments use the commenter's first apartment unless `author_apartment_id` says otherwise.
+Anyone else gets `403 FORBIDDEN`. Comments use the commenter's first apartment unless `author_apartment_id` says otherwise; in a thread the server decides.
 
 ### Author badges
 - Authors are resolved on every read through `PropertyService.get_masked_author_badges` (one batched call per page), following the badge rules in section 0. So a later change of the privacy mode also changes the badge of old posts.
@@ -421,11 +429,23 @@ Anyone else gets `403 FORBIDDEN`. Comments use the commenter's first apartment u
   "is_active": true,
   "comments_enabled": true,
   "comments_count": 3,
-  "created_at": "2026-10-25T10:00:00Z"
+  "created_at": "2026-10-25T10:00:00Z",
+  "last_activity_at": "2026-10-26T18:30:00Z"
 }
 ```
-- `post_type`: `EMERGENCY` | `OFFICIAL_NOTICE` | `FORUM_TOPIC`. `category`: `GENERAL` | `WATER_SHUTOFF` | `MAINTENANCE` | `MARKETPLACE`.
+- `post_type`: `EMERGENCY` | `OFFICIAL_NOTICE` | `FORUM_TOPIC` | `APARTMENT_THREAD`. `category`: `GENERAL` | `WATER_SHUTOFF` | `MAINTENANCE` | `MARKETPLACE`.
 - `is_active` is `false` only for a resolved emergency; every other post is always active.
+- `last_activity_at`: the time of the newest comment, or `created_at` while there is none.
+
+### Board <-> apartment threads (`APARTMENT_THREAD`, epic E8)
+A private conversation between the board and one apartment (docs/epics/E8_APARTMENT_PROFILES.md section 3). It is created with `POST /posts` and answered with `POST /posts/{id}/comments`; the title is the subject.
+- **Target:** `"target_scope": "APARTMENT_LIST"` with exactly one id in `target_apartment_ids` (`422 INVALID_TARGET` otherwise; an apartment of another building is listed in `unknown_apartment_ids`).
+- **Who starts one:** the chairman and the board write to any apartment of the building. Anyone else writes to the board only from an apartment they are a member of; another apartment is `403 FORBIDDEN`.
+- **Who writes as whom** (posts and comments alike): an active member of the thread's apartment writes from that apartment, and the badge follows that membership's privacy mode; anyone else who sees the thread (the board) writes without an apartment and is shown as `Chairman` / `Board`. A board member who lives in the apartment therefore writes as a resident of it (the badge still says `BOARD`, section 0). `author_apartment_id` may be omitted or `null`; any other value must be the thread's apartment and the caller must be its member, else `422 INVALID_AUTHOR_APARTMENT`.
+- **An apartment without residents** (no active member with an active account) is `422 APARTMENT_HAS_NO_RESIDENTS`: nobody but the board could ever read the thread.
+- **A record:** `comments_enabled` must be `true` (`422 VALIDATION_ERROR`), and threads are never edited or deleted (`409 POST_NOT_DELETABLE`). `category` is free, default `GENERAL`.
+- **Not in the forum feed:** see the inbox in `GET /posts` below.
+- Notifications about new messages come with task P3 (#81); P2 emits no event.
 
 ### `GET /api/v1/communication/emergencies/active`
 Active `EMERGENCY` posts that target the caller (see "Who sees which post"), newest first. Each item is a post object plus `acknowledged_at`: when the caller acknowledged it, or `null`. The UI shows the sticky banner for items with `acknowledged_at: null`.
@@ -445,7 +465,8 @@ Ends an emergency: `is_active` becomes `false`, so the banner disappears for eve
 
 ### `GET /api/v1/communication/posts?post_type=FORUM_TOPIC&category=GENERAL&limit=50&offset=0`
 The feed: posts visible to the caller, newest first (`created_at`, then `id`), as a list of post objects.
-- `post_type` and `category` are optional filters; without `post_type` the feed contains every type, including resolved emergencies.
+- `post_type` and `category` are optional filters; without `post_type` the feed contains every type except `APARTMENT_THREAD`, including resolved emergencies.
+- `post_type=APARTMENT_THREAD` is the "Messages" inbox: the caller's threads, newest activity first (`last_activity_at`, then `id`). `apartment_id` narrows it to one apartment's threads (the board opens them from the apartment card); it is accepted only together with `post_type=APARTMENT_THREAD`, else `422 VALIDATION_ERROR`. An apartment the caller cannot see gives an empty list.
 - `limit` 1..100 (default 50), `offset` 0..100000 (default 0).
 
 ### `POST /api/v1/communication/posts`
@@ -469,7 +490,8 @@ Creates a post. Response `201 Created` with the post object.
   - `ALL_BUILDING` takes neither `target_entrance` nor `target_apartment_ids`;
   - `ENTRANCE` needs `target_entrance`, and the building must have an apartment in that entrance;
   - `APARTMENT_LIST` needs 1..500 different apartment ids (duplicates are dropped before counting), all in the caller's building; unknown ones are listed in `unknown_apartment_ids`. An empty list counts as not given;
-  - a `FORUM_TOPIC` must be `ALL_BUILDING`.
+  - a `FORUM_TOPIC` must be `ALL_BUILDING`;
+  - an `APARTMENT_THREAD` must be `APARTMENT_LIST` with exactly one apartment.
 - Creating an `EMERGENCY` emits `EmergencyAlertPublished` after the request commits.
 
 ### `GET /api/v1/communication/posts/{post_id}?comments_limit=200&comments_offset=0`
@@ -479,7 +501,7 @@ The post object plus one page of `comments`, oldest first: `[{"id", "post_id", "
 (Requires role: `CHAIRMAN`)
 Moderation: deletes a forum topic together with its comments, for everyone. Response `204 No Content`.
 - A soft delete: the row keeps `deleted_at` and `deleted_by_user_id` for disputes, but every read treats the topic as gone (`404 POST_NOT_FOUND`, also for the chairman and for a second delete).
-- Only `FORUM_TOPIC` posts: an emergency or an official notice returns `409 POST_NOT_DELETABLE` with its `post_type` (an emergency is resolved instead).
+- Only `FORUM_TOPIC` posts: an emergency, an official notice or a thread returns `409 POST_NOT_DELETABLE` with its `post_type` (an emergency is resolved instead).
 - A post of another building, or an unknown one, is `404 POST_NOT_FOUND`.
 
 ### `POST /api/v1/communication/posts/{post_id}/comments`
@@ -522,7 +544,7 @@ Seeded at startup by `src/core/seed.py` when `SEED_DEMO_DATA=true` (local Docker
 - **Building:** entrance 1 has apartments 1, 2, 3; entrance 2 has 13, 14, 15. Apartments 3 and 13 have no app users. Every apartment has a cold and a hot water meter; the basement has a cold and a hot water master meter.
 - **History:** `2026-07`, `2026-08`, `2026-09` are `LOCKED` with readings for every meter. Readings of apartments without app users were entered by the chairman (`ADMIN_OVERRIDE`); Apt 13 in `2026-08` is `AUTO_ESTIMATED`. The master meters show a small loss over the apartments. Apt 14's cold water reading of `2026-09` was corrected once, so its history has two entries.
 - **October (`2026-10`, `OPEN_FOR_RESIDENTS`):** Apt 1 submitted both meters and Apt 2 its cold water. Apt 15's hot water is a confirmed anomaly (31 m³, a leaking tap). **Apt 14 has submitted nothing**, so the demo can start there; a normal value is its previous value plus about 4.8 m³ (cold) or 2.2 m³ (hot). A delta above 3 × its 3-month average (about 14.4 m³ cold, 6.5 m³ hot) or above the meter limit (25 / 15 m³) triggers the two popups.
-- **Communication:** an active `EMERGENCY` (hot water off) targeted at entrance 2, so Apt 14 sees the banner and Apt 2 does not; an `OFFICIAL_NOTICE` without comments; two forum topics with comments from several residents.
+- **Communication:** an active `EMERGENCY` (hot water off) targeted at entrance 2, so Apt 14 sees the banner and Apt 2 does not; an `OFFICIAL_NOTICE` without comments; two forum topics with comments from several residents; an `APARTMENT_THREAD` from the chairman to Apt 14 with the owner's reply (the board and Apt 14 see it, Apt 2 does not). Every demo membership starts on 2024-06-01.
 - Seeding publishes and stores no domain events, so no notifications are sent, now or later.
 
 ## 6. Notifications (`notifications`), epic E1
