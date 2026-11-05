@@ -439,3 +439,107 @@ Columns as in section 1, plus:
 - sessions expired or revoked more than 7 days ago (their refresh tokens cascade);
 - open invitations whose `expires_at` is more than 30 days ago (one that no longer applies expires like any other);
 - accepted invitations with a `membership_id`: 30 days after that membership ended (`PropertyService.membership_end_times`); an applied `STAFF` invitation (API `invited_email` of `GET /auth/users`): kept while `accepted_user_id` is active and holds that `building_role` (`PropertyService.building_roles`), then deleted by the next run; all other accepted invitations (`applied = false`): 30 days after acceptance.
+
+---
+
+## 8. Module: `governance` (epic E3 part A: informative polls)
+
+*Design: [docs/epics/E3_GOVERNANCE_VOTING.md](epics/E3_GOVERNANCE_VOTING.md) section 3. Tables since
+task V1 (migration 015). Polls, questions and the electorate carry `building_id`; options,
+ballots and answers are tied to their poll by composite foreign keys, so every row stays in its
+poll's building, as in `comm_*`.*
+
+Enums (each a named `CHECK (… IN (…))`):
+- poll `kind`: `INFORMATIVE` (`DECISION` comes with part B, in a migration);
+- poll `status`: `DRAFT`, `OPEN`, `CLOSED`, `CANCELLED` (stored `CLOSED` only when the board closed
+  early; a passed `closes_at` makes an open poll closed without a write);
+- `eligibility`: `RESIDENTS`, `OWNERS`; `unit`: `APARTMENT`, `PERSON`;
+- `answer_mode`: `SINGLE_CHOICE`, `MULTIPLE_CHOICE`, `OWN_VALUE`; `value_type`: `TEXT`, `NUMBER`,
+  `DATE`.
+
+### Table: `gov_polls`
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PK` | |
+| `building_id` | `UUID` | `FK(property_buildings.id), NOT NULL, INDEX` | |
+| `created_by_user_id` | `UUID` | `FK(core_users.id), NOT NULL` | The board member who created it (never returned) |
+| `kind` | `VARCHAR(16)` | `NOT NULL` | Enum |
+| `title` | `VARCHAR(255)` | `NOT NULL` | Not blank |
+| `description` | `TEXT` | `NOT NULL, DEFAULT ''` | At most 5000 characters (API) |
+| `target_scope`, `target_entrance`, `target_apartment_ids` | as `comm_posts` | | The same target rules and the same consistency check (`ck_gov_polls_target_consistent`) |
+| `eligibility` | `VARCHAR(16)` | `NOT NULL` | Enum |
+| `unit` | `VARCHAR(16)` | `NOT NULL` | Enum |
+| `status` | `VARCHAR(16)` | `NOT NULL, DEFAULT 'DRAFT'` | Enum |
+| `closes_at` | `TIMESTAMPTZ` | `NOT NULL` | Deadline |
+| `opened_at`, `closed_at`, `cancelled_at` | `TIMESTAMPTZ` | `NULLABLE` | Set by the transitions; `ck_gov_polls_status_times`: `DRAFT` has none, `OPEN` has `opened_at` only, `CLOSED` has `opened_at` and `closed_at`, `CANCELLED` has `opened_at` and `cancelled_at` |
+| `created_at`, `updated_at` | `TIMESTAMPTZ` | `NOT NULL` | |
+| `UNIQUE` | `(id, building_id)` | | Target of the composite foreign keys |
+
+### Table: `gov_poll_questions`
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PK` | |
+| `poll_id` | `UUID` | `NOT NULL`; `FK(poll_id, building_id) -> gov_polls ON DELETE CASCADE` | |
+| `building_id` | `UUID` | `NOT NULL` | |
+| `position` | `INTEGER` | `NOT NULL`, `> 0` | `UNIQUE (poll_id, position)` |
+| `text` | `VARCHAR(500)` | `NOT NULL` | Not blank |
+| `answer_mode`, `value_type` | `VARCHAR(16)` | `NOT NULL` | Enums |
+| `required` | `BOOLEAN` | `NOT NULL` | |
+| `min_choices`, `max_choices` | `INTEGER` | `NULLABLE` | Set exactly for `MULTIPLE_CHOICE`, `1 <= min <= max` (`ck_gov_poll_questions_choices`) |
+| `min_value`, `max_value` | `VARCHAR(32)` | `NULLABLE` | Canonical value strings (a decimal or a date); only for `OWN_VALUE` with `NUMBER` or `DATE` |
+| `UNIQUE` | `(id, poll_id)` | | Target of the option and answer foreign keys |
+
+### Table: `gov_poll_options`
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PK` | |
+| `question_id`, `poll_id` | `UUID` | `NOT NULL`; `FK(question_id, poll_id) -> gov_poll_questions ON DELETE CASCADE` | |
+| `position` | `INTEGER` | `NOT NULL`, `> 0` | `UNIQUE (question_id, position)` |
+| `value` | `VARCHAR(200)` | `NOT NULL` | The canonical value string; `UNIQUE (question_id, value)` (exact, so text options are case-sensitive) |
+| `INDEX` | `(poll_id)` | | Loading a poll's options |
+| `UNIQUE` | `(id, question_id)` | | Target of the answer foreign key |
+
+### Table: `gov_poll_electorate`
+The units fixed when the poll opened (docs/epics/E3_GOVERNANCE_VOTING.md 3.3).
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PK` | |
+| `poll_id`, `building_id` | `UUID` | `NOT NULL`; `FK(poll_id, building_id) -> gov_polls ON DELETE CASCADE` | |
+| `apartment_id` | `UUID` | `NULLABLE`; `FK(apartment_id, building_id) -> property_apartments` | Set exactly for unit `APARTMENT` |
+| `user_id` | `UUID` | `NULLABLE`; `FK(core_users.id)` | Set exactly for unit `PERSON` |
+| `weight` | `NUMERIC(12, 6)` | `NOT NULL, DEFAULT 1` | Always 1 in part A |
+| `UNIQUE` | `(poll_id, apartment_id)`, `(poll_id, user_id)`, `(id, poll_id)` | | `ck_gov_poll_electorate_one_unit`: exactly one of `apartment_id` and `user_id` is set |
+
+### Table: `gov_ballots`
+One per unit; the current answers.
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PK` | |
+| `poll_id` | `UUID` | `NOT NULL, INDEX` | The poll of the unit (part of the foreign key below); `UNIQUE (id, poll_id)` |
+| `elector_id` | `UUID` | `NOT NULL, UNIQUE`, `FK(elector_id, poll_id) -> gov_poll_electorate(id, poll_id) ON DELETE CASCADE` | The unit, of the same poll |
+| `cast_by_user_id` | `UUID` | `FK(core_users.id), NOT NULL` | Who gave the current answers (never returned) |
+| `revision` | `INTEGER` | `NOT NULL, > 0` | 1, then +1 per change |
+| `created_at`, `updated_at` | `TIMESTAMPTZ` | `NOT NULL` | |
+
+### Table: `gov_ballot_answers`
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PK` | |
+| `ballot_id` | `UUID` | `NOT NULL, INDEX`; `FK(ballot_id, poll_id) -> gov_ballots(id, poll_id) ON DELETE CASCADE` | |
+| `question_id`, `poll_id` | `UUID` | `NOT NULL`, `FK(question_id, poll_id) -> gov_poll_questions` | |
+| `option_id` | `UUID` | `NULLABLE`, `FK(option_id, question_id) -> gov_poll_options` | A chosen option (one row per option) |
+| `value` | `TEXT` | `NULLABLE` | An own value (canonical string) |
+| | | `ck_gov_ballot_answers_one_kind` | Exactly one of `option_id` and `value`; `UNIQUE (ballot_id, question_id, option_id)` |
+| `UNIQUE INDEX` | `uq_gov_ballot_answers_own_value (ballot_id, question_id) WHERE option_id IS NULL` | | One own value per question and ballot |
+| `INDEX` | `ix_gov_ballot_answers_question_option (question_id, option_id)` | | Foreign-key checks and counting results |
+
+### Table: `gov_ballot_revisions`
+Every version of a ballot, for official decisions later; never returned in part A.
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PK` | |
+| `ballot_id` | `UUID` | `NOT NULL`, `FK -> gov_ballots ON DELETE CASCADE` | |
+| `revision` | `INTEGER` | `NOT NULL` | `UNIQUE (ballot_id, revision)` |
+| `cast_by_user_id` | `UUID` | `FK(core_users.id), NOT NULL` | |
+| `answers` | `JSONB` | `NOT NULL` | `[{"question_id", "option_ids", "value"}]` after the check (canonical values); the same answers again add no revision |
+| `created_at` | `TIMESTAMPTZ` | `NOT NULL` | |

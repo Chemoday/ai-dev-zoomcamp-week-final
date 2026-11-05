@@ -8,7 +8,7 @@ checklist. Each task then gets its own issue, branch and pull request.
 |---|---|---|---|
 | E1 Notifications | 2 | [E1_NOTIFICATIONS.md](E1_NOTIFICATIONS.md) | in-app, e-mail, Telegram, WebPush and reminders done (N2-N6), unsubscribe done (N8); mobile push (N7) next |
 | E2 Billing and accounting export | 2 | [E2_BILLING_EXPORT.md](E2_BILLING_EXPORT.md) | idea |
-| E3 Governance and voting | 3 | [E3_GOVERNANCE_VOTING.md](E3_GOVERNANCE_VOTING.md) | idea |
+| E3 Governance and voting | 2-3 | [E3_GOVERNANCE_VOTING.md](E3_GOVERNANCE_VOTING.md) | part A (informative polls) designed, V1 next; part B (official decisions) after its planning session |
 | E4 IoT readings API | 2 | in docs/ROADMAP_MVP.md | idea |
 | E5 Bulk import of apartments and owners | 2 | in docs/ROADMAP_MVP.md | idea |
 | E6 AI OCR of meter photos | 3 | in docs/ROADMAP_MVP.md | idea |

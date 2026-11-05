@@ -160,6 +160,15 @@ class UserRefDTO(BaseModel):
     locale: Locale | None
 
 
+class ElectorDTO(BaseModel):
+    """Someone who may take part in a poll through one apartment (epic E3): ids only."""
+
+    model_config = ConfigDict(frozen=True)
+
+    user_id: uuid.UUID
+    apartment_id: uuid.UUID
+
+
 class RecipientDTO(BaseModel):
     """A notification recipient: an id and a language, never contact data."""
 

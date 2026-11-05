@@ -77,6 +77,9 @@ Build the navigation from `GET /api/v1/property/me` (`building_role`, `membershi
 | Apartment readings (`/meters/apartments/{id}/readings`) | own apartments | every apartment | every apartment | every apartment |
 | Messages with the board (`APARTMENT_THREAD`) | own apartments, threads since moving in | every apartment | every apartment | only as a member of an apartment |
 | Board micro-forum (`BOARD_TOPIC`): read, post, comment, delete | no | yes | yes | no |
+| Polls: create, open, close, extend, cancel | no | yes | yes | no |
+| Polls: see | when targeted | all | all | when targeted |
+| Polls: answer | when targeted and eligible | when targeted and eligible | when targeted and eligible | when targeted and eligible |
 
 A user with no apartment gets `apartments: []` from the dashboard; hide the meter card, do not
 show an error. `GET /property/me` never returns the user's own name or email: greet with the
@@ -420,3 +423,29 @@ header, so they need a real sign-in even in demo mode.
   chairman). It never returns phone numbers.
 - Do not put e-mails or tokens into analytics, URLs (except the fragment of the link page) or
   logs.
+
+## 13. Polls (epic E3)
+
+Contract: docs/API.md section 8. Results and the "new poll" notification follow in tasks V2 and
+V3.
+
+- **Board:** a "Polls" page with drafts, open and closed polls. A draft is edited freely
+  (`PUT /governance/polls/{id}`) and opened with `POST .../open`; after that the questions are
+  fixed. Close early, extend (`PATCH` with a later `closes_at`) and cancel are on the open poll.
+  The form explains who answers (`eligibility`), whether there is one answer per apartment or
+  per person (`unit`), and that small groups can hint at who answered what.
+- **A question has two settings:** `answer_mode` (pick one, pick several, or own value) and
+  `value_type` (text, number, date). Option values and own values are strings: numbers as decimal
+  strings, dates as `YYYY-MM-DD`; render both in the reader's language with `Intl`, and send them
+  back in the same canonical form. Show a date picker for `DATE`, a number field for `NUMBER`.
+- **List:** each item has `can_answer` and `answered`: show "please answer" only when
+  `can_answer` is true and `answered` false; a tenant sees an owners-only poll with
+  `can_answer: false`.
+- **Answering:** show the form when `can_answer` is true; `PUT .../ballot` with `answers` (and
+  `apartment_id` when `answerable_apartment_ids` has more than one). Answering again replaces the
+  answer. For unit `APARTMENT`, `my_ballots` shows what the apartment answered ("your apartment
+  answered"), whoever in the apartment did; never show or ask who.
+- **Status:** `OPEN` polls with a passed `closes_at` come back as `CLOSED`; trust `status`, do not
+  compare times yourself. A `CANCELLED` poll shows no answers.
+- `422 INVALID_ANSWER` names the question (`question_id`) and the `reason`; mark that question.
+
