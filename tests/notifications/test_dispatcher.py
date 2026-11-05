@@ -27,8 +27,8 @@ from src.modules.notifications.dispatcher import Dispatcher, Outcome
 from src.modules.notifications.models import Delivery, Preference
 from src.modules.notifications.policies import MAX_ATTEMPTS, unsubscribe_token
 from src.modules.notifications.service import NotificationsSubscriber
-from src.modules.property.models import Building, User
-from src.modules.property.schemas import Locale
+from src.modules.property.models import ApartmentMembership, Building, User
+from src.modules.property.schemas import BuildingRole, Locale
 from src.plugins.registry import (
     DeliveryResult,
     OutgoingMessage,
@@ -869,3 +869,141 @@ async def test_a_plain_http_site_gets_the_text_link_but_no_one_click_headers(
     [email] = smtp_server.messages
     assert email["List-Unsubscribe"] is None and email["List-Unsubscribe-Post"] is None
     assert "http://localhost:8000/unsubscribe#" in email.get_content()
+
+
+# --- Board <-> apartment threads (E8/P3) ----------------------------------------------------------
+
+THREAD_BODY = "You owe 120 EUR for October."
+
+
+async def thread(
+    client: AsyncClient, author: User, apartment_id: uuid.UUID, settings: Settings
+) -> str:
+    response = await client.post(
+        "/api/v1/communication/posts",
+        json={
+            "post_type": "APARTMENT_THREAD",
+            "title": "Debt for October",
+            "body": THREAD_BODY,
+            "target_scope": "APARTMENT_LIST",
+            "target_apartment_ids": [str(apartment_id)],
+        },
+        headers=bearer(author, settings),
+    )
+    assert response.status_code == 201, response.text
+    return response.json()["id"]
+
+
+async def test_a_thread_e_mail_says_who_wrote_but_never_what(
+    api_client: AsyncClient,
+    world: NotifWorld,
+    mailboxes: dict[str, str],
+    dispatcher: Dispatcher,
+    smtp_server: SmtpServer,
+    email_settings: Settings,
+) -> None:
+    await thread(api_client, world.chairman, world.apt_14.id, email_settings)
+
+    await dispatcher.tick()
+
+    [email] = smtp_server.messages
+    assert email["To"] == mailboxes["owner_14"]
+    assert email["Subject"] == "New message from the board"
+    text = email.get_content()
+    assert "Debt" not in text and "120 EUR" not in text
+    assert "Stop these e-mails" in text, "not mandatory: it can be unsubscribed"
+
+
+async def test_the_board_gets_no_e_mail_until_it_asks_for_one(
+    api_client: AsyncClient,
+    world: NotifWorld,
+    mailboxes: dict[str, str],
+    dispatcher: Dispatcher,
+    db_session: AsyncSession,
+    smtp_server: SmtpServer,
+    email_settings: Settings,
+) -> None:
+    world.chairman.locale = Locale.EN
+    await db_session.flush()
+    post_id = await thread(api_client, world.owner_14, world.apt_14.id, email_settings)
+    assert await email_rows(db_session) == [], "the board is told quietly, in the app"
+
+    opt_in = await api_client.put(
+        "/api/v1/notifications/preferences",
+        json={
+            "preferences": [
+                {"event_type": "APARTMENT_MESSAGE_TO_BOARD", "channel": "email", "enabled": True}
+            ]
+        },
+        headers=bearer(world.chairman, email_settings),
+    )
+    assert opt_in.status_code == 200
+    answer = await api_client.post(
+        f"/api/v1/communication/posts/{post_id}/comments",
+        json={"body": THREAD_BODY},
+        headers=bearer(world.owner_14, email_settings),
+    )
+    assert answer.status_code == 201
+    await dispatcher.tick()
+
+    [email] = smtp_server.messages
+    assert (email["To"], email["Subject"]) == (
+        mailboxes["chairman"],
+        "New message from apartment 14",
+    )
+    assert "120 EUR" not in email.get_content()
+
+
+async def test_a_resident_who_moved_out_before_sending_is_skipped(
+    api_client: AsyncClient,
+    world: NotifWorld,
+    mailboxes: dict[str, str],
+    dispatcher: Dispatcher,
+    db_session: AsyncSession,
+    smtp_server: SmtpServer,
+    email_settings: Settings,
+) -> None:
+    await thread(api_client, world.chairman, world.apt_14.id, email_settings)
+    [row] = await email_rows(db_session)
+    await db_session.execute(
+        update(ApartmentMembership)
+        .where(ApartmentMembership.user_id == world.owner_14.id)
+        .values(ended_at=datetime.now(UTC))
+    )
+
+    await dispatcher.tick()
+
+    [state] = await email_rows(db_session, id=row.id)
+    assert (state.status, state.error_code) == ("SKIPPED", "SUBJECT_NOT_FOUND")
+    assert smtp_server.messages == []
+
+
+async def test_who_left_the_board_before_sending_is_skipped(
+    api_client: AsyncClient,
+    world: NotifWorld,
+    mailboxes: dict[str, str],
+    dispatcher: Dispatcher,
+    db_session: AsyncSession,
+    smtp_server: SmtpServer,
+    email_settings: Settings,
+) -> None:
+    db_session.add(
+        Preference(
+            user_id=world.chairman.id,
+            event_type="APARTMENT_MESSAGE_TO_BOARD",
+            channel="email",
+            enabled=True,
+        )
+    )
+    await db_session.flush()
+    await thread(api_client, world.owner_14, world.apt_14.id, email_settings)
+    [row] = await email_rows(db_session)
+    await db_session.execute(
+        update(User).where(User.id == world.chairman.id).values(building_role=BuildingRole.USER)
+    )
+
+    await dispatcher.tick()
+
+    [state] = await email_rows(db_session, id=row.id)
+    assert (state.status, state.error_code) == ("SKIPPED", "SUBJECT_NOT_FOUND")
+    assert smtp_server.messages == []

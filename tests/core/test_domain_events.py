@@ -28,7 +28,11 @@ from src.core.domain_events import (
 from src.core.event_bus import DomainEvent, EventOutbox, InMemoryEventBus
 from src.core.events_registry import EventRegistry, UnknownEventTypeError, get_event_registry
 from src.modules.auth.events import UserAccountClosed
-from src.modules.communication.events import EmergencyAlertPublished, EmergencyAlertResolved
+from src.modules.communication.events import (
+    ApartmentMessagePosted,
+    EmergencyAlertPublished,
+    EmergencyAlertResolved,
+)
 from src.modules.communication.schemas import PostCategory, TargetScope
 from src.modules.meters.events import MeterReadingSubmitted, ReadingPeriodStatusChanged
 from src.modules.meters.schemas import PeriodStatus, ReadingSource
@@ -56,6 +60,14 @@ def _now() -> datetime:
 def _samples() -> dict[str, DomainEvent]:
     building, post, user = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     return {
+        "ApartmentMessagePosted": ApartmentMessagePosted(
+            post_id=post,
+            comment_id=None,
+            building_id=building,
+            apartment_id=uuid.uuid4(),
+            author_user_id=user,
+            from_board=True,
+        ),
         "EmergencyAlertPublished": EmergencyAlertPublished(
             post_id=post,
             building_id=building,

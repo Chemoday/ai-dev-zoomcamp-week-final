@@ -173,3 +173,13 @@ class EmergencyRefDTO(BaseModel):
     title: str
     body: str
     category: PostCategory
+
+
+class ThreadRefDTO(BaseModel):
+    """A board <-> apartment thread as the notifications module sees it (no title, no body)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    post_id: uuid.UUID
+    building_id: uuid.UUID
+    apartment_id: uuid.UUID

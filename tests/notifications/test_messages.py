@@ -36,6 +36,9 @@ def test_the_catalog_has_a_column_per_locale_and_english_everywhere() -> None:
         (E.EMERGENCY_RESOLVED, {**ENTRANCE_2, "target_scope": "ALL_BUILDING"}),
         (E.READING_DEADLINE, {"period_code": "2026-11", "due_date": "2026-11-04T21:59:59+00:00"}),
         (E.PERIOD_REVIEW, {"period_code": "2026-11"}),
+        (E.APARTMENT_MESSAGE, {"apartment_number": "14", "from_board": True}),
+        (E.APARTMENT_MESSAGE, {"apartment_number": "14", "from_board": False}),
+        (E.APARTMENT_MESSAGE_TO_BOARD, {"apartment_number": "14", "from_board": False}),
     ],
 )
 def test_every_event_renders_in_every_language_with_the_footer(
@@ -133,3 +136,33 @@ def test_a_title_with_line_breaks_becomes_a_one_line_subject() -> None:
     )
 
     assert message.subject == "Emergency: Cold water off until 18:00"
+
+
+@pytest.mark.parametrize(
+    ("event_type", "from_board", "subject"),
+    [
+        (E.APARTMENT_MESSAGE, True, "New message from the board"),
+        (
+            E.APARTMENT_MESSAGE,
+            False,
+            "New message in your apartment's conversation with the board",
+        ),
+        (E.APARTMENT_MESSAGE_TO_BOARD, False, "New message from apartment 14A"),
+    ],
+)
+def test_a_thread_message_says_who_wrote_but_never_what(
+    event_type: NotificationEventType, from_board: bool, subject: str
+) -> None:
+    message = compose(
+        event_type,
+        "en",
+        {"apartment_id": "x", "apartment_number": "14A", "from_board": from_board},
+        site_url=SITE,
+        timezone=TZ,
+        title="Debt for October",  # never passed for threads; must not appear anyway
+        body="You owe 120 EUR.",
+    )
+
+    assert message.subject == subject
+    assert "Debt" not in message.body + message.subject
+    assert "120" not in message.body

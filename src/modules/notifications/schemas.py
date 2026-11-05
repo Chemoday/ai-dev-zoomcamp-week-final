@@ -34,6 +34,9 @@ class NotificationEventType(StrEnum):
     EMERGENCY_RESOLVED = "EMERGENCY_RESOLVED"
     READING_DEADLINE = "READING_DEADLINE"
     PERIOD_REVIEW = "PERIOD_REVIEW"
+    # Board <-> apartment threads (epic E8): to the apartment's members, and to the board.
+    APARTMENT_MESSAGE = "APARTMENT_MESSAGE"
+    APARTMENT_MESSAGE_TO_BOARD = "APARTMENT_MESSAGE_TO_BOARD"
 
 
 class DeliveryStatus(StrEnum):
@@ -109,7 +112,10 @@ class PreferenceChange(BaseModel):
 class PreferencesUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    preferences: list[PreferenceChange] = Field(max_length=16)
+    # At most one entry per combination (the duplicate check below rejects repeats).
+    preferences: list[PreferenceChange] = Field(
+        max_length=len(NotificationEventType) * len(Channel)
+    )
 
     @model_validator(mode="after")
     def _no_duplicates(self) -> "PreferencesUpdateRequest":

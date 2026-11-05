@@ -36,6 +36,7 @@ from src.modules.communication.service import CommunicationService
 from src.modules.notifications.messages import compose, default_catalog, email_text
 from src.modules.notifications.models import ChannelBinding, Delivery
 from src.modules.notifications.policies import (
+    APARTMENT_MESSAGE_EVENTS,
     CHANNEL_PLUGINS,
     DISPATCH_BATCH_SIZE,
     EMERGENCY_MAX_AGE,
@@ -317,7 +318,14 @@ class Dispatcher:
                 return skip("PREFERENCE_OFF")
 
         title = body = ""
-        if row.subject_type == SubjectType.POST:
+        if row.event_type in APARTMENT_MESSAGE_EVENTS:
+            # The thread's visibility rule again: someone who moved out or left the board since
+            # the message was posted is not told about it. The text never carries the message.
+            user = await properties.get_current_user(row.user_id)
+            communication = CommunicationService(session, properties)
+            if user is None or not await communication.can_read_post(user, row.subject_id):
+                return skip("SUBJECT_NOT_FOUND")
+        elif row.subject_type == SubjectType.POST:
             ref = await CommunicationService(session, properties).get_emergency_ref(row.subject_id)
             if ref is None:
                 return skip("SUBJECT_NOT_FOUND")

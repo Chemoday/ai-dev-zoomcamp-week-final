@@ -11,6 +11,7 @@ import pytest
 from src.core.config import Settings
 from src.modules.notifications.policies import (
     DEFAULT_PREFERENCES,
+    apartment_message_key,
     channel_unavailable_reason,
     emergency_key,
     emergency_resolved_key,
@@ -23,6 +24,7 @@ from src.modules.notifications.policies import (
     priority_for,
     reminder_deadline,
     reminder_due,
+    split_message_recipients,
     unsubscribe_delivery_id,
     unsubscribe_links,
     unsubscribe_token,
@@ -69,6 +71,9 @@ def test_dedup_keys() -> None:
     assert period_review_key(period, event) != period_review_key(period, uuid.uuid4()), (
         "a reopened period reviewed again notifies again"
     )
+    comment = uuid.uuid4()
+    assert apartment_message_key(post, None) == f"apartment_message:{post}"
+    assert apartment_message_key(post, comment) == f"apartment_message:{post}:{comment}"
 
 
 def test_external_channels_are_not_used_for_late_events() -> None:
@@ -206,3 +211,25 @@ def test_only_the_canonical_spelling_of_a_token_is_accepted() -> None:
         base64.urlsafe_b64decode(s + "=") == base64.urlsafe_b64decode(token + "=") for s in siblings
     )
     assert all(unsubscribe_delivery_id(UNSUBSCRIBE_SECRET, s) is None for s in siblings)
+
+
+def test_thread_message_recipients() -> None:
+    author, co_resident, chairman, board_resident = (uuid.uuid4() for _ in range(4))
+    readers = [author, co_resident, board_resident]
+    board = [chairman, board_resident, author]
+
+    # A resident wrote: the co-residents as residents, the rest of the board quietly.
+    assert split_message_recipients(author, False, readers, board) == (
+        [co_resident, board_resident],
+        [chairman],
+    )
+    # The board wrote: the apartment only, never another board member.
+    assert split_message_recipients(chairman, True, readers, [chairman, board_resident]) == (
+        [author, co_resident, board_resident],
+        [],
+    )
+    # Duplicates in the inputs never notify twice.
+    assert split_message_recipients(author, False, [co_resident] * 2, [chairman] * 2) == (
+        [co_resident],
+        [chairman],
+    )

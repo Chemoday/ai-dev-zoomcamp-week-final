@@ -96,10 +96,19 @@ def compose(
             period_code=period_code,
             due_date=_local_date(params["due_date"], timezone),
         )
-    else:  # PERIOD_REVIEW
+    elif event_type == E.PERIOD_REVIEW:
         period_code = params["period_code"]
         subject = catalog.render(subject_key, locale, period_code=period_code)
         text = catalog.render("text.PERIOD_REVIEW", locale, period_code=period_code)
+    elif event_type == E.APARTMENT_MESSAGE:
+        # Who wrote decides the wording; the message itself never leaves the app.
+        key = "FROM_BOARD" if params.get("from_board") else "FROM_RESIDENT"
+        subject = catalog.render(f"subject.APARTMENT_MESSAGE.{key}", locale)
+        text = catalog.render(f"text.APARTMENT_MESSAGE.{key}", locale)
+    else:  # APARTMENT_MESSAGE_TO_BOARD
+        number = params["apartment_number"]
+        subject = catalog.render(subject_key, locale, apartment_number=number)
+        text = catalog.render("text.APARTMENT_MESSAGE_TO_BOARD", locale, apartment_number=number)
     footer = catalog.render("footer", locale, site_url=site_url)
     # A subject is one line: a title may contain line breaks (also U+2028), which a mail header
     # cannot carry, and the mandatory alert must not fail because of them.

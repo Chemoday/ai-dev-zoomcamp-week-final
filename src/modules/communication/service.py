@@ -29,7 +29,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.database import DbSession, get_event_outbox
 from src.core.event_bus import EventOutbox
 from src.core.exceptions import DomainError
-from src.modules.communication.events import EmergencyAlertPublished, EmergencyAlertResolved
+from src.modules.communication.events import (
+    ApartmentMessagePosted,
+    EmergencyAlertPublished,
+    EmergencyAlertResolved,
+)
 from src.modules.communication.models import Comment, EmergencyAck, Post
 from src.modules.communication.policies import (
     FEED_HIDDEN_TYPES,
@@ -52,6 +56,7 @@ from src.modules.communication.schemas import (
     PostView,
     ResolveResponse,
     TargetScope,
+    ThreadRefDTO,
 )
 from src.modules.property.schemas import AuthorBadgeDTO, CurrentUserDTO
 from src.modules.property.service import AuthorKey, PropertyService, get_property_service
@@ -126,6 +131,27 @@ class CommunicationService:
             body=post.body,
             category=post.category,
         )
+
+    async def get_thread_ref(self, post_id: uuid.UUID) -> ThreadRefDTO | None:
+        """A board <-> apartment thread, or None if there is no such thread."""
+        post = await self.session.scalar(
+            select(Post).where(Post.id == post_id, Post.post_type == PostType.APARTMENT_THREAD)
+        )
+        if post is None:
+            return None
+        return ThreadRefDTO(
+            post_id=post.id, building_id=post.building_id, apartment_id=_thread_apartment(post)
+        )
+
+    async def can_read_post(self, user: CurrentUserDTO, post_id: uuid.UUID) -> bool:
+        """Whether the user sees the post under the visibility rule of the feed and the API.
+
+        Notifications ask it for the recipients of a thread message, and again before sending.
+        """
+        visible = await self.session.scalar(
+            select(Post.id).where(Post.id == post_id, self._visible_to(user))
+        )
+        return visible is not None
 
     # --- Emergencies ----------------------------------------------------------------------------
 
@@ -328,6 +354,8 @@ class CommunicationService:
                     published_by_user_id=user.id,
                 )
             )
+        elif post.post_type == PostType.APARTMENT_THREAD:
+            self._message_posted(post, None, user.id, author_apartment_id)
         badge = await self.property_service.get_masked_author_badge(user.id, author_apartment_id)
         return self._post_view(user, post, badge, comments_count=0)
 
@@ -364,6 +392,8 @@ class CommunicationService:
             .where(Post.id == post.id)
             .values(last_activity_at=func.greatest(Post.last_activity_at, comment.created_at))
         )
+        if post.post_type == PostType.APARTMENT_THREAD:
+            self._message_posted(post, comment.id, user.id, author_apartment_id)
         badge = await self.property_service.get_masked_author_badge(user.id, author_apartment_id)
         return self._comment_view(user, comment, badge)
 
@@ -536,6 +566,25 @@ class CommunicationService:
                 message="Nobody in this apartment could read the thread.",
             )
         return self._thread_author(user, apartment_id, request.author_apartment_id)
+
+    def _message_posted(
+        self,
+        thread: Post,
+        comment_id: uuid.UUID | None,
+        author_user_id: uuid.UUID,
+        author_apartment_id: uuid.UUID | None,
+    ) -> None:
+        assert self.outbox is not None, "writes need the request outbox"
+        self.outbox.add(
+            ApartmentMessagePosted(
+                post_id=thread.id,
+                comment_id=comment_id,
+                building_id=thread.building_id,
+                apartment_id=_thread_apartment(thread),
+                author_user_id=author_user_id,
+                from_board=author_apartment_id is None,
+            )
+        )
 
     @staticmethod
     def _thread_author(

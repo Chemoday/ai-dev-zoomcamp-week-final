@@ -6579,7 +6579,9 @@
           "EMERGENCY_PUBLISHED",
           "EMERGENCY_RESOLVED",
           "READING_DEADLINE",
-          "PERIOD_REVIEW"
+          "PERIOD_REVIEW",
+          "APARTMENT_MESSAGE",
+          "APARTMENT_MESSAGE_TO_BOARD"
         ],
         "title": "NotificationEventType"
       },
@@ -7329,7 +7331,7 @@
               "$ref": "#/components/schemas/PreferenceChange"
             },
             "type": "array",
-            "maxItems": 16,
+            "maxItems": 24,
             "title": "Preferences"
           }
         },
