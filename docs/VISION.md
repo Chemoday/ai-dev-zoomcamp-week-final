@@ -5,7 +5,7 @@ A source-available, lightweight, self-hosted platform for apartment associations
 
 The platform replaces closed, expensive proprietary tools and chaotic messenger chats with a unified ecosystem for utility meter tracking, emergency alerts, community discussions, and legally compliant governance.
 
-The code is public so that associations can check its privacy promises. It is free forever for an association that runs it itself; hosting it on your own infrastructure for associations other than your own, or offering it as a service, needs a license (see [LICENSE](../LICENSE)).
+The code is public so that associations can check its privacy promises. It is free forever for an association that runs it itself; hosting it on your own infrastructure for associations other than your own, selling ongoing support for it to more than one association, or offering it as a service needs a license (see [LICENSE](../LICENSE)).
 
 ## 2. Core Principles
 1. **Single-Tenant / Self-Hosted by Default:**
