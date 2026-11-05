@@ -119,6 +119,10 @@ System-level methods (no `CurrentUserDTO`), returning DTOs, used only by notific
 | `meters` | `open_periods_due_within(until, *, now)` (status `OPEN_FOR_RESIDENTS`, `now < due_date <= until`) | `list[DuePeriodRefDTO(period_id, building_id, period_code, due_date)]` |
 | `meters` | `apartments_missing_readings(period_id)` | `list[UUID]`: apartments with an active meter and no reading |
 | `communication` | `get_emergency_ref(post_id, lock_for_share=False)` | `EmergencyRefDTO` regardless of status, or `None`. The subscriber reads it with a share lock and notifies nobody about an alert that is already resolved: events are unordered, and the lock makes a concurrent resolve wait until the "published" rows are stored |
+| `communication` | `get_thread_ref(post_id)` | `ThreadRefDTO(post_id, building_id, apartment_id)` of an `APARTMENT_THREAD`, or `None` (E8/P3) |
+| `communication` | `can_read_post(user, post_id)` | `bool`: whether this user (a `CurrentUserDTO` from `PropertyService.get_current_user`) sees the post under the one visibility rule of docs/API.md section 4; used for thread recipients and again right before sending |
+| `property` | `get_current_user(user_id)` | `CurrentUserDTO` of an active user with their active memberships, or `None` (the same loader as for requests) |
+| `property` | `apartment_ref(apartment_id)` | `ApartmentRefDTO(apartment_id, building_id, number)`: the apartment number for `APARTMENT_MESSAGE*` params |
 
 - `EmergencyRefDTO`: `post_id`, `building_id`, `author_user_id`, `is_active`, `target_scope`, `target_entrance`, `target_apartment_ids`, `title`, `body`, `category`. The body is read only by the dispatcher, right before an emergency message is rendered, and never logged.
 - **Locale** is resolved when a delivery row is inserted (`RecipientDTO.locale`, else `DEFAULT_LOCALE`) and stored on the row, so the dispatcher needs no extra lookup.

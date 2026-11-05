@@ -110,8 +110,10 @@ From 2026-11-05:
 ## 4. Notifications for threads (task P3)
 
 - Communication publishes a durable domain event `ApartmentMessagePosted` for a new thread and for
-  every reply: post id, comment id (none for the thread itself), building, apartment, author, the
-  thread's `created_at`, and whether the author wrote as the board.
+  every reply: post id, comment id (none for the thread itself), building, apartment, author, and
+  whether the author wrote as the board. Who sees the thread is asked from communication (the one
+  visibility rule), when the event is processed and again right before an external message is
+  sent: someone who moved out meanwhile gets nothing.
 - Two new event types, so the board's quiet default is an ordinary preference:
 
 | Event type | Recipients | in_app | email | telegram | webpush |
