@@ -3567,6 +3567,7 @@
           "communication"
         ],
         "summary": "List Posts",
+        "description": "The feed, without the private threads unless `post_type=APARTMENT_THREAD` asks for them\n(the \"Messages\" inbox, newest activity first). `apartment_id` narrows the inbox to one\napartment and needs that post type.",
         "operationId": "list_posts_api_v1_communication_posts_get",
         "security": [
           {
@@ -3631,6 +3632,23 @@
               "minimum": 0,
               "default": 0,
               "title": "Offset"
+            }
+          },
+          {
+            "name": "apartment_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Apartment Id"
             }
           }
         ],
@@ -3747,7 +3765,7 @@
             }
           },
           "422": {
-            "description": "Invalid input. error_code: `VALIDATION_ERROR`, `INVALID_TARGET`, `INVALID_AUTHOR_APARTMENT`",
+            "description": "Invalid input. error_code: `VALIDATION_ERROR`, `INVALID_TARGET`, `INVALID_AUTHOR_APARTMENT`, `APARTMENT_HAS_NO_RESIDENTS`",
             "content": {
               "application/json": {
                 "schema": {
@@ -5821,6 +5839,11 @@
             "format": "date-time",
             "title": "Created At"
           },
+          "last_activity_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Last Activity At"
+          },
           "acknowledged_at": {
             "anyOf": [
               {
@@ -5850,6 +5873,7 @@
           "comments_enabled",
           "comments_count",
           "created_at",
+          "last_activity_at",
           "acknowledged_at"
         ],
         "title": "EmergencyView",
@@ -6514,6 +6538,11 @@
           "privacy_display_mode": {
             "$ref": "#/components/schemas/DisplayMode"
           },
+          "since": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Since"
+          },
           "preview_badge": {
             "$ref": "#/components/schemas/AuthorBadgeDTO"
           }
@@ -6530,6 +6559,7 @@
           "can_view_bills",
           "can_vote",
           "privacy_display_mode",
+          "since",
           "preview_badge"
         ],
         "title": "MembershipView"
@@ -7076,6 +7106,11 @@
             "format": "date-time",
             "title": "Created At"
           },
+          "last_activity_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Last Activity At"
+          },
           "comments": {
             "items": {
               "$ref": "#/components/schemas/CommentView"
@@ -7100,6 +7135,7 @@
           "comments_enabled",
           "comments_count",
           "created_at",
+          "last_activity_at",
           "comments"
         ],
         "title": "PostDetail"
@@ -7109,7 +7145,8 @@
         "enum": [
           "EMERGENCY",
           "OFFICIAL_NOTICE",
-          "FORUM_TOPIC"
+          "FORUM_TOPIC",
+          "APARTMENT_THREAD"
         ],
         "title": "PostType"
       },
@@ -7186,6 +7223,11 @@
             "type": "string",
             "format": "date-time",
             "title": "Created At"
+          },
+          "last_activity_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Last Activity At"
           }
         },
         "type": "object",
@@ -7203,7 +7245,8 @@
           "is_active",
           "comments_enabled",
           "comments_count",
-          "created_at"
+          "created_at",
+          "last_activity_at"
         ],
         "title": "PostView"
       },

@@ -75,6 +75,7 @@ Build the navigation from `GET /api/v1/property/me` (`building_role`, `membershi
 | Forum: read, post topics, comment | yes | yes | yes | yes |
 | Apartment cards (`/property/apartments`) | no | yes | yes | no |
 | Apartment readings (`/meters/apartments/{id}/readings`) | own apartments | every apartment | every apartment | every apartment |
+| Messages with the board (`APARTMENT_THREAD`) | own apartments, threads since moving in | every apartment | every apartment | only as a member of an apartment |
 
 A user with no apartment gets `apartments: []` from the dashboard; hide the meter card, do not
 show an error. `GET /property/me` never returns the user's own name or email: greet with the
@@ -194,8 +195,8 @@ any level ──► 422 READING_BELOW_PREVIOUS  → show previous_value, no popu
   the feed with `is_active: false`.
 - **Publishing:** `target_scope` `ALL_BUILDING` (no other target fields), `ENTRANCE`
   (`target_entrance`) or `APARTMENT_LIST` (`target_apartment_ids`, 1..500). Forum topics are
-  always `ALL_BUILDING`. Apartment ids and entrances come from the chairman matrix
-  (`apartments[].apartment_id`, `entrance`, `floor`); there is no separate apartments endpoint.
+  always `ALL_BUILDING`. Apartment ids and entrances come from `GET /property/apartments`
+  (chairman, board) or the chairman matrix (`apartments[].apartment_id`, `entrance`, `floor`).
 - **Author badges** are already masked by the backend. Render
   `"<display_label> • <role_badge>"` (`"Apt. 14 • OWNER"`). `display_label` is English text that
   may contain a name the author chose to show; display it as is, do not parse or translate it.
@@ -215,6 +216,19 @@ any level ──► 422 READING_BELOW_PREVIOUS  → show previous_value, no popu
   emergencies and notices answer `409 POST_NOT_DELETABLE`.
 - **Free text limits:** title 1..255, post body 1..10000, comment 1..4000 characters after
   trimming. Control characters are rejected. Show a counter and trim before checking "empty".
+- **Messages with the board** (`APARTMENT_THREAD`, docs/API.md section 4):
+  - A "Messages" page lists `GET /communication/posts?post_type=APARTMENT_THREAD`, sorted by
+    `last_activity_at`; show it next to the title. The forum feed (no `post_type`) never contains
+    threads. On the apartment card the board adds `&apartment_id=<id>`.
+  - New thread: `POST /communication/posts` with `post_type: "APARTMENT_THREAD"`,
+    `target_scope: "APARTMENT_LIST"`, `target_apartment_ids: [<one apartment>]`, no
+    `author_apartment_id` and `comments_enabled: true`. A resident picks one of their own
+    apartments (`GET /property/me`); the board starts from the apartment card.
+  - Replies are ordinary comments; omit `author_apartment_id`, the server decides whether the
+    caller writes from the apartment or as the board.
+  - `422 APARTMENT_HAS_NO_RESIDENTS`: nobody in the apartment has an account yet, so nobody
+    could read the thread; say so instead of a generic error.
+  - No delete or edit buttons on threads.
 
 ## 9. Dates and ids
 

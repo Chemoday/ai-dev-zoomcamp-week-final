@@ -4,6 +4,7 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Response
+from fastapi.exceptions import RequestValidationError
 
 from src.core.exceptions import AUTH_ERRORS, error_responses
 from src.core.security import get_current_user, require_building_roles
@@ -80,10 +81,24 @@ async def list_posts(
     category: PostCategory | None = None,
     limit: Annotated[int, Query(ge=1, le=FEED_PAGE_MAX)] = 50,
     offset: Annotated[int, Query(ge=0, le=100_000)] = 0,
+    apartment_id: uuid.UUID | None = None,
     user: CurrentUserDTO = Depends(get_current_user),
     service: CommunicationService = Depends(get_communication_service),
 ) -> list[PostView]:
-    return await service.list_posts(user, post_type, category, limit, offset)
+    """The feed, without the private threads unless `post_type=APARTMENT_THREAD` asks for them
+    (the "Messages" inbox, newest activity first). `apartment_id` narrows the inbox to one
+    apartment and needs that post type."""
+    if apartment_id is not None and post_type != PostType.APARTMENT_THREAD:
+        raise RequestValidationError(
+            [
+                {
+                    "loc": ("query", "apartment_id"),
+                    "msg": "apartment_id needs post_type=APARTMENT_THREAD",
+                    "type": "value_error",
+                }
+            ]
+        )
+    return await service.list_posts(user, post_type, category, limit, offset, apartment_id)
 
 
 @router.post(
@@ -93,7 +108,12 @@ async def list_posts(
     responses=error_responses(
         {
             403: ["FORBIDDEN"],
-            422: ["VALIDATION_ERROR", "INVALID_TARGET", "INVALID_AUTHOR_APARTMENT"],
+            422: [
+                "VALIDATION_ERROR",
+                "INVALID_TARGET",
+                "INVALID_AUTHOR_APARTMENT",
+                "APARTMENT_HAS_NO_RESIDENTS",
+            ],
         }
     ),
 )

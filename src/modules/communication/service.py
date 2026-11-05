@@ -1,4 +1,5 @@
-"""Public facade of the communication module: emergency alerts, official notices and the forum.
+"""Public facade of the communication module: emergency alerts, official notices, the forum and
+the board <-> apartment threads (epic E8).
 
 Rules live in docs/API.md (section 4) and docs/ROADMAP_MVP.md (section D). Apartments and author
 badges come from PropertyService; property models are never imported or joined.
@@ -9,7 +10,18 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 
 from fastapi import Depends
-from sqlalchemy import ColumnElement, Text, and_, func, literal, or_, select, update
+from sqlalchemy import (
+    ColumnElement,
+    Text,
+    and_,
+    exists,
+    false,
+    func,
+    literal,
+    or_,
+    select,
+    update,
+)
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,10 +32,12 @@ from src.core.exceptions import DomainError
 from src.modules.communication.events import EmergencyAlertPublished, EmergencyAlertResolved
 from src.modules.communication.models import Comment, EmergencyAck, Post
 from src.modules.communication.policies import (
+    FEED_HIDDEN_TYPES,
     can_publish,
     is_deletable,
     sees_all_targets,
     target_problem,
+    thread_author_apartment,
 )
 from src.modules.communication.schemas import (
     AcknowledgeResponse,
@@ -52,8 +66,21 @@ def _invalid_target(message: str, **extra: object) -> DomainError:
     return DomainError(status_code=422, error_code="INVALID_TARGET", message=message, extra=extra)
 
 
+def _invalid_author_apartment() -> DomainError:
+    return DomainError(
+        status_code=422,
+        error_code="INVALID_AUTHOR_APARTMENT",
+        message="You can only write on behalf of an apartment you belong to.",
+    )
+
+
 def _author_key(item: Post | Comment) -> AuthorKey:
     return (item.author_user_id, item.author_apartment_id)
+
+
+def _thread_apartment(post: Post) -> uuid.UUID:
+    (apartment_id,) = post.target_apartment_ids or ()  # exactly one, a database check
+    return uuid.UUID(apartment_id)
 
 
 class CommunicationService:
@@ -193,17 +220,27 @@ class CommunicationService:
         category: PostCategory | None,
         limit: int,
         offset: int,
+        apartment_id: uuid.UUID | None = None,
     ) -> list[PostView]:
+        """The feed, newest first; without post_type it leaves the private threads out.
+
+        `post_type=APARTMENT_THREAD` is the inbox, sorted by the newest activity, and only it
+        takes `apartment_id` (the router rejects it otherwise).
+        """
         statement = select(Post).where(self._visible_to(user))
-        if post_type is not None:
+        if post_type is None:
+            statement = statement.where(Post.post_type.not_in(sorted(FEED_HIDDEN_TYPES)))
+        else:
             statement = statement.where(Post.post_type == post_type)
         if category is not None:
             statement = statement.where(Post.category == category)
+        if apartment_id is not None:
+            statement = statement.where(Post.target_apartment_ids.contains([str(apartment_id)]))
+        inbox = post_type == PostType.APARTMENT_THREAD
+        newest = Post.last_activity_at if inbox else Post.created_at
         posts = list(
             await self.session.scalars(
-                statement.order_by(Post.created_at.desc(), Post.id.desc())
-                .limit(limit)
-                .offset(offset)
+                statement.order_by(newest.desc(), Post.id.desc()).limit(limit).offset(offset)
             )
         )
         return await self._post_views(user, posts)
@@ -249,11 +286,14 @@ class CommunicationService:
         ):
             raise _invalid_target(problem)
         await self._check_target_exists(user, request)
-        author_apartment_id = self._author_apartment(
-            user,
-            request.author_apartment_id,
-            default_to_membership=request.post_type == PostType.FORUM_TOPIC,
-        )
+        if request.post_type == PostType.APARTMENT_THREAD:
+            author_apartment_id = await self._check_new_thread(user, request)
+        else:
+            author_apartment_id = self._author_apartment(
+                user,
+                request.author_apartment_id,
+                default_to_membership=request.post_type == PostType.FORUM_TOPIC,
+            )
 
         post = Post(
             building_id=user.building_id,
@@ -301,9 +341,14 @@ class CommunicationService:
                 error_code="COMMENTS_DISABLED",
                 message="Comments are disabled for this post.",
             )
-        author_apartment_id = self._author_apartment(
-            user, request.author_apartment_id, default_to_membership=True
-        )
+        if post.post_type == PostType.APARTMENT_THREAD:
+            author_apartment_id = self._thread_author(
+                user, _thread_apartment(post), request.author_apartment_id
+            )
+        else:
+            author_apartment_id = self._author_apartment(
+                user, request.author_apartment_id, default_to_membership=True
+            )
         comment = Comment(
             post_id=post.id,
             building_id=post.building_id,
@@ -313,6 +358,12 @@ class CommunicationService:
         )
         self.session.add(comment)
         await self.session.flush()
+        # greatest(): a concurrent comment with a later time is never overwritten by this one.
+        await self.session.execute(
+            update(Post)
+            .where(Post.id == post.id)
+            .values(last_activity_at=func.greatest(Post.last_activity_at, comment.created_at))
+        )
         badge = await self.property_service.get_masked_author_badge(user.id, author_apartment_id)
         return self._comment_view(user, comment, badge)
 
@@ -348,15 +399,32 @@ class CommunicationService:
 
     @staticmethod
     def _visible_to(user: CurrentUserDTO) -> ColumnElement[bool]:
-        """Posts of the caller's building that target the caller (the board sees all of them).
+        """Posts of the caller's building that the caller may see; one rule per post type.
 
-        ENTRANCE matches any entrance of the caller's apartments, APARTMENT_LIST any of the
-        caller's apartments, so a user with two apartments sees the alerts of both. A deleted
-        forum topic is hidden from everyone, the chairman included.
+        The board sees every post. Otherwise emergencies, notices and forum topics follow their
+        target, and threads the "since they moved in" rule (_visible_threads). A deleted forum
+        topic is hidden from everyone, the chairman included.
         """
         in_building = and_(Post.building_id == user.building_id, Post.deleted_at.is_(None))
         if sees_all_targets(user.building_role):
             return in_building
+        targeted = and_(
+            Post.post_type != PostType.APARTMENT_THREAD,
+            CommunicationService._targeting(user),
+        )
+        threads = and_(
+            Post.post_type == PostType.APARTMENT_THREAD,
+            CommunicationService._visible_threads(user),
+        )
+        return and_(in_building, or_(targeted, threads))
+
+    @staticmethod
+    def _targeting(user: CurrentUserDTO) -> ColumnElement[bool]:
+        """The posts whose target includes the caller.
+
+        ENTRANCE matches any entrance of the caller's apartments, APARTMENT_LIST any of the
+        caller's apartments, so a user with two apartments sees the alerts of both.
+        """
         targeted: list[ColumnElement[bool]] = [Post.target_scope == TargetScope.ALL_BUILDING]
         if entrances := sorted({membership.entrance for membership in user.memberships}):
             targeted.append(
@@ -370,7 +438,43 @@ class CommunicationService:
                     Post.target_apartment_ids.has_any(literal(apartment_ids, ARRAY(Text))),
                 )
             )
-        return and_(in_building, or_(*targeted))
+        return or_(*targeted)
+
+    @staticmethod
+    def _visible_threads(user: CurrentUserDTO) -> ColumnElement[bool]:
+        """Threads of the caller's apartments started no earlier than their membership.
+
+        A member who wrote in a thread from that apartment keeps it: reopening an ended
+        membership moves `since` to now, and the resident must not lose the threads they took
+        part in. Writing as the board does not count, so a former board member who moves in
+        later does not read the previous residents' threads.
+        """
+        if not user.memberships:
+            return false()
+        return or_(
+            *(
+                and_(
+                    Post.target_apartment_ids.contains([str(membership.apartment_id)]),
+                    or_(
+                        Post.created_at >= membership.since,
+                        CommunicationService._wrote_from(user, membership.apartment_id),
+                    ),
+                )
+                for membership in user.memberships
+            )
+        )
+
+    @staticmethod
+    def _wrote_from(user: CurrentUserDTO, apartment_id: uuid.UUID) -> ColumnElement[bool]:
+        """The caller started the post or commented on it on behalf of this apartment."""
+        return or_(
+            and_(Post.author_user_id == user.id, Post.author_apartment_id == apartment_id),
+            exists().where(
+                Comment.post_id == Post.id,
+                Comment.author_user_id == user.id,
+                Comment.author_apartment_id == apartment_id,
+            ),
+        )
 
     async def _visible_post(self, user: CurrentUserDTO, post_id: uuid.UUID) -> Post:
         post = await self.session.scalar(
@@ -407,15 +511,41 @@ class CommunicationService:
         """
         if requested is not None:
             if user.membership_for(requested) is None:
-                raise DomainError(
-                    status_code=422,
-                    error_code="INVALID_AUTHOR_APARTMENT",
-                    message="You can only write on behalf of an apartment you belong to.",
-                )
+                raise _invalid_author_apartment()
             return requested
         if default_to_membership and user.memberships:
             return user.memberships[0].apartment_id
         return None
+
+    async def _check_new_thread(
+        self, user: CurrentUserDTO, request: PostCreateRequest
+    ) -> uuid.UUID | None:
+        """A thread goes to one apartment of the building (checked before): the board writes to
+        any of them, anyone else only from their own. Returns the author's apartment."""
+        (apartment_id,) = request.target_apartment_ids or ()
+        if not sees_all_targets(user.building_role) and user.membership_for(apartment_id) is None:
+            raise DomainError(
+                status_code=403,
+                error_code="FORBIDDEN",
+                message="You can write to the board only from an apartment you belong to.",
+            )
+        if not await self.property_service.has_active_members(apartment_id):
+            raise DomainError(
+                status_code=422,
+                error_code="APARTMENT_HAS_NO_RESIDENTS",
+                message="Nobody in this apartment could read the thread.",
+            )
+        return self._thread_author(user, apartment_id, request.author_apartment_id)
+
+    @staticmethod
+    def _thread_author(
+        user: CurrentUserDTO, thread_apartment_id: uuid.UUID, requested: uuid.UUID | None
+    ) -> uuid.UUID | None:
+        """The server decides who writes as whom; an explicit apartment must agree with it."""
+        author_apartment_id = thread_author_apartment(thread_apartment_id, user.apartment_ids)
+        if requested is not None and requested != author_apartment_id:
+            raise _invalid_author_apartment()
+        return author_apartment_id
 
     async def _post_views(self, user: CurrentUserDTO, posts: list[Post]) -> list[PostView]:
         if not posts:
@@ -460,6 +590,7 @@ class CommunicationService:
             comments_enabled=post.comments_enabled,
             comments_count=comments_count,
             created_at=post.created_at,
+            last_activity_at=post.last_activity_at,
         )
 
     @staticmethod

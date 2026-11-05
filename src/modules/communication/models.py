@@ -14,6 +14,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
+    Index,
     Integer,
     String,
     Text,
@@ -45,8 +46,21 @@ TARGET_CONSISTENT_CHECK = (
 )
 
 
+# An APARTMENT_THREAD targets exactly one apartment: TARGET_CONSISTENT_CHECK already makes the
+# list a non-empty array, so "no second element" is enough. Lax JSON path mode never raises.
+THREAD_ONE_APARTMENT_CHECK = (
+    "post_type <> 'APARTMENT_THREAD' OR (target_scope = 'APARTMENT_LIST'"
+    " AND NOT jsonb_path_exists(target_apartment_ids, '$[1]'))"
+)
+
+
 def _utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def _created_at_of_row(context: Any) -> datetime:
+    """Default of last_activity_at: the row's own created_at (a new post has no comments)."""
+    return context.get_current_parameters()["created_at"]
 
 
 def _timestamp(**kwargs: Any) -> Mapped[datetime]:
@@ -60,7 +74,7 @@ def _timestamp(**kwargs: Any) -> Mapped[datetime]:
 
 
 class Post(Base):
-    """An emergency alert, an official notice or a forum topic of one building."""
+    """An emergency alert, an official notice, a forum topic or a board <-> apartment thread."""
 
     __tablename__ = "comm_posts"
     __table_args__ = (
@@ -92,6 +106,19 @@ class Post(Base):
         CheckConstraint(
             "(deleted_at IS NULL) = (deleted_by_user_id IS NULL)",
             name="ck_comm_posts_deleted_consistent",
+        ),
+        # Board <-> apartment threads (E8/P2): one apartment, always open for replies.
+        CheckConstraint(THREAD_ONE_APARTMENT_CHECK, name="ck_comm_posts_thread_one_apartment"),
+        CheckConstraint(
+            "post_type <> 'APARTMENT_THREAD' OR comments_enabled",
+            name="ck_comm_posts_thread_comments_enabled",
+        ),
+        CheckConstraint(
+            "last_activity_at >= created_at", name="ck_comm_posts_activity_after_creation"
+        ),
+        # The thread inbox: one building's threads by their newest activity.
+        Index(
+            "ix_comm_posts_building_type_activity", "building_id", "post_type", "last_activity_at"
         ),
     )
 
@@ -132,6 +159,13 @@ class Post(Base):
         Boolean, nullable=False, default=True, server_default=text("true")
     )
     created_at: Mapped[datetime] = _timestamp(index=True)
+    # Moved forward by every new comment (greatest(), so it never goes back).
+    last_activity_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=_created_at_of_row,
+        server_default=func.now(),
+    )
     # Soft delete by the chairman: hidden from every read, kept for disputes (who deleted, when).
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     deleted_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
