@@ -269,6 +269,13 @@ not of the feed.
   call is idempotent), or simply fetch `unread-count` again.
 - **Texts:** the feed returns codes (`event_type`, `params`), not texts; render them per locale,
   like `error_code`. Load the post (`subject_id`) if the title is needed.
+- **Messages with the board** (epic E8): `APARTMENT_MESSAGE` reads "New message from the board"
+  when `params.from_board` is `true`, else "New message in your apartment's conversation with the
+  board"; `APARTMENT_MESSAGE_TO_BOARD` reads "New message from apartment
+  `{params.apartment_number}`". Both open the thread (`subject_id`). In the preferences, the
+  board's type is off outside the app by default; show it only to the chairman and the board.
+  A notification stays in the feed after its reader moved out or left the board: `404` on the
+  thread then means "no longer available", not an error.
 - The emergency banner keeps its own polling (section 8); an emergency also appears in the feed.
 - **Linking Telegram** (settings page; only when `GET /notifications/preferences` lists
   `telegram` without `CHANNEL_NOT_ENABLED` or `DEMO_MODE`): `POST /notifications/telegram/link-code`

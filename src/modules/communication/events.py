@@ -32,3 +32,19 @@ class EmergencyAlertResolved(DomainEvent):
     post_id: uuid.UUID
     building_id: uuid.UUID
     resolved_by_user_id: uuid.UUID
+
+
+@dataclass(frozen=True, kw_only=True)
+class ApartmentMessagePosted(DomainEvent):
+    """A board <-> apartment thread was started (comment_id None) or answered (epic E8).
+
+    Recipients are not in the payload: the notifier asks CommunicationService who sees the
+    thread, so the one visibility rule decides.
+    """
+
+    post_id: uuid.UUID
+    comment_id: uuid.UUID | None
+    building_id: uuid.UUID
+    apartment_id: uuid.UUID
+    author_user_id: uuid.UUID
+    from_board: bool  # the author wrote as the board, without an apartment

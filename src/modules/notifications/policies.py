@@ -10,7 +10,7 @@ import hmac
 import re
 import secrets
 import uuid
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime, time, timedelta, tzinfo
 
 from src.modules.notifications.schemas import Channel, NotificationEventType, UnavailableReason
@@ -37,7 +37,20 @@ DEFAULT_PREFERENCES: Mapping[tuple[NotificationEventType, Channel], bool] = {
     (_E.PERIOD_REVIEW, _C.EMAIL): True,
     (_E.PERIOD_REVIEW, _C.TELEGRAM): False,
     (_E.PERIOD_REVIEW, _C.WEBPUSH): False,
+    (_E.APARTMENT_MESSAGE, _C.IN_APP): True,
+    (_E.APARTMENT_MESSAGE, _C.EMAIL): True,
+    (_E.APARTMENT_MESSAGE, _C.TELEGRAM): True,
+    (_E.APARTMENT_MESSAGE, _C.WEBPUSH): True,
+    # The board is notified quietly: in the app only, unless a member opts in (owner, E8).
+    (_E.APARTMENT_MESSAGE_TO_BOARD, _C.IN_APP): True,
+    (_E.APARTMENT_MESSAGE_TO_BOARD, _C.EMAIL): False,
+    (_E.APARTMENT_MESSAGE_TO_BOARD, _C.TELEGRAM): False,
+    (_E.APARTMENT_MESSAGE_TO_BOARD, _C.WEBPUSH): False,
 }
+
+APARTMENT_MESSAGE_EVENTS = frozenset(
+    {NotificationEventType.APARTMENT_MESSAGE, NotificationEventType.APARTMENT_MESSAGE_TO_BOARD}
+)
 
 # Plugins behind the external channels (in_app is built in).
 CHANNEL_PLUGINS: Mapping[Channel, str] = {
@@ -154,6 +167,32 @@ def reading_deadline_key(period_id: uuid.UUID) -> str:
 def period_review_key(period_id: uuid.UUID, event_id: uuid.UUID) -> str:
     # The event id, so a period that is reopened and reviewed again notifies again.
     return f"period_review:{period_id}:{event_id}"
+
+
+def apartment_message_key(post_id: uuid.UUID, comment_id: uuid.UUID | None) -> str:
+    """One key per message: the thread itself, or one reply in it."""
+    if comment_id is None:
+        return f"apartment_message:{post_id}"
+    return f"apartment_message:{post_id}:{comment_id}"
+
+
+def split_message_recipients(
+    author_user_id: uuid.UUID,
+    from_board: bool,
+    readers: Iterable[uuid.UUID],
+    board: Iterable[uuid.UUID],
+) -> tuple[list[uuid.UUID], list[uuid.UUID]]:
+    """Who gets APARTMENT_MESSAGE and who APARTMENT_MESSAGE_TO_BOARD for one thread message.
+
+    `readers` are the apartment's members who see the thread, `board` the chairman and the
+    board. Never the author; a board member who is also a reader is told once, as a resident;
+    a message from the board notifies no other board member.
+    """
+    residents = [user_id for user_id in dict.fromkeys(readers) if user_id != author_user_id]
+    if from_board:
+        return residents, []
+    told = {author_user_id, *residents}
+    return residents, [user_id for user_id in dict.fromkeys(board) if user_id not in told]
 
 
 def external_channels_allowed(occurred_at: datetime, processed_at: datetime) -> bool:

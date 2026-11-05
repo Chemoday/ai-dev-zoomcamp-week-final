@@ -445,7 +445,7 @@ A private conversation between the board and one apartment (docs/epics/E8_APARTM
 - **An apartment without residents** (no active member with an active account) is `422 APARTMENT_HAS_NO_RESIDENTS`: nobody but the board could ever read the thread.
 - **A record:** `comments_enabled` must be `true` (`422 VALIDATION_ERROR`), and threads are never edited or deleted (`409 POST_NOT_DELETABLE`). `category` is free, default `GENERAL`.
 - **Not in the forum feed:** see the inbox in `GET /posts` below.
-- Notifications about new messages come with task P3 (#81); P2 emits no event.
+- Every new thread and every reply emits `ApartmentMessagePosted` (see "Domain events"); the notifications are in section 6.
 
 ### `GET /api/v1/communication/emergencies/active`
 Active `EMERGENCY` posts that target the caller (see "Who sees which post"), newest first. Each item is a post object plus `acknowledged_at`: when the caller acknowledged it, or `null`. The UI shows the sticky banner for items with `acknowledged_at: null`.
@@ -512,6 +512,7 @@ Request: `{"body": "Good idea!", "author_apartment_id": null}`. Response `201 Cr
 Published on the event bus **after** the request's transaction commits (never for a rolled-back change). Payloads carry ids, codes and the target only, no titles, bodies or names; a notifier reads the text through `CommunicationService`.
 - `EmergencyAlertPublished`: `post_id`, `building_id`, `category`, `target_scope`, `target_entrance`, `target_apartment_ids`, `published_by_user_id`.
 - `EmergencyAlertResolved`: `post_id`, `building_id`, `resolved_by_user_id`.
+- `ApartmentMessagePosted` (E8/P3): a new `APARTMENT_THREAD` or a comment on one. `post_id`, `comment_id` (`null` for the thread itself), `building_id`, `apartment_id`, `author_user_id`, `from_board` (the author wrote as the board, without an apartment).
 
 Further moderation (authors deleting their own posts, hiding single comments, reports, a moderation log) is in the Phase 2 backlog, docs/ROADMAP_MVP.md.
 
@@ -553,13 +554,14 @@ Seeded at startup by `src/core/seed.py` when `SEED_DEMO_DATA=true` (local Docker
 > resolved emergencies and periods in review; the feed, preferences and the notification language
 > (N2); e-mail (N3); Telegram linking, the webhook and the bindings API (N4); WebPush (N5); reading
 > reminders and the deletion of old notifications (N6); unsubscribing from e-mail and the
-> Telegram `/stop` (N8). **Planned** (marked below; not in
+> Telegram `/stop` (N8); messages between the board and an apartment (epic E8, task P3). **Planned** (marked below; not in
 > `docs/openapi.json` yet): push to the native phone app (N7). Every current environment runs in demo mode, so only `in_app` delivers
 > there and the other channels are reported unavailable. Design: [docs/epics/E1_NOTIFICATIONS.md](epics/E1_NOTIFICATIONS.md).
 
 ### How notifications reach people
 - Notifications are created from domain events: a published or resolved emergency, a reading
-  deadline that is close, a period sent to review. Nobody creates them through the API.
+  deadline that is close, a period sent to review, a message between the board and an apartment.
+  Nobody creates them through the API.
 - **Channels:** `in_app` (the feed below, always available), `email` (when the user has an
   e-mail address), `telegram`, `webpush` and *(planned, N7)* `mobile_push` (after linking, see
   below). External channels are plugins; a channel whose plugin is not in `ENABLED_PLUGINS` is
@@ -574,8 +576,9 @@ Seeded at startup by `src/core/seed.py` when `SEED_DEMO_DATA=true` (local Docker
   reminders, "period in review", the target line and a fixed footer with a link to the site) is a
   fixed system text in the user's `locale`. The chairman cannot change system texts. What leaves
   the system on external channels: the event type, the emergency title and body (written by the
-  board), the target (e.g. "entrance 2"), the period code and due date, and a link to the site.
-  Comments, forum posts and author names never do.
+  board), the target (e.g. "entrance 2"), the period code and due date, that a message between the
+  board and an apartment exists and the apartment number, and a link to the site. Comments, forum
+  posts, thread messages and author names never do.
 - **Who gets what:**
 
 | `event_type` | Recipients | Mandatory |
@@ -584,6 +587,18 @@ Seeded at startup by `src/core/seed.py` when `SEED_DEMO_DATA=true` (local Docker
 | `EMERGENCY_RESOLVED` | one per `EMERGENCY_PUBLISHED` notification that was sent (same channel and device), filtered by preferences; never the person who resolved it | no |
 | `READING_DEADLINE` | active members with `can_submit_readings` of apartments where at least one active meter has no reading in the open period; sent between 09:00 and 21:00 local time, starting `READING_REMINDER_DAYS_BEFORE` (default 2) days before the deadline day; if that window is missed, the next window before `due_date` is used, and a message that would go out at night (a retry, an outage) waits for 09:00 local time, and after `due_date` nothing is sent; once per period: once reminders were stored, members who become reachable later are not reminded | no |
 | `PERIOD_REVIEW` | the chairman and accountants when a period moves to `REVIEW_BY_BOARD`, except the person who moved it | no |
+| `APARTMENT_MESSAGE` | a new thread or reply (`APARTMENT_THREAD`, section 4): the active members of the thread's apartment who see the thread, except the author. A board member who is also such a member gets only this one, once | no |
+| `APARTMENT_MESSAGE_TO_BOARD` | a new thread or reply written from the apartment (not by the board): the chairman and the board members, except the author and those who already get `APARTMENT_MESSAGE`. A message written by the board notifies no other board member | no |
+
+- **Messages between the board and an apartment** follow the thread's visibility rule (section 4)
+  twice: when the event is processed, and right before an external message is sent (someone who
+  meanwhile moved out or left the board is skipped with `SUBJECT_NOT_FOUND`). Every message
+  notifies, there is no "one until read". The texts never contain the subject, the message or the
+  author: "New message from the board", "New message in your apartment's conversation with the
+  board" (a co-resident wrote) and, for the board, "New message from apartment 14". WebPush
+  collapses the messages of one thread into the latest one (the collapse key is the post).
+  An in-app notification stays in the feed after its recipient lost access to the thread; opening
+  its subject then answers `404 POST_NOT_FOUND`.
 
 - Users who join, link a channel or add a device while an emergency is active see it as the banner
   (`GET /api/v1/communication/emergencies/active`); old alerts are not sent to them on any channel.
@@ -606,6 +621,11 @@ Seeded at startup by `src/core/seed.py` when `SEED_DEMO_DATA=true` (local Docker
 | `EMERGENCY_RESOLVED` | on | off | on | on |
 | `READING_DEADLINE` | on | on | on | on |
 | `PERIOD_REVIEW` | on | on | off | off |
+| `APARTMENT_MESSAGE` | on | on | on | on |
+| `APARTMENT_MESSAGE_TO_BOARD` | on | off | off | off |
+
+The board is notified quietly (owner decision, epic E8): only in the app by default; each board
+member can switch on e-mail, Telegram or WebPush in the preferences.
 
 *(Planned, N7:)* `mobile_push` takes the same defaults as `webpush`.
 
@@ -624,7 +644,10 @@ Seeded at startup by `src/core/seed.py` when `SEED_DEMO_DATA=true` (local Docker
 - `subject_type` `post` links to `GET /api/v1/communication/posts/{subject_id}`; `period` links to
   the readings of that period (`params.period_code`).
 - `params` by `event_type`: emergencies `category`, `target_scope`, `target_entrance`;
-  `READING_DEADLINE` `period_code`, `due_date`; `PERIOD_REVIEW` `period_code`.
+  `READING_DEADLINE` `period_code`, `due_date`; `PERIOD_REVIEW` `period_code`;
+  `APARTMENT_MESSAGE` and `APARTMENT_MESSAGE_TO_BOARD` `apartment_id`, `apartment_number` and
+  `from_board` (`true`: the board wrote; `false`: a resident of the apartment wrote). The subject
+  is the thread (`subject_type` `post`), also for a reply.
 - Contains no names, titles or bodies; the frontend loads the post if it needs the title.
 
 ### `GET /api/v1/notifications/feed?unread_only=false&limit=50&offset=0`
@@ -663,14 +686,15 @@ The full matrix with defaults filled in, plus which channels can reach the calle
 ```
 - `reason` when not available, first match wins: `DEMO_MODE`, `CHANNEL_NOT_ENABLED`, then `NO_EMAIL`
   (e-mail) or `NOT_LINKED` (Telegram, WebPush, mobile push).
-- `preferences` always has all 16 combinations of `event_type` and `channel` (20 once
+- `preferences` always has all 24 combinations of `event_type` and `channel` (30 once
   `mobile_push` exists, N7).
 
 ### `PUT /api/v1/notifications/preferences`
 Request: `{"preferences": [{"event_type": "PERIOD_REVIEW", "channel": "telegram", "enabled": true}]}`.
 Only the listed combinations change. Response: the same body as the `GET`.
 - All or nothing, in one transaction. An empty list changes nothing.
-- The same combination twice in one request: `422 VALIDATION_ERROR`.
+- The same combination twice in one request, or more entries than there are combinations:
+  `422 VALIDATION_ERROR`.
 - Switching off a mandatory combination: `422 PREFERENCE_MANDATORY` (nothing is changed);
   `enabled: true` on it is accepted and changes nothing.
 - A value equal to the default removes the stored row (only deviations are stored).
@@ -678,7 +702,7 @@ Only the listed combinations change. Response: the same body as the `GET`.
 
 ### Unsubscribing from e-mail (N8)
 Every e-mail of a **non-mandatory** event (`EMERGENCY_RESOLVED`, `READING_DEADLINE`,
-`PERIOD_REVIEW`) lets the person stop that kind of e-mail without signing in. One unsubscribe turns
+`PERIOD_REVIEW`, `APARTMENT_MESSAGE`, `APARTMENT_MESSAGE_TO_BOARD`) lets the person stop that kind of e-mail without signing in. One unsubscribe turns
 off exactly one preference: that `event_type` on `email` (owner decision 2026-11-04). The other
 channels and the other e-mails stay as they are; the person turns it back on in the preferences.
 - **In the e-mail:**

@@ -150,7 +150,8 @@ Default preferences (a user can change the non-mandatory ones):
   association are listed.
 - **What leaves the system on external channels:** the event type, the emergency title **and
   body** (written by the board; only the board can publish emergencies), the target (e.g.
-  "entrance 2"), the period code and due date, and a link to the site. Comments, forum posts and
+  "entrance 2"), the period code and due date, that a message between the board and an apartment
+  exists and the apartment number (epic E8), and a link to the site. Comments, forum posts and
   author names stay in the app.
 
 ## 6. Channels as plugins

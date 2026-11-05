@@ -24,7 +24,11 @@ from src.core.domain_events import SessionFactory
 from src.core.event_bus import EventBus
 from src.core.exceptions import DomainError
 from src.modules.auth.events import UserAccountClosed
-from src.modules.communication.events import EmergencyAlertPublished, EmergencyAlertResolved
+from src.modules.communication.events import (
+    ApartmentMessagePosted,
+    EmergencyAlertPublished,
+    EmergencyAlertResolved,
+)
 from src.modules.communication.service import CommunicationService
 from src.modules.meters.events import ReadingPeriodStatusChanged
 from src.modules.meters.schemas import PeriodStatus
@@ -32,6 +36,7 @@ from src.modules.notifications.models import ChannelBinding, Delivery, LinkCode,
 from src.modules.notifications.policies import (
     CHANNEL_PLUGINS,
     DEFAULT_PREFERENCES,
+    apartment_message_key,
     channel_unavailable_reason,
     emergency_key,
     emergency_resolved_key,
@@ -40,6 +45,7 @@ from src.modules.notifications.policies import (
     is_mandatory,
     period_review_key,
     priority_for,
+    split_message_recipients,
     unsubscribe_delivery_id,
 )
 from src.modules.notifications.schemas import (
@@ -57,7 +63,13 @@ from src.modules.notifications.schemas import (
     UnreadCountResponse,
     UnsubscribeResponse,
 )
-from src.modules.property.schemas import BuildingRole, CurrentUserDTO, Locale, RecipientDTO
+from src.modules.property.schemas import (
+    BuildingRole,
+    CurrentUserDTO,
+    Locale,
+    RecipientDTO,
+    TargetScope,
+)
 from src.modules.property.service import PropertyService
 from src.plugins.registry import PluginRegistry
 
@@ -65,6 +77,8 @@ type StoredPreferences = dict[tuple[NotificationEventType, Channel], bool]
 
 _EMERGENCY_ROLES = (BuildingRole.CHAIRMAN, BuildingRole.BOARD)
 _PERIOD_REVIEW_ROLES = (BuildingRole.CHAIRMAN, BuildingRole.ACCOUNTANT)
+# Candidates for APARTMENT_MESSAGE_TO_BOARD; communication's visibility rule has the last word.
+_THREAD_BOARD_ROLES = (BuildingRole.CHAIRMAN, BuildingRole.BOARD)
 
 
 def _now() -> datetime:
@@ -391,6 +405,7 @@ class NotificationsSubscriber:
         bus.subscribe(EmergencyAlertPublished, self.on_emergency_published)
         bus.subscribe(EmergencyAlertResolved, self.on_emergency_resolved)
         bus.subscribe(ReadingPeriodStatusChanged, self.on_period_status_changed)
+        bus.subscribe(ApartmentMessagePosted, self.on_apartment_message)
         bus.subscribe(UserAccountClosed, self.on_account_closed)
 
     async def on_account_closed(self, event: UserAccountClosed) -> None:
@@ -493,6 +508,73 @@ class NotificationsSubscriber:
                 params={"period_code": event.period_code},
             )
             await session.commit()
+
+    async def on_apartment_message(self, event: ApartmentMessagePosted) -> None:
+        """A new thread or reply: the apartment's members who see it, and the board quietly.
+
+        Candidates come from property, and communication's visibility rule decides who of them
+        sees the thread (the "since moving in" rule included); the dispatcher asks again before
+        sending. A message notifies on every channel the person wants: there is no "once until
+        read", the threads are low volume (owner decision, E8).
+        """
+        async with self._session() as session:
+            properties = PropertyService(session)
+            communication = CommunicationService(session, properties)
+            thread = await communication.get_thread_ref(event.post_id)
+            if thread is None:
+                return
+            apartment = await properties.apartment_ref(thread.apartment_id)
+            if apartment is None:
+                return
+            members = await properties.resolve_recipients(
+                thread.building_id, TargetScope.APARTMENT_LIST, None, [thread.apartment_id]
+            )
+            board = await properties.users_with_roles(thread.building_id, _THREAD_BOARD_ROLES)
+            candidates = {r.user_id: r for r in (*members, *board)}
+            # Both groups pass the one visibility rule: the roles only narrow the candidates.
+            readers = [
+                r.user_id
+                for r in members
+                if await self._can_read(properties, communication, r.user_id, thread.post_id)
+            ]
+            board_readers = [
+                r.user_id
+                for r in board
+                if await self._can_read(properties, communication, r.user_id, thread.post_id)
+            ]
+            residents, board_only = split_message_recipients(
+                event.author_user_id, event.from_board, readers, board_readers
+            )
+            subject = (SubjectType.POST, thread.post_id)
+            params = {
+                "apartment_id": str(thread.apartment_id),
+                "apartment_number": apartment.number,
+                "from_board": event.from_board,
+            }
+            dedup_key = apartment_message_key(thread.post_id, event.comment_id)
+            for event_type, user_ids in (
+                (NotificationEventType.APARTMENT_MESSAGE, residents),
+                (NotificationEventType.APARTMENT_MESSAGE_TO_BOARD, board_only),
+            ):
+                await self.notify(
+                    session,
+                    [candidates[user_id] for user_id in user_ids],
+                    event_type=event_type,
+                    dedup_key=dedup_key,
+                    subject=subject,
+                    params=params,
+                )
+            await session.commit()
+
+    @staticmethod
+    async def _can_read(
+        properties: PropertyService,
+        communication: CommunicationService,
+        user_id: uuid.UUID,
+        post_id: uuid.UUID,
+    ) -> bool:
+        user = await properties.get_current_user(user_id)
+        return user is not None and await communication.can_read_post(user, post_id)
 
     async def notify(
         self,
