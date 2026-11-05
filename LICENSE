@@ -7,8 +7,9 @@ of this file. The licensor is Aleksandr Kuhhar or his successors and assigns.
 
 In short: an apartment association may run the software for itself free of charge, forever,
 and anyone may help it do so on infrastructure the association controls. Hosting the software
-on your own infrastructure for associations other than your own, or offering it as a service,
-needs a separate written license from the licensor.
+on your own infrastructure for associations other than your own, selling a recurring service
+for it (updates, support) to more than one association, or offering it as a service, needs a
+separate written license from the licensor.
 
 --------------------------------------------------------------------------------
 
@@ -111,9 +112,10 @@ these terms.
 Additional Permissions
 
 The licensor grants the following permissions in addition to the Elastic License 2.0 above.
-They only add to that license and never restrict it. They are part of these terms (including
-Termination and No Liability) and are perpetual and irrevocable for every version of the
-software released under this file, except as stated in Termination.
+Sentences marked "for clarity" state how the Limitations above apply to this software. All of
+this section is part of these terms (including Termination and No Liability), and the
+permissions are perpetual and irrevocable for every version of the software released under
+this file, except as stated in Termination.
 
 Definitions used below:
 - "Association" means an apartment association, a housing cooperative, a condominium or a
@@ -133,18 +135,34 @@ Definitions used below:
    buildings and give access to its residents, owners, board members, staff and contractors.
    This is not providing the software to third parties as a hosted or managed service.
 
-2. Help on the association's infrastructure. Anyone, for example an IT company, a freelancer
-   or a member or resident, may install, configure, update and maintain an installation for an
-   association, paid or unpaid and for any number of associations, as long as the
-   installation runs on infrastructure the association controls, or on infrastructure
-   permitted by 3 or 4. This is not providing the software as a hosted or managed service.
+2. Help for an association. Anyone, for example a member, a resident, a friend or an IT
+   contractor, may install, configure, update and maintain an installation for an
+   association, paid or unpaid, on infrastructure the association controls or on
+   infrastructure permitted by 3 or 4. Except as stated in the next sentence, this is not
+   providing the software as a hosted or managed service. For clarity, installing, updating,
+   running or giving technical support for installations of the software (only using an
+   installation as described in 5, or helping its users use it, is not such work) for more
+   than one association at the same time, on a continuing basis and for payment or other
+   consideration (whether sold as a subscription, retainer or support plan, invoiced per job,
+   or included in another paid service), is providing the software as a managed service under
+   the Limitations above and needs a
+   separate written license from the licensor, also when every association controls its own
+   infrastructure; you are counted together with your company (as defined in the Elastic
+   License 2.0 above). Occasional one-off jobs, such as a single installation or repair, are
+   not on a continuing basis, even when you do such jobs for several associations. General IT
+   services are not affected as far as they do not install, update, run or give technical
+   support for installations of the software; including such work for the software in a
+   general IT, administration or property management contract does not exempt that work from
+   this rule. Hosting and maintenance under 3, and the remuneration described there, are not
+   such a service.
 
-3. A member or resident hosting for their own association. A member or resident of an
-   association may host that association's installation on infrastructure they control, for
-   that association only, without any fee beyond reimbursement of the actual infrastructure
-   cost. The hosting member or resident may not be paid for hosting or maintaining it beyond
-   that reimbursement; others may still help under 2. The first Limitation above does not
-   apply to this hosting.
+3. A member, owner or resident hosting for their own association. A person who is a member of
+   an association, or owns or occupies a flat, house or other unit in it, may host that
+   association's installation on infrastructure they control. They may do so for each such
+   association and for no other, provided they charge no fee for hosting or maintaining it
+   beyond reimbursement of the actual infrastructure cost. Remuneration for serving as a
+   board member or chairman that is not tied to hosting or maintaining the software is not
+   such a fee. The first Limitation above does not apply to this hosting.
 
 4. One association managed by a property management company. A property management company
    may host on its own infrastructure an installation for exactly one association that it
@@ -156,7 +174,9 @@ Definitions used below:
 
 6. What stays limited. For clarity, the following remain providing the software as a hosted or
    managed service under the Limitations above and need a separate written license from the
-   licensor: hosting installations for associations other than your own on infrastructure you
-   control (paid or unpaid), except as permitted in 3 and 4, and offering the software as
-   software-as-a-service or as a managed cloud. The licensor may grant such licenses,
-   including regional partner licenses for markets the licensor does not serve, on request.
+   licensor: (a) hosting installations for associations other than your own on
+   infrastructure you control, paid or unpaid, except as permitted in 3 and 4; (b) a
+   continuing service for the software, for payment or other consideration, for more than
+   one association as described in 2; (c) offering the software as software-as-a-service or
+   as a managed cloud. The licensor may grant such licenses, including regional partner
+   licenses for markets the licensor does not serve, on request.

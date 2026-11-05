@@ -202,11 +202,14 @@ Source-available under the [Elastic License 2.0 with additional permissions](LIC
 
 - **Free forever for an apartment association that runs it itself**, on a server or cloud
   account the association controls (it is the account holder and has full admin access). Anyone
-  (an IT company, a freelancer, a resident) may set it up and maintain it there, paid or not.
-- A resident may host their own association's installation for no more than the actual server
-  cost; a property management company may host one association it manages.
+  (a resident, a friend, an IT contractor) may set it up and maintain it there, paid or not
+  (ongoing paid support for more than one association needs a license, see below).
+- A member, owner or resident may host each association where they own or live in a flat or
+  house, for no more than the actual server cost (board member pay that is not for hosting does
+  not count); a property management company may host one association it manages.
 - **Needs a written license:** hosting installations on your own infrastructure for associations
-  other than your own, and offering the software as a service or managed cloud. Regional partner
+  other than your own, a recurring service for this software (updates, support plans) sold to
+  more than one association, and offering it as a service or managed cloud. Regional partner
   licenses are possible on request.
 
 Contributions are welcome under the contributor license agreement in
