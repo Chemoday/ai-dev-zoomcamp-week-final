@@ -12,7 +12,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${PUBLIC_IP:?PUBLIC_IP is required}"
 : "${DEPLOY_PUBKEY_FILE:?DEPLOY_PUBKEY_FILE is required}"
 HTTPS_PORT=${HTTPS_PORT:-443}
-REPO=${REPO:-Chemoday/ai-dev-zoomcamp-week-final}
+REPO=${REPO:-Chemoday/apartment-association-platform}
 AAP_ROOT=/opt/aap
 DASHED_IP=${PUBLIC_IP//./-}
 PROD_HOST="${DASHED_IP}.sslip.io"

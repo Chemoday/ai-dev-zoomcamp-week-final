@@ -1,6 +1,6 @@
 # E1. Notifications
 
-- **Phase:** 2. **Status:** N1, N1b and N2-N6 done (in-app notifications, the dispatcher, e-mail, Telegram, WebPush, reading reminders and clean-up; external channels send nowhere until a real login, 10.10); N8 (unsubscribe, `/stop`) done; N7 (mobile push) next, now that E7 (login) is done. **Epic issue:** [#39](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/39).
+- **Phase:** 2. **Status:** N1, N1b and N2-N6 done (in-app notifications, the dispatcher, e-mail, Telegram, WebPush, reading reminders and clean-up; external channels send nowhere until a real login, 10.10); N8 (unsubscribe, `/stop`) done; N7 (mobile push) next, now that E7 (login) is done. **Epic issue:** [#39](https://github.com/Chemoday/apartment-association-platform/issues/39).
 - **Goal:** one pluggable notification system that every module uses, instead of each feature
   sending its own messages. Reminders, emergency alerts and (later) voting all go through it.
 

@@ -71,7 +71,7 @@ services:
     command: ["python", "/agent/scripts/oncall_agent.py", "serve", "--incidents-dir", "/agent/incidents"]
     environment:
       LOKI_URL: http://lgtm:3100
-      GITHUB_REPOSITORY: ${ONCALL_GITHUB_REPOSITORY:-Chemoday/ai-dev-zoomcamp-week-final}
+      GITHUB_REPOSITORY: ${ONCALL_GITHUB_REPOSITORY:-Chemoday/apartment-association-platform}
       GITHUB_TOKEN: ${ONCALL_GITHUB_TOKEN:-}
     volumes:
       - ./scripts:/agent/scripts:ro
