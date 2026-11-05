@@ -21,7 +21,7 @@ Where this project stands apart:
 
 | Topic | This project |
 |---|---|
-| Model | Open source, self-hosted, one instance per association |
+| Model | Source-available (free for an association that runs it itself), self-hosted, one instance per association |
 | Countries | Country-agnostic core plus country plugins |
 | Privacy | Backend author masking, zero PII in logs |
 | Readings | Two-step anomaly confirmation, rolling average, period state machine, audit log |

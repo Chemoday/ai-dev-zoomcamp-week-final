@@ -1,0 +1,162 @@
+Apartment Association Platform
+Copyright (c) 2026 Aleksandr Kuhhar
+
+The software in this repository is source-available: it is licensed under the Elastic
+License 2.0, reproduced verbatim below, together with the Additional Permissions at the end
+of this file. The licensor is Aleksandr Kuhhar or his successors and assigns.
+
+In short: an apartment association may run the software for itself free of charge, forever,
+and anyone may help it do so on infrastructure the association controls. Hosting the software
+on your own infrastructure for associations other than your own, or offering it as a service,
+needs a separate written license from the licensor.
+
+--------------------------------------------------------------------------------
+
+Elastic License 2.0
+
+URL: https://www.elastic.co/licensing/elastic-license
+
+## Acceptance
+
+By using the software, you agree to all of the terms and conditions below.
+
+## Copyright License
+
+The licensor grants you a non-exclusive, royalty-free, worldwide,
+non-sublicensable, non-transferable license to use, copy, distribute, make
+available, and prepare derivative works of the software, in each case subject to
+the limitations and conditions below.
+
+## Limitations
+
+You may not provide the software to third parties as a hosted or managed
+service, where the service provides users with access to any substantial set of
+the features or functionality of the software.
+
+You may not move, change, disable, or circumvent the license key functionality
+in the software, and you may not remove or obscure any functionality in the
+software that is protected by the license key.
+
+You may not alter, remove, or obscure any licensing, copyright, or other notices
+of the licensor in the software. Any use of the licensor’s trademarks is subject
+to applicable law.
+
+## Patents
+
+The licensor grants you a license, under any patent claims the licensor can
+license, or becomes able to license, to make, have made, use, sell, offer for
+sale, import and have imported the software, in each case subject to the
+limitations and conditions in this license. This license does not cover any
+patent claims that you cause to be infringed by modifications or additions to
+the software. If you or your company make any written claim that the software
+infringes or contributes to infringement of any patent, your patent license for
+the software granted under these terms ends immediately. If your company makes
+such a claim, your patent license ends immediately for work on behalf of your
+company.
+
+## Notices
+
+You must ensure that anyone who gets a copy of any part of the software from you
+also gets a copy of these terms.
+
+If you modify the software, you must include in any modified copies of the
+software prominent notices stating that you have modified the software.
+
+## No Other Rights
+
+These terms do not imply any licenses other than those expressly granted in
+these terms.
+
+## Termination
+
+If you use the software in violation of these terms, such use is not licensed,
+and your licenses will automatically terminate. If the licensor provides you
+with a notice of your violation, and you cease all violation of this license no
+later than 30 days after you receive that notice, your licenses will be
+reinstated retroactively. However, if you violate these terms after such
+reinstatement, any additional violation of these terms will cause your licenses
+to terminate automatically and permanently.
+
+## No Liability
+
+*As far as the law allows, the software comes as is, without any warranty or
+condition, and the licensor will not be liable to you for any damages arising
+out of these terms or the use or nature of the software, under any kind of
+legal claim.*
+
+## Definitions
+
+The **licensor** is the entity offering these terms, and the **software** is the
+software the licensor makes available under these terms, including any portion
+of it.
+
+**you** refers to the individual or entity agreeing to these terms.
+
+**your company** is any legal entity, sole proprietorship, or other kind of
+organization that you work for, plus all organizations that have control over,
+are under the control of, or are under common control with that
+organization. **control** means ownership of substantially all the assets of an
+entity, or the power to direct its management and policies by vote, contract, or
+otherwise. Control can be direct or indirect.
+
+**your licenses** are all the licenses granted to you for the software under
+these terms.
+
+**use** means anything you do with the software requiring one of your licenses.
+
+**trademark** means trademarks, service marks, and similar rights.
+
+--------------------------------------------------------------------------------
+
+Additional Permissions
+
+The licensor grants the following permissions in addition to the Elastic License 2.0 above.
+They only add to that license and never restrict it. They are part of these terms (including
+Termination and No Liability) and are perpetual and irrevocable for every version of the
+software released under this file, except as stated in Termination.
+
+Definitions used below:
+- "Association" means an apartment association, a housing cooperative, a condominium or a
+  homeowners association (for example a korteriühistu, a taloyhtiö or a WEG).
+- "Installation" means one running copy of the software with its own database.
+- "Infrastructure" means servers, virtual machines, cloud accounts and domain names. Backups,
+  monitoring, e-mail and messaging services used by an installation may be provided by others.
+- A person, company or association "controls" infrastructure when it itself is the account
+  holder or contracting party with the provider, holds owner-level administrator access, and
+  can remove anyone else's access and keep running the installation without them.
+- A "property management company" is a business that manages associations' buildings under a
+  contract with them. Together with every organization that controls it, is controlled by it
+  or is under common control with it ("control" as defined in the Elastic License 2.0 above),
+  it counts as one property management company.
+
+1. Own use. An association may run installations of the software for its own building or
+   buildings and give access to its residents, owners, board members, staff and contractors.
+   This is not providing the software to third parties as a hosted or managed service.
+
+2. Help on the association's infrastructure. Anyone, for example an IT company, a freelancer
+   or a member or resident, may install, configure, update and maintain an installation for an
+   association, paid or unpaid and for any number of associations, as long as the
+   installation runs on infrastructure the association controls, or on infrastructure
+   permitted by 3 or 4. This is not providing the software as a hosted or managed service.
+
+3. A member or resident hosting for their own association. A member or resident of an
+   association may host that association's installation on infrastructure they control, for
+   that association only, without any fee beyond reimbursement of the actual infrastructure
+   cost. The hosting member or resident may not be paid for hosting or maintaining it beyond
+   that reimbursement; others may still help under 2. The first Limitation above does not
+   apply to this hosting.
+
+4. One association managed by a property management company. A property management company
+   may host on its own infrastructure an installation for exactly one association that it
+   manages, one at any time. The first Limitation above does not apply to this hosting.
+
+5. Users are not hosts. People who only sign in to an association's installation, for example
+   an accountant or an auditor who serves many associations, use the software on behalf of
+   those associations; that is covered by permission 1.
+
+6. What stays limited. For clarity, the following remain providing the software as a hosted or
+   managed service under the Limitations above and need a separate written license from the
+   licensor: hosting installations for associations other than your own on infrastructure you
+   control (paid or unpaid), except as permitted in 3 and 4, and offering the software as
+   software-as-a-service or as a managed cloud. The licensor may grant such licenses,
+   including regional partner licenses for markets the licensor does not serve, on request.

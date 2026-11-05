@@ -194,3 +194,20 @@ Frontend versions reach this repository only through the manual
 | [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) | Telemetry, the alert, the on-call agent and its demo |
 | [docs/BACKLOG.md](docs/BACKLOG.md) | Known problems after the MVP |
 | [docs/COURSE_REQUIREMENTS.md](docs/COURSE_REQUIREMENTS.md) | The course's project requirements |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute, and the contributor license agreement |
+
+## License
+
+Source-available under the [Elastic License 2.0 with additional permissions](LICENSE):
+
+- **Free forever for an apartment association that runs it itself**, on a server or cloud
+  account the association controls (it is the account holder and has full admin access). Anyone
+  (an IT company, a freelancer, a resident) may set it up and maintain it there, paid or not.
+- A resident may host their own association's installation for no more than the actual server
+  cost; a property management company may host one association it manages.
+- **Needs a written license:** hosting installations on your own infrastructure for associations
+  other than your own, and offering the software as a service or managed cloud. Regional partner
+  licenses are possible on request.
+
+Contributions are welcome under the contributor license agreement in
+[CONTRIBUTING.md](CONTRIBUTING.md).
