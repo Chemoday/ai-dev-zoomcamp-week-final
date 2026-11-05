@@ -1,7 +1,7 @@
 # E8. Apartment profiles
 
-- **Phase:** 2. **Status:** designed with the owner (2026-11-04); tasks P1-P3 below. Builds on E7
-  (login) and E1 (notifications). **Epic issue:**
+- **Phase:** 2. **Status:** designed with the owner (2026-11-04, 2026-11-05); P1 done, tasks
+  P2-P4 below. Builds on E7 (login) and E1 (notifications). **Epic issue:**
   [#82](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/82).
 - **Goal:** the board can look after an apartment (its residents, meters and history) and write to
   it, without seeing anyone's name, e-mail or login.
@@ -43,6 +43,14 @@ From 2026-11-04:
   notification on every channel by default.
 - **Every message notifies** (no "one notification until read"): these threads are low volume.
 
+From 2026-11-05:
+- **The board gets its own micro-forum** (task P4, after P2): topics that only the chairman and
+  the board see. It is the base for a later building passport and maintenance calendar: handover
+  notes, where the keys are, contractors, and the calendar's reminders for the board. The
+  accountant does not see it.
+- **P2 lays the ground for it:** who sees a post is decided by its type, so a board topic is one
+  more type with its own rule, not a special case.
+
 ## 2. Apartment cards (task P1)
 
 - `GET /api/v1/property/apartments` (chairman, board): every apartment of the building with its
@@ -80,14 +88,18 @@ From 2026-11-04:
   another board member answers for the board.
 - **Who sees a thread:** the chairman and the board always; a user through an active membership
   in the thread's apartment that started no later than the thread (`started_at <= created_at`).
-  A member who wrote in the thread (started it or replied) keeps seeing it with any active
-  membership in that apartment: reopening a membership that was ended by mistake sets
-  `started_at` to now, and the resident must not lose the threads they took part in.
+  A member who wrote in the thread from that apartment (started it or replied) keeps seeing it
+  with any active membership in that apartment (writing as the board does not count):
+  reopening a membership that was ended by mistake sets `started_at` to now, and the resident
+  must not lose the threads they took part in.
 - **A thread to an apartment without active members is rejected** (`422
   APARTMENT_HAS_NO_RESIDENTS`): with the "since they moved in" rule, nobody but the board could
   ever read it.
 - **Threads are a record:** they are never deleted or edited and always take replies
   (`comments_enabled` must be true), like official notices.
+- **Visibility by post type.** Each post type has one visibility rule (emergencies and notices:
+  their target; forum topics: the whole building; threads: the rule above; board topics in P4:
+  the board). The feed, the post, its comments and the acknowledgement all use that one rule.
 - **Not in the forum feed.** `GET /posts` without `post_type` leaves threads out.
   `GET /posts?post_type=APARTMENT_THREAD` is the "Messages" inbox, newest activity first; the board
   can add `apartment_id` to see one apartment's threads (from its card). Reading and replying use
@@ -117,17 +129,34 @@ From 2026-11-04:
 - Not mandatory: both types can be turned off per channel, and the e-mail carries the N8
   unsubscribe link.
 
-## 5. Tasks
+## 5. Board micro-forum (task P4)
+
+- **Post type `BOARD_TOPIC`:** visible to the chairman and the board only, never to the accountant
+  or residents. Someone who leaves the board loses access at once; the topics stay with the board,
+  so a new chairman inherits them.
+- **Not in the forum feed:** `GET /posts?post_type=BOARD_TOPIC` lists them; replies are comments.
+- **Groundwork for the passport and the calendar:** the calendar will later publish its
+  reminders for the board as board topics, and the first, text-only building passport (keys,
+  contacts, handover notes) can live in them.
+- Designed in detail when P4 starts. Open:
+  - how authors appear to colleagues (all of them would read "Board", which is useless inside
+    the board; the privacy guardrail still applies);
+  - whether the chairman may delete a topic, like a forum topic, or topics are a record;
+  - notifications for a new topic or reply (likely the quiet in-app default of
+    `APARTMENT_MESSAGE_TO_BOARD`).
+
+## 6. Tasks
 
 | Task | What | Done when |
 |---|---|---|
 | P1 ([#79](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/79)) | Apartment cards: the apartment list and card in `property`, the apartment readings in `meters`, the contract and the frontend handoff | the board sees cards without people's data; an accountant gets the readings but not the cards; a resident gets only their own apartment's readings; tests |
 | P2 ([#80](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/80)) | Threads: `APARTMENT_THREAD` (migration, checks), visibility with the "since they moved in" rule, who writes as whom, the inbox filter, `last_activity_at` | a new tenant does not see older threads; a former tenant loses access; the accountant sees none; the forum feed has no threads; tests |
 | P3 ([#81](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/81)) | Thread notifications: the domain event, the two event types with their defaults, recipients and texts (en, ru, et) | a resident's message reaches the board in the app only by default and the co-residents on all channels; the author is never notified; tests |
+| P4 ([#84](https://github.com/Chemoday/ai-dev-zoomcamp-week-final/issues/84)) | Board micro-forum: `BOARD_TOPIC` on the visibility rules of P2 | only the chairman and the board see board topics; the accountant and residents get 404; topics are not in the forum feed; tests |
 
 The "My residents" page is frontend work on the A4 endpoints (docs/FRONTEND_GUIDE.md section 12).
 
-## 6. Open
+## 7. Open
 
 - Contact data: docs/SCHEMA.md says `core_users.phone` is visible only to the chairman and the
   board, while the cards show no contacts. Decide whether the board may see a phone number (e.g.
