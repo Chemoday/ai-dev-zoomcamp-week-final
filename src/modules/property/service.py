@@ -39,6 +39,7 @@ from src.modules.property.schemas import (
     CurrentUserDTO,
     DeliveryContactDTO,
     DisplayMode,
+    ElectorDTO,
     Locale,
     LocaleUpdate,
     MembershipRefDTO,
@@ -208,6 +209,48 @@ class PropertyService:
             ):
                 recipients[user_id] = RecipientDTO(user_id=user_id, locale=locale)
         return sorted(recipients.values(), key=lambda r: str(r.user_id))
+
+    async def poll_electors(
+        self,
+        building_id: uuid.UUID,
+        scope: TargetScope,
+        entrance: int | None,
+        apartment_ids: Iterable[uuid.UUID],
+        *,
+        owners_only: bool,
+    ) -> list[ElectorDTO]:
+        """Active users with an active membership (an OWNER one when `owners_only`) in a
+        targeted apartment of the building: one row per user and apartment (epic E3).
+
+        The shared targeting rule decides which apartments are targeted, as for alerts.
+        """
+        targeted = frozenset(apartment_ids)
+        statement = (
+            select(User.id, Apartment.id, Apartment.entrance)
+            .join(ApartmentMembership, ApartmentMembership.user_id == User.id)
+            .join(Apartment, Apartment.id == ApartmentMembership.apartment_id)
+            .where(
+                User.building_id == building_id,
+                User.is_active.is_(True),
+                Apartment.building_id == building_id,
+                ACTIVE_MEMBERSHIP,
+            )
+        )
+        if owners_only:
+            statement = statement.where(ApartmentMembership.relation_type == RelationType.OWNER)
+        electors = {
+            (user_id, apartment_id)
+            for user_id, apartment_id, apartment_entrance in (await self.session.execute(statement))
+            if apartment_in_target(
+                scope, entrance, targeted, apartment_id=apartment_id, entrance=apartment_entrance
+            )
+        }
+        return [
+            ElectorDTO(user_id=user_id, apartment_id=apartment_id)
+            for user_id, apartment_id in sorted(
+                electors, key=lambda pair: (str(pair[1]), str(pair[0]))
+            )
+        ]
 
     async def users_with_roles(
         self, building_id: uuid.UUID, roles: Iterable[BuildingRole]

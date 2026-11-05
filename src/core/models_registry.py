@@ -15,6 +15,15 @@ from src.modules.auth.models import (  # noqa: F401
     UserIdentity,
 )
 from src.modules.communication.models import Comment, EmergencyAck, Post  # noqa: F401
+from src.modules.governance.models import (  # noqa: F401
+    Ballot,
+    BallotAnswer,
+    BallotRevision,
+    Poll,
+    PollElector,
+    PollOption,
+    PollQuestion,
+)
 from src.modules.meters.models import (  # noqa: F401
     MeterDevice,
     MeterReading,

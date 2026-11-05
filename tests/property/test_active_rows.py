@@ -105,6 +105,31 @@ async def test_an_apartment_has_members_only_through_active_rows(
     assert await properties.has_active_members(demo.apt_14.id) is True
 
 
+async def test_poll_electors_are_active_rows_only(
+    db_session: AsyncSession, demo: DemoBuilding
+) -> None:
+    properties = PropertyService(db_session)
+    closed = await create_user(db_session, demo.building, "Closed", is_active=False)
+    await create_membership(db_session, closed, demo.apt_14, relation=RelationType.RESIDENT)
+    await end(db_session, demo.tenant_2_membership)
+
+    residents = await properties.poll_electors(
+        demo.building.id, TargetScope.ALL_BUILDING, None, [], owners_only=False
+    )
+    owners = await properties.poll_electors(
+        demo.building.id, TargetScope.ENTRANCE, 2, [], owners_only=True
+    )
+
+    assert {(e.user_id, e.apartment_id) for e in residents} == {(demo.owner_14.id, demo.apt_14.id)}
+    assert {(e.user_id, e.apartment_id) for e in owners} == {(demo.owner_14.id, demo.apt_14.id)}
+    assert (
+        await properties.poll_electors(
+            demo.building.id, TargetScope.ENTRANCE, 1, [], owners_only=False
+        )
+        == []
+    )
+
+
 async def test_a_membership_is_reopened_not_duplicated(
     db_session: AsyncSession, demo: DemoBuilding
 ) -> None:
