@@ -191,6 +191,34 @@ class BuildingResponse(BaseModel):
     heated_area_m2: AreaAmount
 
 
+class ApartmentSummary(BaseModel):
+    """An apartment in the board's list of cards (epic E8): counts of members, no people."""
+
+    apartment_id: uuid.UUID
+    apartment_number: str
+    entrance: int
+    floor: int
+    area_m2: AreaAmount
+    owner_count: int
+    tenant_count: int
+    resident_count: int
+
+
+class ApartmentListResponse(BaseModel):
+    apartments: list[ApartmentSummary]
+
+
+class CardResident(BaseModel):
+    """A member on an apartment card: only the relation and since when, never who."""
+
+    relation_type: RelationType
+    since: datetime
+
+
+class ApartmentCard(ApartmentSummary):
+    residents: list[CardResident]
+
+
 class PrivacyUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

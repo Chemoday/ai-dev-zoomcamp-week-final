@@ -24,14 +24,14 @@ All errors share one JSON shape, `{"error_code": "...", "message": "...", ...ext
 | 401 | `NOT_AUTHENTICATED` / `INVALID_TOKEN` / `UNKNOWN_USER` | No credentials, a bad or expired token, or an unknown or inactive user (sent with `WWW-Authenticate: Bearer`) |
 | 400 | `INVALID_LINK` | A sign-in or invitation link that is unknown, used, expired or no longer applies (section 7) |
 | 403 | `FORBIDDEN` | Authenticated, but the building role or a membership flag (e.g. `can_submit_readings`) does not allow it |
-| 404 | `NOT_FOUND`, `MEMBERSHIP_NOT_FOUND`, `METER_NOT_FOUND`, `PERIOD_NOT_FOUND`, `READING_NOT_FOUND`, `POST_NOT_FOUND`, `NOTIFICATION_NOT_FOUND`, `EXPORTER_NOT_ENABLED` | Unknown route, a resource that does not exist or is not visible to you, or a disabled plugin |
+| 404 | `NOT_FOUND`, `MEMBERSHIP_NOT_FOUND`, `METER_NOT_FOUND`, `PERIOD_NOT_FOUND`, `READING_NOT_FOUND`, `POST_NOT_FOUND`, `NOTIFICATION_NOT_FOUND`, `APARTMENT_NOT_FOUND`, `EXPORTER_NOT_ENABLED` | Unknown route, a resource that does not exist or is not visible to you, or a disabled plugin |
 | 409 | `ANOMALY_CONFIRMATION_STEP_1/2`, `PERIOD_CLOSED`, `PERIOD_LOCKED`, `PERIOD_NOT_IN_REVIEW`, `INVALID_PERIOD_TRANSITION`, `READING_SET_BY_BOARD`, `LATER_READING_EXISTS`, `COMMENTS_DISABLED`, `POST_NOT_DELETABLE` | The request is valid, but conflicts with the current state |
 | 405 | `METHOD_NOT_ALLOWED` | The route exists but not for this HTTP method |
 | 422 | `VALIDATION_ERROR`, `READING_BELOW_PREVIOUS`, `REASON_REQUIRED`, `ESTIMATE_OUT_OF_RANGE`, `INVALID_TARGET`, `INVALID_AUTHOR_APARTMENT`, `PREFERENCE_MANDATORY` | Invalid input; for `VALIDATION_ERROR` the details are in `errors`. Free-text fields reject control characters, e.g. NUL |
 | 500 | `INTERNAL_SERVER_ERROR` | Unhandled error; the body carries `trace_id` |
 | other | `HTTP_<status>` | Any other framework-level HTTP error |
 
-Section 7 adds `INVALID_CREDENTIALS`, `SESSION_EXPIRED` (401), `CSRF_CHECK_FAILED`, `REAUTHENTICATION_REQUIRED` (403), `SESSION_NOT_FOUND`, `INVITATION_NOT_FOUND`, `APARTMENT_NOT_FOUND`, `USER_NOT_FOUND` (404), `EMAIL_ALREADY_REGISTERED`, `TENANT_LIMIT_REACHED`, `INVITATION_ALREADY_PENDING`, `INVITATION_ACCEPTED`, `INVITATION_NO_LONGER_VALID`, `LAST_CHAIRMAN` (409) and `PASSWORD_TOO_WEAK` (422); it reuses `RATE_LIMITED` (429) of section 6. `INVALID_CREDENTIALS`, `REAUTHENTICATION_REQUIRED` and `PASSWORD_TOO_WEAK` exist since A5.
+Section 7 adds `INVALID_CREDENTIALS`, `SESSION_EXPIRED` (401), `CSRF_CHECK_FAILED`, `REAUTHENTICATION_REQUIRED` (403), `SESSION_NOT_FOUND`, `INVITATION_NOT_FOUND`, `USER_NOT_FOUND` (404), `EMAIL_ALREADY_REGISTERED`, `TENANT_LIMIT_REACHED`, `INVITATION_ALREADY_PENDING`, `INVITATION_ACCEPTED`, `INVITATION_NO_LONGER_VALID`, `LAST_CHAIRMAN` (409) and `PASSWORD_TOO_WEAK` (422); it reuses `RATE_LIMITED` (429) of section 6. `INVALID_CREDENTIALS`, `REAUTHENTICATION_REQUIRED` and `PASSWORD_TOO_WEAK` exist since A5.
 
 ### Author badge rules (`property.policies.format_author_badge`)
 | `privacy_display_mode` | With apartment | Without apartment context |
@@ -99,6 +99,44 @@ The association and its building, for the app header and the dashboard. Any user
 - `registry_code` is the association's code in the commercial register, `null` until it is entered.
 - `apartment_count`, `entrance_count` and `heated_area_m2` are computed from the apartments. `heated_area_m2` is the sum of the apartments' `area_m2`, a decimal string with 2 places (`"0.00"` without apartments); common areas are not included.
 - No people in the payload: no chairman name, no contact details.
+
+### Apartment cards (epic E8, task P1)
+(Requires role: `CHAIRMAN` or `BOARD`.) The board looks after an apartment without seeing who
+lives there: residents appear only as their relation to the apartment, never with a user id, name,
+e-mail, phone or badge, so a card never depends on a resident's privacy choice. An accountant has no
+cards; the meter history is in `GET /api/v1/meters/apartments/{apartment_id}/readings`.
+
+#### `GET /api/v1/property/apartments`
+Every apartment of the caller's building, by entrance, then apartment number in natural order.
+```json
+{
+  "apartments": [
+    {
+      "apartment_id": "uuid", "apartment_number": "2", "entrance": 1, "floor": 1, "area_m2": "54.30",
+      "owner_count": 0, "tenant_count": 1, "resident_count": 0
+    }
+  ]
+}
+```
+- The counts are the active memberships of active accounts by relation (`OWNER`, `TENANT`,
+  `RESIDENT`); pending invitations are not counted. An apartment without anyone has all three at 0.
+- `area_m2` is a decimal string with 2 places, as in `GET /property/building`.
+
+#### `GET /api/v1/property/apartments/{apartment_id}`
+One card: the fields of the list plus the residents.
+```json
+{
+  "apartment_id": "uuid", "apartment_number": "14", "entrance": 2, "floor": 4, "area_m2": "54.30",
+  "owner_count": 1, "tenant_count": 1, "resident_count": 0,
+  "residents": [
+    { "relation_type": "OWNER", "since": "2026-10-01T09:00:00Z" },
+    { "relation_type": "TENANT", "since": "2026-10-20T15:30:00Z" }
+  ]
+}
+```
+- `residents` lists the same memberships the counts count, owners first, then tenants and family,
+  each group by `since` (when the membership started; a reopened membership starts again).
+- An unknown apartment, or one of another building, is `404 APARTMENT_NOT_FOUND`.
 
 ### `PATCH /api/v1/property/memberships/{membership_id}/privacy`
 Updates how the user is displayed to neighbors in the micro-forum.
@@ -298,6 +336,40 @@ Returns chronological audit trail from meters_reading_logs.
 - Visible to `CHAIRMAN`, `BOARD` and `ACCOUNTANT`, and to members of the meter's apartment. Anyone else gets `404 READING_NOT_FOUND`.
 - The actor is shown only as a masked author badge (`null` for the system), never as a name or user id.
 - Response: `{"reading_id", "meter_id", "period_code", "entries": [{"changed_at", "old_value", "new_value", "source", "reason", "changed_by": {"display_label", "role_badge"} | null}]}`.
+
+### `GET /api/v1/meters/apartments/{apartment_id}/readings`
+The reading history of one apartment across periods (epic E8, task P1): the apartment card of the
+board, and later the resident's consumption chart.
+- Visible to `CHAIRMAN`, `BOARD` and `ACCOUNTANT` for every apartment of the building, and to the
+  active members of that apartment. The history belongs to the apartment, so a new resident also
+  sees the readings from before they moved in. Anyone else, and an unknown apartment, gets
+  `404 APARTMENT_NOT_FOUND`.
+- `periods` are the building's latest 24 periods, newest first, with or without readings.
+- `meters` are the apartment's active meters, plus replaced meters that have a reading in those
+  periods (`is_active: false`), by resource type and location.
+- Each meter's `readings` are newest first and only for periods that have one; a period without a
+  reading for a meter is simply missing from its list. `source: "AUTO_ESTIMATED"` marks an
+  estimate, so a chart can show it differently.
+- No names: who submitted a reading is in `GET /meters/readings/{reading_id}/history`.
+```json
+{
+  "apartment_id": "uuid",
+  "apartment_number": "14",
+  "periods": [
+    { "period_code": "2026-10", "status": "OPEN_FOR_RESIDENTS", "due_date": "2026-11-04T21:59:59Z" },
+    { "period_code": "2026-09", "status": "LOCKED", "due_date": "2026-10-04T20:59:59Z" }
+  ],
+  "meters": [
+    {
+      "meter_id": "uuid", "resource_type": "COLD_WATER", "serial_number": "SN-1", "location_label": "Bathroom",
+      "unit": "m3", "is_active": true,
+      "readings": [
+        { "period_code": "2026-09", "reading_id": "uuid", "value": "115.000", "consumption_delta": "6.000", "source": "RESIDENT", "is_anomaly_confirmed": false }
+      ]
+    }
+  ]
+}
+```
 
 ### `GET /api/v1/meters/periods/{period_code}/export-csv`
 Executes plugins/common/csv_export and streams a CSV file of the period's readings.

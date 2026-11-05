@@ -29,6 +29,9 @@ BUILDING_ROLE_LABELS: dict[BuildingRole, str] = {
 
 _BOARD_ROLES = frozenset({BuildingRole.CHAIRMAN, BuildingRole.BOARD})
 
+# Who sees the apartment cards (epic E8): the board, not the accountant (docs/API.md section 1).
+CARD_VIEWER_ROLES = _BOARD_ROLES
+
 # From most private to least private.
 _PRIVACY_ORDER = (DisplayMode.APARTMENT_ONLY, DisplayMode.INITIALS, DisplayMode.FULL_NAME)
 

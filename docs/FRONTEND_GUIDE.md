@@ -73,6 +73,8 @@ Build the navigation from `GET /api/v1/property/me` (`building_role`, `membershi
 | Resolve an emergency | no | yes | yes | no |
 | Delete a forum topic | no | no | yes | no |
 | Forum: read, post topics, comment | yes | yes | yes | yes |
+| Apartment cards (`/property/apartments`) | no | yes | yes | no |
+| Apartment readings (`/meters/apartments/{id}/readings`) | own apartments | every apartment | every apartment | every apartment |
 
 A user with no apartment gets `apartments: []` from the dashboard; hide the meter card, do not
 show an error. `GET /property/me` never returns the user's own name or email: greet with the
@@ -169,6 +171,14 @@ any level ──► 422 READING_BELOW_PREVIOUS  → show previous_value, no popu
 - **CSV export needs the auth header**, so a plain `<a href>` does not work: `fetch` it with
   `X-Demo-User-Id`, turn the response into a `Blob` and download it with the file name from
   `Content-Disposition` (`readings-2026-10.csv`). `404 EXPORTER_NOT_ENABLED` hides the button.
+- **Apartment cards** (epic E8, chairman and board): `GET /property/apartments` for the list
+  (number, entrance, floor, area, owner / tenant / family counts) and
+  `GET /property/apartments/{id}` for one card. Residents are only `{relation_type, since}`:
+  show "Owner since 1 Oct 2026", never try to find out who it is. The card's meter block comes
+  from `GET /meters/apartments/{id}/readings` (the latest 24 periods, newest first; each meter
+  lists only the periods that have a reading, so align them by `period_code`;
+  `source: "AUTO_ESTIMATED"` is an estimate). The same readings call works for a resident's own
+  apartment and an accountant (who has no cards).
 - Periods do not close automatically. `due_date` (end of the local deadline day) is shown to users
   and, once notifications exist (docs/API.md section 6), drives the reading reminders.
 
