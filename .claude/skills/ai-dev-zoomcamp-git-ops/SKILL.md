@@ -133,7 +133,8 @@ pointing at a different repo:
 - This skill only ever acts on the repository at this project's root (its
   `origin` remote) — never `cd` into, or pass a `--repo`/`-R` flag
   pointing at, a different week's repo, even though the configured token
-  may have access to more than one.
+  may have access to more than one. Exception: the `frontend-handoff`
+  skill writes to the frontend repository, only the paths it lists.
 - Never force-push (`--force` / `-f`) unless the user explicitly asks for it.
 - Confirm with the user before: pushing directly to `main`, deleting any
   branch (local or remote) or the repo itself, merging a PR, publishing a
